@@ -2,7 +2,12 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { Plus, X, AlertCircle, Calendar, MapPin, Clock, Tag, Ticket, DollarSign, Users, FileText } from "lucide-react"
+import { Plus, X, AlertCircle, Calendar, MapPin, Clock, Tag, Ticket, DollarSign, Users, FileText, Upload, Image as ImageIcon } from "lucide-react"
+import { db } from "@/lib/firebase"
+import { storage } from "@/lib/firebase"
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage"
+import { doc, updateDoc } from "firebase/firestore"
+import Image from "next/image"
 
 interface TicketType {
   policy: string
@@ -18,6 +23,8 @@ interface EditEventTabProps {
   addTicketPrice: () => void
   handleSubmitEdit: (e: React.FormEvent) => void
   setEditFormData: (data: any) => void
+  userId: string
+  eventId: string
 }
 
 export default function EditEventTab({
@@ -27,8 +34,17 @@ export default function EditEventTab({
   addTicketPrice,
   handleSubmitEdit,
   setEditFormData,
+  userId,
+  eventId,
 }: EditEventTabProps) {
   const [errorMessage, setErrorMessage] = useState("")
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [isUploading, setIsUploading] = useState(false)
+  const [imagePreview, setImagePreview] = useState<string>(editFormData.eventImage || "")
+
+  useEffect(() => {
+    setImagePreview(editFormData.eventImage || "")
+  }, [editFormData.eventImage])
 
   useEffect(() => {
     if (editFormData.enablePricing && editFormData.ticketPrices) {
@@ -52,8 +68,181 @@ export default function EditEventTab({
     }
   }
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload an image file')
+      return
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Image size should be less than 5MB')
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgress(0)
+
+    try {
+      // Create a storage reference - use timestamp for unique filename
+      const timestamp = Date.now()
+      const fileExtension = file.name.split('.').pop()
+      const fileName = `${timestamp}.${fileExtension}`
+      const storageRef = ref(storage, `events/${fileName}`)
+
+      // Upload the file
+      const uploadTask = uploadBytesResumable(storageRef, file)
+
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          // Calculate upload progress
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100
+          setUploadProgress(Math.round(progress))
+        },
+        (error) => {
+          console.error('Upload error:', error)
+          alert('Failed to upload image. Please try again.')
+          setIsUploading(false)
+          setUploadProgress(0)
+        },
+        async () => {
+          // Upload completed successfully
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref)
+            
+            // Update the form data with new image URL
+            setEditFormData({ ...editFormData, eventImage: downloadURL })
+            setImagePreview(downloadURL)
+
+            // Update Firestore document immediately if userId and eventId are available
+            if (userId && eventId) {
+              try {
+                const eventDocRef = doc(db, "events", userId, "userEvents", eventId)
+                await updateDoc(eventDocRef, {
+                  eventImage: downloadURL
+                })
+                alert('Image uploaded and saved successfully!')
+              } catch (firestoreError) {
+                console.error('Error updating Firestore:', firestoreError)
+                alert('Image uploaded to storage, but failed to update event. Please click "Save Changes" to retry.')
+              }
+            } else {
+              alert('Image uploaded successfully! Click "Save Changes" to update your event.')
+            }
+          } catch (error) {
+            console.error('Error getting download URL:', error)
+            alert('Failed to get image URL. Please try again.')
+          } finally {
+            setIsUploading(false)
+            setUploadProgress(0)
+          }
+        }
+      )
+    } catch (error) {
+      console.error('Error initializing upload:', error)
+      alert('Failed to start upload. Please try again.')
+      setIsUploading(false)
+      setUploadProgress(0)
+    }
+  }
+
+  const removeImage = () => {
+    setEditFormData({ ...editFormData, eventImage: "" })
+    setImagePreview("")
+  }
+
   return (
     <div className="space-y-6">
+      {/* Event Image Upload Section */}
+      <div className="bg-white rounded-xl border-2 border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2.5 bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] rounded-lg">
+            <ImageIcon size={20} className="text-white" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-900">Event Image</h3>
+        </div>
+
+        <div className="space-y-4">
+          {/* Image Preview */}
+          {imagePreview && (
+            <div className="relative w-full h-64 sm:h-80 rounded-xl overflow-hidden border-2 border-slate-200 group">
+              <Image
+                src={imagePreview}
+                alt="Event preview"
+                fill
+                className="object-cover"
+              />
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={removeImage}
+                  className="px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors flex items-center gap-2"
+                >
+                  <X size={18} />
+                  Remove Image
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Upload Button */}
+          <div className="relative">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              disabled={isUploading}
+              className="hidden"
+              id="event-image-upload"
+            />
+            <label
+              htmlFor="event-image-upload"
+              className={`flex flex-col items-center justify-center w-full p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-200 ${
+                isUploading
+                  ? 'border-slate-300 bg-slate-50 cursor-not-allowed'
+                  : 'border-slate-300 hover:border-[#6b2fa5] hover:bg-[#6b2fa5]/5'
+              }`}
+            >
+              <Upload size={40} className={`mb-3 ${isUploading ? 'text-slate-400' : 'text-[#6b2fa5]'}`} />
+              <p className="text-sm font-semibold text-slate-700 mb-1">
+                {isUploading ? 'Uploading...' : imagePreview ? 'Change Event Image' : 'Upload Event Image'}
+              </p>
+              <p className="text-xs text-slate-500">PNG, JPG, WEBP up to 5MB</p>
+            </label>
+          </div>
+
+          {/* Upload Progress Bar */}
+          {isUploading && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-slate-700">Uploading...</span>
+                <span className="font-bold text-[#6b2fa5]">{uploadProgress}%</span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] h-3 rounded-full transition-all duration-300 ease-out relative overflow-hidden"
+                  style={{ width: `${uploadProgress}%` }}
+                >
+                  <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hidden input to store image URL */}
+          <input
+            type="hidden"
+            name="eventImage"
+            value={editFormData.eventImage || ""}
+          />
+        </div>
+      </div>
+
       {/* Event Bio-Data */}
       <div className="bg-white rounded-xl border-2 border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
         <div className="flex items-center gap-3 mb-6">
@@ -176,35 +365,85 @@ export default function EditEventTab({
           <div>
             <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
               <Tag size={16} className="text-[#6b2fa5]" />
-              Event Type
+              Event Category
             </label>
             <select
-              name="eventType"
-              value={editFormData.eventType}
+              name="eventCategory"
+              value={editFormData.eventCategory}
               onChange={handleInputChange}
-              className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200 appearance-none cursor-pointer"
+              className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
               required
             >
-              <option value="Concert">Concert</option>
-              <option value="Conference">Conference</option>
-              <option value="Workshop">Workshop</option>
-              <option value="Night party">Night party</option>
+              <option value="">Select a category</option>
+              <option value="Music">Music</option>
+              <option value="Sports">Sports</option>
+              <option value="Arts">Arts</option>
+              <option value="Technology">Technology</option>
+              <option value="Business">Business</option>
+              <option value="Education">Education</option>
               <option value="Other">Other</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* Event Pricing */}
+      {/* Capacity Settings */}
       <div className="bg-white rounded-xl border-2 border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-2.5 bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] rounded-lg">
-            <DollarSign size={20} className="text-white" />
+            <Users size={20} className="text-white" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900">Event Pricing</h3>
+          <h3 className="text-xl font-bold text-slate-900">Capacity Settings</h3>
         </div>
 
-        <div className="flex items-center gap-3 mb-6 p-4 bg-gradient-to-r from-slate-50 to-slate-100 rounded-xl border-2 border-slate-200">
+        <div className="flex items-center gap-4 mb-4">
+          <input
+            type="checkbox"
+            name="enableMaxSize"
+            checked={editFormData.enableMaxSize}
+            onChange={(e) => {
+              setEditFormData({
+                ...editFormData,
+                enableMaxSize: e.target.checked,
+              })
+            }}
+            className="w-5 h-5 rounded border-2 border-slate-300 text-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20 cursor-pointer"
+          />
+          <label className="text-sm font-semibold text-slate-700 cursor-pointer select-none">
+            Set Maximum Capacity
+          </label>
+        </div>
+
+        {editFormData.enableMaxSize && (
+          <div>
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
+              <Users size={16} className="text-[#6b2fa5]" />
+              Maximum Attendees
+            </label>
+            <input
+              type="number"
+              name="maxSize"
+              min="1"
+              value={editFormData.maxSize || ""}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
+              placeholder="Enter maximum number of attendees"
+              required={editFormData.enableMaxSize}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Ticket Pricing */}
+      <div className="bg-white rounded-xl border-2 border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2.5 bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] rounded-lg">
+            <Ticket size={20} className="text-white" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-900">Ticket Pricing</h3>
+        </div>
+
+        <div className="flex items-center gap-4 mb-6">
           <input
             type="checkbox"
             name="enablePricing"
@@ -361,7 +600,8 @@ export default function EditEventTab({
         <button
           type="button"
           onClick={handleSubmitEdit}
-          className="flex-1 px-6 py-4 bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white rounded-xl font-bold hover:shadow-lg hover:shadow-[#6b2fa5]/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+          disabled={isUploading}
+          className="flex-1 px-6 py-4 bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white rounded-xl font-bold hover:shadow-lg hover:shadow-[#6b2fa5]/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
         >
           💾 Save Changes
         </button>
@@ -374,4 +614,4 @@ export default function EditEventTab({
       </div>
     </div>
   )
-}
+}     

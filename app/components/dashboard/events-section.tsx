@@ -15,6 +15,7 @@ interface Event {
 
 interface EventsSectionProps {
   events: Event[]
+  userId: string | null // Added userId prop to construct proper navigation links
 }
 
 function formatNumber(num: number): string {
@@ -33,20 +34,22 @@ const StatusBadge = ({ status }: { status: string }) => (
         : "bg-gradient-to-r from-gray-400 to-gray-500 text-white"
     }`}
   >
-    <span className={`w-1.5 h-1.5 rounded-full mr-2 ${status === "active" ? "bg-white animate-pulse" : "bg-gray-200"}`}></span>
+    <span
+      className={`w-1.5 h-1.5 rounded-full mr-2 ${status === "active" ? "bg-white animate-pulse" : "bg-gray-200"}`}
+    ></span>
     {status.charAt(0).toUpperCase() + status.slice(1)}
   </span>
 )
 
-export function EventsSection({ events }: EventsSectionProps) {
+export function EventsSection({ events, userId }: EventsSectionProps) {
   return (
     <div className="mb-8">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-3xl font-bold bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] bg-clip-text text-transparent">
           Recent Events
         </h2>
-        <Link 
-          href="/events" 
+        <Link
+          href="/events"
           className="group flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white rounded-lg hover:shadow-lg hover:shadow-[#6b2fa5]/30 hover:scale-105 font-semibold transition-all duration-300"
         >
           View All
@@ -72,10 +75,10 @@ export function EventsSection({ events }: EventsSectionProps) {
             <tbody>
               {events.length > 0 ? (
                 events.map((event, index) => (
-                  <tr 
-                    key={event.id} 
+                  <tr
+                    key={event.id}
                     className={`border-b border-gray-100 hover:bg-gradient-to-r hover:from-[#6b2fa5]/5 hover:to-[#8b4fc5]/5 transition-all duration-300 group ${
-                      index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                      index % 2 === 0 ? "bg-white" : "bg-gray-50/50"
                     }`}
                   >
                     <td className="px-6 py-4 font-semibold text-gray-900 group-hover:text-[#6b2fa5] transition-colors">
@@ -110,7 +113,7 @@ export function EventsSection({ events }: EventsSectionProps) {
                     </td>
                     <td className="px-6 py-4">
                       <Link
-                        href={`/event/${event.id}`}
+                        href={userId ? `/event-info/${userId}/${event.id}` : `/event/${event.id}`}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white hover:shadow-lg hover:shadow-[#6b2fa5]/30 hover:scale-105 transition-all duration-300 text-sm font-semibold"
                       >
                         <Eye size={16} />
@@ -139,10 +142,10 @@ export function EventsSection({ events }: EventsSectionProps) {
         <div className="md:hidden">
           {events.length > 0 ? (
             events.map((event, index) => (
-              <div 
-                key={event.id} 
+              <div
+                key={event.id}
                 className={`p-5 border-b border-gray-100 last:border-b-0 hover:bg-gradient-to-r hover:from-[#6b2fa5]/5 hover:to-[#8b4fc5]/5 transition-all duration-300 ${
-                  index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                  index % 2 === 0 ? "bg-white" : "bg-gray-50/50"
                 }`}
               >
                 <div className="flex items-start justify-between mb-4">
@@ -155,7 +158,9 @@ export function EventsSection({ events }: EventsSectionProps) {
                       <Calendar size={18} className="text-[#6b2fa5]" />
                       <span className="text-sm font-medium">Date</span>
                     </div>
-                    <span className="font-semibold text-gray-900">{new Date(event.eventDate).toLocaleDateString()}</span>
+                    <span className="font-semibold text-gray-900">
+                      {new Date(event.eventDate).toLocaleDateString()}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-[#6b2fa5]/5 to-[#8b4fc5]/5">
                     <div className="flex items-center gap-2 text-gray-600">
@@ -180,7 +185,7 @@ export function EventsSection({ events }: EventsSectionProps) {
                   </div>
                 </div>
                 <Link
-                  href={`/event/${event.id}`}
+                  href={userId ? `/event-info/${userId}/${event.id}` : `/event/${event.id}`}
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white hover:shadow-lg hover:shadow-[#6b2fa5]/30 hover:scale-[1.02] transition-all duration-300 text-sm font-semibold"
                 >
                   <Eye size={16} />

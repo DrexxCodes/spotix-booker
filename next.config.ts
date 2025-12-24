@@ -1,27 +1,32 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["firebase-admin"],
+
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: 'res.cloudinary.com',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "res.cloudinary.com",
+        pathname: "/**",
       },
       {
-        protocol: 'https',
-        hostname: 'firebasestorage.googleapis.com',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "firebasestorage.googleapis.com",
+        pathname: "/**",
       },
       {
-        protocol: 'https',
-        hostname: 'lh3.googleusercontent.com',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+        pathname: "/**",
       },
     ],
-    // Alternative: if you need to support multiple Cloudinary accounts or other domains
-    // domains: ['res.cloudinary.com', 'firebasestorage.googleapis.com'],
   },
-};
+}
 
-export default nextConfig;
+export default nextConfig

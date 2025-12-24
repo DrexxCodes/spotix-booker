@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { onAuthStateChanged } from "firebase/auth"
 import { auth, db } from "@/lib/firebase"
 import { doc, getDoc } from "firebase/firestore"
+import Snowfall from 'react-snowfall'
 import { Preloader } from "@/components/preloader"
 import { ParticlesBackground } from "@/components/particles-background"
 import { Nav } from "@/components/nav"
@@ -138,6 +139,10 @@ export default function DashboardPage() {
 
       <div className="min-h-screen bg-background">
         <Nav />
+                      <Snowfall
+          color="white"
+          snowflakeCount={200}
+              />
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {error && (

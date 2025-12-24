@@ -1,5 +1,7 @@
 "use client"
 
+// Beta phase and if I'm being very honest, I'd probably not even use it
+
 import { useEffect, useRef } from "react"
 
 export function ParticlesBackground() {
@@ -20,6 +22,7 @@ export function ParticlesBackground() {
       const y = Math.random() * 100
       const duration = Math.random() * 4 + 4
 
+      // Create the styles of the particle
       particle.style.width = `${size}px`
       particle.style.height = `${size}px`
       particle.style.left = `${x}%`
@@ -27,6 +30,7 @@ export function ParticlesBackground() {
       particle.style.animationDuration = `${duration}s`
       particle.style.animationDelay = `${Math.random() * 2}s`
 
+      // Add the particles to page
       container.appendChild(particle)
     }
 

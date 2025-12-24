@@ -1,20 +1,22 @@
 "use client"
 
-import type React from "react"
+import { useMemo } from "react"
 
-import { useState, useEffect, useMemo } from "react"
-import { useParams } from "next/navigation"
+import type React from "react"
+import { use, useState, useEffect } from "react"
 import Link from "next/link"
 import { auth, db } from "@/lib/firebase"
 import { doc, getDoc, collection, getDocs, updateDoc, addDoc, query, orderBy } from "firebase/firestore"
 import { onAuthStateChanged } from "firebase/auth"
 import { ArrowLeft } from "lucide-react"
+import { Nav } from "@/components/nav"
 import OverviewTab from "@/components/event-info/overview-tab"
 import AttendeesTab from "@/components/event-info/attendees-tab"
 import DiscountsTab from "@/components/event-info/discounts-tab"
 import PayoutsTab from "@/components/event-info/payouts-tab"
 import EditEventTab from "@/components/event-info/edit-event-tab"
 import MerchTab from "@/components/event-info/merch-tab"
+import ReferralsTab from "@/components/event-info/referrals-tab"
 
 interface EventData {
   id: string
@@ -123,19 +125,21 @@ function TabSkeleton() {
   )
 }
 
-export default function EventInfoPage() {
-  const params = useParams()
-  const userId = params.userId as string
-  const eventId = params.eventId as string
+export default function EventInfoPage({
+  params,
+}: {
+  params: Promise<{ userId: string; eventId: string }>
+}) {
+  const { userId, eventId } = use(params)
 
   const [loading, setLoading] = useState(true)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [eventData, setEventData] = useState<EventData | null>(null)
   const [attendees, setAttendees] = useState<AttendeeData[]>([])
   const [payouts, setPayouts] = useState<PayoutData[]>([])
-  const [activeTab, setActiveTab] = useState<"overview" | "attendees" | "payouts" | "edit" | "discounts" | "merch">(
-    "overview",
-  )
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals"
+  >("overview")
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(["overview"]))
   const [ticketSalesByDay, setTicketSalesByDay] = useState<any[]>([])
   const [ticketSalesByType, setTicketSalesByType] = useState<any[]>([])
@@ -171,7 +175,9 @@ export default function EventInfoPage() {
     }))
   }, [eventData, attendees])
 
-  const handleTabSwitch = (tab: "overview" | "attendees" | "payouts" | "edit" | "discounts" | "merch") => {
+  const handleTabSwitch = (
+    tab: "overview" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals",
+  ) => {
     setActiveTab(tab)
     setLoadedTabs((prev) => new Set([...Array.from(prev), tab]))
   }
@@ -570,6 +576,7 @@ export default function EventInfoPage() {
   if (!eventData) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+        <Nav />
         <div className="max-w-6xl mx-auto">
           <Link href="/events">
             <button className="flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 transition-colors mb-4">
@@ -586,7 +593,8 @@ export default function EventInfoPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
+        <Nav />
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -603,8 +611,8 @@ export default function EventInfoPage() {
         <div className="space-y-6">
           {/* Tab Navigation */}
           <div className="border-b border-slate-200 bg-white rounded-t-lg">
-            <div className="flex overflow-x-auto">
-              {(["overview", "attendees", "discounts", "merch", "payouts", "edit"] as const).map((tab) => (
+            <div className="flex overflow-x-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-[#6b2fa5] [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(["overview", "attendees", "discounts", "merch", "referrals", "payouts", "edit"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => handleTabSwitch(tab)}
@@ -622,9 +630,11 @@ export default function EventInfoPage() {
                         ? "Discounts"
                         : tab === "merch"
                           ? "Merch"
-                          : tab === "payouts"
-                            ? "Payouts"
-                            : "Edit Event"}
+                          : tab === "referrals"
+                            ? "Referrals"
+                            : tab === "payouts"
+                              ? "Payouts"
+                              : "Edit Event"}
                 </button>
               ))}
             </div>
@@ -692,6 +702,10 @@ export default function EventInfoPage() {
               </>
             )}
 
+            {activeTab === "referrals" && (
+              <>{loadedTabs.has("referrals") ? <ReferralsTab userId={userId} eventId={eventId} /> : <TabSkeleton />}</>
+            )}
+
             {activeTab === "payouts" && (
               <>
                 {loadedTabs.has("payouts") ? (
@@ -709,6 +723,11 @@ export default function EventInfoPage() {
                     copyToClipboard={copyToClipboard}
                     toggleActionCodeVisibility={toggleActionCodeVisibility}
                     formatTransactionTime={formatTransactionTime}
+                    eventData={eventData}
+                    userId={userId}
+                    eventId={eventId}
+                    currentUserId={currentUser?.uid || ""}
+                    attendees={attendees}
                   />
                 ) : (
                   <TabSkeleton />
@@ -725,8 +744,7 @@ export default function EventInfoPage() {
                     handleTicketPriceChange={handleTicketPriceChange}
                     addTicketPrice={addTicketPrice}
                     handleSubmitEdit={handleSubmitEdit}
-                    setEditFormData={setEditFormData}
-                  />
+                    setEditFormData={setEditFormData} userId={""} eventId={""}                  />
                 ) : (
                   <TabSkeleton />
                 )}

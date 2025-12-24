@@ -1,3 +1,5 @@
+// This is the mobile card rendered in the event list
+
 "use client"
 
 import { useRouter } from "next/navigation"
@@ -20,23 +22,25 @@ interface EventCardProps {
   event: EventData
   isCollaborated?: boolean
   role?: string
+  userId?: string
+  collaboratorId?: string
 }
 
-export function EventCard({ event, isCollaborated, role }: EventCardProps) {
+export function EventCard({ event, isCollaborated, role, userId, collaboratorId }: EventCardProps) {
   const router = useRouter()
   const ticketPercentage = event.hasMaxSize ? (event.ticketsSold / event.totalCapacity) * 100 : 0
 
   const statusStyles = {
     active: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20",
     past: "bg-slate-50 text-slate-600 ring-1 ring-slate-500/20",
-    draft: "bg-amber-50 text-amber-700 ring-1 ring-amber-600/20"
+    draft: "bg-amber-50 text-amber-700 ring-1 ring-amber-600/20",
   }
 
   return (
     <div className="group relative bg-white border border-slate-200 rounded-xl p-6 hover:border-[#6b2fa5] hover:shadow-xl hover:shadow-[#6b2fa5]/10 transition-all duration-300 cursor-pointer">
       {/* Gradient accent line */}
       <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#6b2fa5] via-purple-400 to-[#6b2fa5] rounded-t-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-      
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-6">
         <div className="flex-1 min-w-0">
@@ -48,7 +52,9 @@ export function EventCard({ event, isCollaborated, role }: EventCardProps) {
             <span className="truncate">{event.eventVenue}</span>
           </div>
         </div>
-        <span className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${statusStyles[event.status]}`}>
+        <span
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${statusStyles[event.status]}`}
+        >
           {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
         </span>
       </div>
@@ -56,12 +62,14 @@ export function EventCard({ event, isCollaborated, role }: EventCardProps) {
       {/* Date */}
       <div className="flex items-center gap-2 text-sm text-slate-600 mb-6 bg-slate-50 rounded-lg px-3 py-2.5">
         <Calendar className="w-4 h-4 text-[#6b2fa5]" />
-        <span className="font-medium">{new Date(event.eventDate).toLocaleDateString('en-US', { 
-          weekday: 'short', 
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric' 
-        })}</span>
+        <span className="font-medium">
+          {new Date(event.eventDate).toLocaleDateString("en-US", {
+            weekday: "short",
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })}
+        </span>
       </div>
 
       {/* Tickets Section */}
@@ -69,13 +77,9 @@ export function EventCard({ event, isCollaborated, role }: EventCardProps) {
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-slate-700">Ticket Sales</span>
           <div className="text-right">
-            <span className="font-bold text-slate-900 text-lg">
-              {event.ticketsSold.toLocaleString()}
-            </span>
+            <span className="font-bold text-slate-900 text-lg">{event.ticketsSold.toLocaleString()}</span>
             {event.hasMaxSize && (
-              <span className="text-sm text-slate-500 ml-1">
-                / {event.totalCapacity.toLocaleString()}
-              </span>
+              <span className="text-sm text-slate-500 ml-1">/ {event.totalCapacity.toLocaleString()}</span>
             )}
           </div>
         </div>
@@ -83,16 +87,14 @@ export function EventCard({ event, isCollaborated, role }: EventCardProps) {
         {event.hasMaxSize && (
           <div className="space-y-1.5">
             <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-              <div 
+              <div
                 className="bg-gradient-to-r from-[#6b2fa5] to-purple-400 h-2.5 rounded-full transition-all duration-500 ease-out shadow-sm"
-                style={{ width: `${Math.min(ticketPercentage, 100)}%` }} 
+                style={{ width: `${Math.min(ticketPercentage, 100)}%` }}
               />
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500">{ticketPercentage.toFixed(0)}% sold</span>
-              {ticketPercentage >= 90 && (
-                <span className="text-[#6b2fa5] font-semibold">Almost full!</span>
-              )}
+              {ticketPercentage >= 90 && <span className="text-[#6b2fa5] font-semibold">Almost full!</span>}
             </div>
           </div>
         )}
@@ -106,7 +108,9 @@ export function EventCard({ event, isCollaborated, role }: EventCardProps) {
           </div>
           <span className="text-sm font-medium text-slate-700">Total Revenue</span>
         </div>
-        <span className="font-bold text-[#6b2fa5] text-xl">₦{event.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        <span className="font-bold text-[#6b2fa5] text-xl">
+          ₦{event.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
       </div>
 
       {/* Footer */}
@@ -114,12 +118,18 @@ export function EventCard({ event, isCollaborated, role }: EventCardProps) {
         {isCollaborated && role ? (
           <span className="inline-flex items-center text-xs font-bold text-[#6b2fa5] bg-[#6b2fa5]/10 px-3 py-1.5 rounded-full ring-1 ring-[#6b2fa5]/20">
             {role.toUpperCase()}
+            {/* Maintain active state */}
           </span>
         ) : (
           <div />
         )}
         <button
-          onClick={() => router.push(`/event-info/${event.id}`)}
+          onClick={() => {
+            const ownerUserId = collaboratorId || userId
+            if (ownerUserId) {
+              router.push(`/event-info/${ownerUserId}/${event.id}`)
+            }
+          }}
           className="ml-auto inline-flex items-center gap-2 text-[#6b2fa5] hover:text-[#5a2589] font-semibold text-sm transition-all duration-200 group/btn"
         >
           <span>View Details</span>

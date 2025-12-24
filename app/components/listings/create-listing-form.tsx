@@ -148,7 +148,7 @@ export function CreateListingForm({ userId }: CreateListingFormProps) {
   }
 
   const validateForm = () => {
-    console.log("🔍 Validating form...")
+    // console.log("🔍 Validating form...")
     const newErrors: Record<string, string> = {}
 
     if (!productName.trim()) {
@@ -174,7 +174,7 @@ export function CreateListingForm({ userId }: CreateListingFormProps) {
 
     setErrors(newErrors)
     const isValid = Object.keys(newErrors).length === 0
-    console.log(isValid ? "✅ Form validation passed" : "❌ Form validation failed")
+    // console.log(isValid ? "✅ Form validation passed" : "❌ Form validation failed")
     return isValid
   }
 
@@ -212,17 +212,17 @@ export function CreateListingForm({ userId }: CreateListingFormProps) {
         createdAt: serverTimestamp(),
       }
 
-      console.log("💾 Saving to Firestore...")
-      console.log("📍 Collection path:", `listing/${userId}/products`)
-      console.log("📦 Product data:", productData)
+      // console.log("💾 Saving to Firestore...")
+      // console.log("📍 Collection path:", `listing/${userId}/products`)
+      // console.log("📦 Product data:", productData)
 
       const docRef = await addDoc(listingRef, productData)
-      console.log(`✅ Document created with ID: ${docRef.id}`)
+      // console.log(`✅ Document created with ID: ${docRef.id}`)
 
-      console.log("🧹 Cleaning up preview URLs...")
+      // console.log("🧹 Cleaning up preview URLs...")
       imagePreviews.forEach((preview) => URL.revokeObjectURL(preview))
 
-      console.log("🎉 Success! Redirecting to success page...")
+      // console.log("🎉 Success! Redirecting to success page...")
       router.push("/listings/success")
     } catch (error) {
       console.error("❌ Error creating listing:", error)

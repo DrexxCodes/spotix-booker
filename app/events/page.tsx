@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from 'next/navigation'
+import { useRouter } from "next/navigation"
 import { onAuthStateChanged } from "firebase/auth"
 import { auth, db } from "@/lib/firebase"
 import { doc, getDoc, collection, getDocs } from "firebase/firestore"
@@ -10,7 +10,7 @@ import { Preloader } from "@/components/preloader"
 import { ParticlesBackground } from "@/components/particles-background"
 import { EventsList } from "@/components/events/events-list"
 import { CollaboratedEventsList } from "@/components/events/collaborated-events-list"
-import { Search, Plus, Calendar, TrendingUp, Users } from 'lucide-react'
+import { Search, Plus, Calendar, TrendingUp, Users } from "lucide-react"
 
 interface EventData {
   id: string
@@ -118,13 +118,7 @@ export default function EventsPage() {
 
           for (const collaboration of collaborations) {
             try {
-              const eventDocRef = doc(
-                db,
-                "events",
-                collaboration.ownerId,
-                "userEvents",
-                collaboration.eventId
-              )
+              const eventDocRef = doc(db, "events", collaboration.ownerId, "userEvents", collaboration.eventId)
               const eventDoc = await getDoc(eventDocRef)
 
               if (eventDoc.exists()) {
@@ -169,7 +163,7 @@ export default function EventsPage() {
 
   // Calculate stats
   const totalEvents = events.length
-  const activeEvents = events.filter(e => e.status === "active").length
+  const activeEvents = events.filter((e) => e.status === "active").length
   const totalRevenue = events.reduce((sum, e) => sum + e.revenue, 0)
   const totalTicketsSold = events.reduce((sum, e) => sum + e.ticketsSold, 0)
 
@@ -193,11 +187,9 @@ export default function EventsPage() {
                 <h1 className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-[#6b2fa5] via-[#8b3fc5] to-[#6b2fa5] bg-clip-text text-transparent">
                   My Events
                 </h1>
-                <p className="text-gray-600 text-base sm:text-lg">
-                  Manage and track all your events in one place
-                </p>
+                <p className="text-gray-600 text-base sm:text-lg">Manage and track all your events in one place</p>
               </div>
-              <button 
+              <button
                 onClick={() => router.push("/create-event")}
                 className="bg-gradient-to-r from-[#6b2fa5] to-[#8b3fc5] hover:from-[#5a2789] hover:to-[#6b2fa5] text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all duration-200 shadow-lg shadow-[#6b2fa5]/30 hover:shadow-xl hover:shadow-[#6b2fa5]/40 hover:-translate-y-0.5 active:translate-y-0"
               >
@@ -253,7 +245,12 @@ export default function EventsPage() {
                 </div>
                 <div className="w-12 h-12 bg-[#6b2fa5]/10 rounded-lg flex items-center justify-center">
                   <svg className="w-6 h-6 text-[#6b2fa5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
                   </svg>
                 </div>
               </div>
@@ -285,7 +282,7 @@ export default function EventsPage() {
 
           {/* My Events Section */}
           <div className="animate-in fade-in slide-in-from-bottom-6 duration-700">
-            <EventsList events={events} searchQuery={searchQuery} statusFilter={statusFilter} />
+            <EventsList events={events} searchQuery={searchQuery} statusFilter={statusFilter} userId={userId || ""} />
           </div>
 
           {/* Collaborated Events Section */}

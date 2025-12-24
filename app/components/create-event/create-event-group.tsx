@@ -1,20 +1,48 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { auth, db } from "@/lib/firebase"
-import { setDoc, doc, collection, addDoc, getDoc } from "firebase/firestore"
+import { setDoc, doc, collection, addDoc, serverTimestamp } from "firebase/firestore"
 import { Preloader } from "@/components/preloader"
 import Image from "next/image"
-import { AlertCircle } from "lucide-react"
+import {
+  AlertCircle,
+  CheckCircle,
+  MapPin,
+  X,
+  Upload,
+  Calendar,
+  Type,
+  AlignLeft,
+  MapPinned,
+  ImageIcon,
+  Sparkles,
+  Repeat,
+} from "lucide-react"
 import { AddPricing } from "./add-pricing"
 import type { TicketType } from "@/types/ticket"
+import { uploadImage } from "@/lib/image-uploader"
+import { MapPickerModal } from "./map-picker-modal"
 
 interface CreateEventGroupProps {
   onSuccess?: () => void
   selectedCollection?: any | null
 }
+
+const eventTypes = [
+  "Night party",
+  "Concert",
+  "Conference",
+  "Workshop",
+  "Seminar",
+  "Wedding",
+  "Birthday",
+  "Corporate Event",
+  "Sports Event",
+  "Festival",
+]
 
 export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventGroupProps) {
   const router = useRouter()
@@ -23,8 +51,8 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
 
   const [eventName, setEventName] = useState("")
   const [eventDescription, setEventDescription] = useState("")
-  const [eventImage, setEventImage] = useState<File | null>(null)
-  const [imagePreviewUrl, setImagePreviewUrl] = useState("")
+  const [eventImages, setEventImages] = useState<File[]>([])
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([])
   const [frequency, setFrequency] = useState<"yearly" | "monthly" | "quarterly">("yearly")
   const [eventDate, setEventDate] = useState("")
   const [eventVenue, setEventVenue] = useState("")
@@ -35,109 +63,273 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
   const [enablePricing, setEnablePricing] = useState(false)
   const [ticketPrices, setTicketPrices] = useState<TicketType[]>([])
 
-  const eventTypes = [
-    "Night party",
-    "Concert",
-    "Conference",
-    "Workshop",
-    "Seminar",
-    "Wedding",
-    "Birthday",
-    "Corporate Event",
-    "Sports Event",
-    "Festival",
-  ]
+  const [uploadProgress, setUploadProgress] = useState<number[]>([])
+  const [isUploading, setIsUploading] = useState<boolean[]>([])
+  const [uploadComplete, setUploadComplete] = useState<boolean[]>([])
+  const [uploadedImageUrls, setUploadedImageUrls] = useState<(string | null)[]>([])
+  const cancelUploadRefs = useRef<((() => void) | null)[]>([])
+
+  const [venueCoordinates, setVenueCoordinates] = useState<{ lat: number; lng: number } | null>(null)
+  const [showMapPicker, setShowMapPicker] = useState(false)
+
+  const [isDragging, setIsDragging] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const generatePayId = () => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    let payId = ""
+    for (let i = 0; i < 8; i++) {
+      payId += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return payId
+  }
+
+  useEffect(() => {
+    return () => {
+      cancelUploadRefs.current.forEach((cancel) => {
+        if (cancel) cancel()
+      })
+    }
+  }, [])
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return
-    const file = e.target.files[0]
-    setEventImage(file)
-    const previewUrl = URL.createObjectURL(file)
-    setImagePreviewUrl(previewUrl)
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    handleFiles(Array.from(files))
   }
 
-  const validateForm = () => {
-    if (selectedCollection) {
-      if (!eventName.trim()) return "Event name is required"
-      if (!eventDescription.trim()) return "Event description is required"
-      if (!eventDate) return "Event date is required"
-      if (!eventVenue.trim()) return "Event venue is required"
-      if (!eventStart) return "Event start time is required"
-      if (!eventEnd) return "Event end time is required"
-      if (!eventEndDate) return "Event end date is required"
-    } else {
-      if (!eventName.trim()) return "Event group name is required"
-      if (!eventDescription.trim()) return "Event description is required"
-      if (!imagePreviewUrl) return "Event image is required"
-    }
-    return null
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
   }
 
-  const generateUniqueId = () => {
-    const timestamp = Date.now().toString(36)
-    const randomStr = Math.random().toString(36).substring(2, 8)
-    return {
-      eventId: `evt_${timestamp}_${randomStr}`.toUpperCase(),
-      payId: `pay_${timestamp}_${randomStr}`.toUpperCase(),
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const files = Array.from(e.dataTransfer.files).filter((file) => file.type.startsWith("image/"))
+    if (files.length > 0) {
+      handleFiles(files)
     }
+  }
+
+  const handleFiles = (files: File[]) => {
+    const remainingSlots = 8 - eventImages.length
+    if (remainingSlots <= 0) {
+      alert("Maximum 8 images allowed")
+      return
+    }
+
+    const filesToAdd = files.slice(0, remainingSlots)
+    const newImages = [...eventImages, ...filesToAdd]
+    const newPreviews = [...imagePreviewUrls, ...filesToAdd.map((file) => URL.createObjectURL(file))]
+
+    setEventImages(newImages)
+    setImagePreviewUrls(newPreviews)
+
+    const startIndex = eventImages.length
+    filesToAdd.forEach((file, index) => {
+      startBackgroundUpload(file, startIndex + index)
+    })
+  }
+
+  const startBackgroundUpload = (file: File, index: number) => {
+    if (cancelUploadRefs.current[index]) {
+      cancelUploadRefs.current[index]!()
+      cancelUploadRefs.current[index] = null
+    }
+
+    setIsUploading((prev) => {
+      const newState = [...prev]
+      newState[index] = true
+      return newState
+    })
+    setUploadProgress((prev) => {
+      const newState = [...prev]
+      newState[index] = 0
+      return newState
+    })
+
+    const folderName = selectedCollection ? "Events" : "EventCollections"
+
+    const { uploadPromise, cancelUpload } = uploadImage(file, {
+      cloudinaryFolder: folderName,
+      onProgress: (progress) => {
+        setUploadProgress((prev) => {
+          const newState = [...prev]
+          newState[index] = progress
+          return newState
+        })
+      },
+      showAlert: false,
+    })
+
+    cancelUploadRefs.current[index] = cancelUpload
+
+    uploadPromise
+      .then(({ url, provider }) => {
+        setIsUploading((prev) => {
+          const newState = [...prev]
+          newState[index] = false
+          return newState
+        })
+
+        if (url) {
+          console.log(`[v0] Image ${index + 1} uploaded successfully to`, provider)
+          setUploadComplete((prev) => {
+            const newState = [...prev]
+            newState[index] = true
+            return newState
+          })
+          setUploadedImageUrls((prev) => {
+            const newState = [...prev]
+            newState[index] = url
+            return newState
+          })
+
+          setTimeout(() => {
+            setUploadComplete((prev) => {
+              const newState = [...prev]
+              newState[index] = false
+              return newState
+            })
+          }, 5000)
+        } else {
+          console.error(`[v0] Upload failed for image ${index + 1}: No URL returned`)
+        }
+      })
+      .catch((error) => {
+        console.error(`[v0] Upload failed for image ${index + 1}:`, error)
+        setIsUploading((prev) => {
+          const newState = [...prev]
+          newState[index] = false
+          return newState
+        })
+      })
+  }
+
+  const removeImage = (index: number) => {
+    if (cancelUploadRefs.current[index]) {
+      cancelUploadRefs.current[index]!()
+    }
+
+    const newImages = eventImages.filter((_, i) => i !== index)
+    const newPreviews = imagePreviewUrls.filter((_, i) => i !== index)
+    const newUploadedUrls = uploadedImageUrls.filter((_, i) => i !== index)
+    const newProgress = uploadProgress.filter((_, i) => i !== index)
+    const newUploading = isUploading.filter((_, i) => i !== index)
+    const newComplete = uploadComplete.filter((_, i) => i !== index)
+    cancelUploadRefs.current = cancelUploadRefs.current.filter((_, i) => i !== index)
+
+    setEventImages(newImages)
+    setImagePreviewUrls(newPreviews)
+    setUploadedImageUrls(newUploadedUrls)
+    setUploadProgress(newProgress)
+    setIsUploading(newUploading)
+    setUploadComplete(newComplete)
+
+    URL.revokeObjectURL(imagePreviewUrls[index])
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
     setError("")
+    console.log("[v0] Event group form submitted")
 
-    try {
-      const validationError = validateForm()
-      if (validationError) {
-        setError(validationError)
+    if (!auth.currentUser) {
+      setError("You must be logged in")
+      console.log("[v0] Missing auth.currentUser")
+      return
+    }
+
+    if (!eventName || !eventDescription) {
+      setError("Please fill in all required fields")
+      console.log("[v0] Missing eventName or eventDescription")
+      return
+    }
+
+    if (selectedCollection) {
+      if (!eventDate || !eventVenue || !eventStart || !eventEndDate || !eventEnd) {
+        setError("Please fill in all event details")
+        console.log("[v0] Missing event details for selected collection")
         return
       }
+    }
 
+    if (enablePricing && ticketPrices.length === 0) {
+      setError("Please add at least one ticket type when pricing is enabled")
+      return
+    }
+
+    const stillUploading = isUploading.some((uploading) => uploading)
+    if (eventImages.length > 0 && stillUploading) {
+      setError("Please wait for all images to finish uploading")
+      return
+    }
+
+    setLoading(true)
+
+    try {
       const user = auth.currentUser
-      if (!user) throw new Error("User not authenticated")
 
       if (selectedCollection) {
-        const { eventId, payId } = generateUniqueId()
-        const userDoc = await getDoc(doc(db, "users", user.uid))
-        const userData = userDoc.exists() ? userDoc.data() : {}
-        const bookerName = userData.username || userData.fullName || "Unknown Booker"
+        console.log("[v0] Adding event to existing collection:", selectedCollection.id)
 
-        const finalTicketPrices = enablePricing
-          ? ticketPrices
-              .filter((t) => t.policy.trim())
-              .map((ticket) => ({
-                policy: ticket.policy,
-                price: ticket.price === "" ? 0 : Number.parseFloat(ticket.price),
-                description: ticket.description,
-                availableTickets: ticket.availableTickets === "" ? null : Number.parseInt(ticket.availableTickets),
-              }))
-          : []
+        const eventDateTimeString = `${eventDate}T${eventStart}`
+        const eventEndDateTimeString = `${eventEndDate}T${eventEnd}`
+
+        const uploadedUrls = uploadedImageUrls.filter((url): url is string => url !== null)
+        const eventImage = uploadedUrls.length > 0 ? uploadedUrls[0] : null
+        const eventImagesArray = uploadedUrls.slice(1)
 
         const eventData = {
           eventName,
           eventDescription,
-          eventDate,
-          eventEndDate,
+          eventImage,
+          eventImages: eventImagesArray,
+          eventDate: eventDateTimeString,
+          eventEndDate: eventEndDateTimeString,
           eventVenue,
-          eventStart,
-          eventEnd,
+          venueCoordinates: venueCoordinates || null,
           eventType,
-          eventImage: imagePreviewUrl,
-          ticketPrices: finalTicketPrices,
           isFree: !enablePricing,
-          payId,
-          eventId,
+          ticketPrices: enablePricing ? ticketPrices : [],
+          createdAt: serverTimestamp(),
           createdBy: user.uid,
-          bookerName,
-          createdAt: new Date(),
-          ticketsSold: 0,
-          totalRevenue: 0,
           status: "active",
+          ticketsSold: 0,
+          revenue: 0,
           collectionId: selectedCollection.id,
         }
 
-        const nestedEventsRef = collection(
+        console.log("[v0] Saving event to user events collection...")
+        const eventsRef = collection(db, "events", user.uid, "userEvents")
+        const docRef = await addDoc(eventsRef, eventData)
+        console.log("[v0] Event saved with ID:", docRef.id)
+
+        console.log("[v0] Saving to public events collection...")
+        const publicEventData = {
+          imageURL: eventImage,
+          eventType: eventType,
+          venue: eventVenue,
+          eventStartDate: eventDate,
+          eventName: eventName,
+          freeOrPaid:
+            enablePricing && ticketPrices.length > 0 && ticketPrices.some((ticket) => ticket.policy && ticket.price),
+          timestamp: serverTimestamp(),
+          creatorID: user.uid,
+          eventId: docRef.id,
+          eventGroup: false,
+        }
+        await setDoc(doc(db, "publicEvents", eventName), publicEventData)
+        console.log("[v0] Event saved to public events")
+
+        console.log("[v0] Saving to collection events...")
+        const collectionEventsRef = collection(
           db,
           "EventCollection",
           user.uid,
@@ -145,63 +337,62 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
           selectedCollection.id,
           "events",
         )
-        const docRef = await addDoc(nestedEventsRef, eventData)
+        await addDoc(collectionEventsRef, eventData)
+        console.log("[v0] Event saved to collection")
 
-        await setDoc(
-          doc(db, "EventCollection", user.uid, "collections", selectedCollection.id, "events", docRef.id),
-          {
-            eventId,
-            id: docRef.id,
-          },
-          { merge: true },
-        )
+        const payId = "PAY" + Math.random().toString(36).substring(2, 10).toUpperCase()
+        const successUrl = `/create-event/success?eventId=${docRef.id}&payId=${payId}&type=one-time&eventName=${encodeURIComponent(eventName)}`
+        console.log("[v0] Event added to collection, redirecting to:", successUrl)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        router.push(successUrl)
+      } else {
+        console.log("[v0] Creating new event collection")
 
-        const publicEventData = {
-          imageURL: imagePreviewUrl,
-          eventType,
-          venue: eventVenue,
-          eventStartDate: eventDate,
-          eventName,
-          freeOrPaid: enablePricing && finalTicketPrices.some((t) => t.price > 0),
-          timestamp: new Date(),
-          creatorID: user.uid,
-          eventId,
-          eventGroup: true,
-          collectionId: selectedCollection.id,
-          collectionName: selectedCollection.name,
+        const collectionPayId = generatePayId()
+
+        const uploadedUrls = uploadedImageUrls.filter((url): url is string => url !== null)
+        const collectionImage = uploadedUrls.length > 0 ? uploadedUrls[0] : ""
+
+        const collectionData = {
+          name: eventName,
+          description: eventDescription,
+          image: collectionImage,
+          frequency,
+          createdAt: serverTimestamp(),
+          payId: collectionPayId,
+          events: [],
         }
 
-        await setDoc(doc(db, "publicEvents", eventName), publicEventData)
+        console.log("[v0] Saving collection to EventCollection...")
+        const collectionRef = doc(db, "EventCollection", user.uid, "collections", eventName)
+        await setDoc(collectionRef, collectionData)
+        console.log("[v0] Collection saved successfully")
 
-        router.push(
-          `/create-event/success?eventId=${eventId}&payId=${payId}&collectionName=${encodeURIComponent(selectedCollection.name)}`,
-        )
-      } else {
-        const eventCollectionRef = doc(db, "EventCollection", user.uid, "collections", eventName)
-        await setDoc(eventCollectionRef, {
-          name: eventName,
-          image: imagePreviewUrl,
-          description: eventDescription,
-          frequency,
-          createdAt: new Date(),
-          createdBy: user.uid,
-        })
-
-        const publicEventCollectionRef = doc(db, "publicEvents", eventName)
-        await setDoc(publicEventCollectionRef, {
+        console.log("[v0] Saving collection to public events...")
+        const publicCollectionRef = doc(db, "publicEvents", eventName)
+        await setDoc(publicCollectionRef, {
           eventName,
-          imageURL: imagePreviewUrl,
+          imageURL: collectionImage,
           eventGroup: true,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
           frequency,
-          createdAt: new Date(),
-          timestamp: new Date(),
-          creatorID: user.uid,
         })
+        console.log("[v0] Collection saved to public events")
 
-        router.push(`/create-event/success?type=event-group&eventName=${encodeURIComponent(eventName)}`)
+        const successUrl = `/create-event/success?eventName=${encodeURIComponent(eventName)}&type=event-group`
+        console.log("[v0] Event group created, redirecting to:", successUrl)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        router.push(successUrl)
       }
     } catch (err: any) {
-      setError(err.message || "Failed to create event")
+      console.error("[v0] Error:", err)
+      console.error("[v0] Error details:", {
+        message: err.message,
+        code: err.code,
+        stack: err.stack,
+      })
+      setError(err.message || "Failed to create event. Please try again.")
     } finally {
       setLoading(false)
     }
@@ -211,184 +402,382 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
     <>
       <Preloader isLoading={loading} />
 
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <form onSubmit={handleSubmit} className="max-w-5xl mx-auto space-y-8 pb-12">
+        {/* Page Header */}
+        <div className="text-center space-y-4 animate-in fade-in duration-700">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-[#6b2fa5] to-purple-600 rounded-2xl shadow-lg shadow-[#6b2fa5]/30 mb-4">
+            <Repeat className="w-8 h-8 text-white" />
+          </div>
+
+          <h1 className="text-5xl font-bold bg-gradient-to-r from-[#6b2fa5] via-[#8b3fc5] to-[#6b2fa5] bg-clip-text text-transparent">
+            {selectedCollection ? `Add Event to ${selectedCollection.name}` : "Create Event Group"}
+          </h1>
+
+          <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+            {selectedCollection
+              ? "Add a new event instance to your existing collection"
+              : "Create a new collection for recurring events"}
+          </p>
+        </div>
+
+        {/* Error Message */}
         {error && (
-          <div className="flex gap-3 p-4 rounded-lg bg-red-50 border border-red-200">
+          <div className="flex gap-3 p-4 rounded-xl bg-red-50 border-2 border-red-200 shadow-sm animate-in slide-in-from-top-2 duration-300">
             <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <p className="text-red-800">{error}</p>
+            <div className="flex-1">
+              <p className="font-semibold text-red-900 mb-1">Error</p>
+              <p className="text-red-800 text-sm">{error}</p>
+            </div>
           </div>
         )}
 
-        <div className="space-y-6 rounded-lg border border-border bg-card p-6">
-          <h2 className="text-2xl font-bold text-foreground">
-            {selectedCollection ? `Add Event to ${selectedCollection.name}` : "Event Group Information"}
-          </h2>
-
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-2">
-              {selectedCollection ? "Event Name" : "Event Group Name"} *
-            </label>
-            <input
-              type="text"
-              value={eventName}
-              onChange={(e) => setEventName(e.target.value)}
-              placeholder={
-                selectedCollection
-                  ? "e.g., Summer Tech Conference 2024"
-                  : "e.g., Annual Tech Conference, Monthly Meetup"
-              }
-              className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
-            />
+        {/* Basic Information */}
+        <div className="space-y-6 rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex items-center justify-center w-10 h-10 bg-[#6b2fa5]/10 rounded-lg">
+              <Type className="w-5 h-5 text-[#6b2fa5]" />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900">
+              {selectedCollection ? "Event Details" : "Collection Information"}
+            </h2>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-2">Description *</label>
-            <textarea
-              value={eventDescription}
-              onChange={(e) => setEventDescription(e.target.value)}
-              placeholder={
-                selectedCollection ? "Describe this specific event instance" : "Describe your recurring event series"
-              }
-              rows={4}
-              className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
-            />
+          <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                {selectedCollection ? "Event Name" : "Collection Name"} <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder={selectedCollection ? "e.g., Summer Music Festival 2024" : "e.g., Monthly Tech Meetup"}
+                value={eventName}
+                onChange={(e) => setEventName(e.target.value)}
+                required
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900 placeholder:text-slate-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Description <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <AlignLeft className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                <textarea
+                  placeholder="Describe your event or collection..."
+                  value={eventDescription}
+                  onChange={(e) => setEventDescription(e.target.value)}
+                  required
+                  rows={5}
+                  className="w-full pl-11 pr-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900 placeholder:text-slate-400 resize-none"
+                />
+              </div>
+            </div>
+
+            {!selectedCollection && (
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Event Type <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={eventType}
+                  onChange={(e) => setEventType(e.target.value)}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
+                >
+                  {eventTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {!selectedCollection && (
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Recurrence Frequency <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value as "yearly" | "monthly" | "quarterly")}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
+                >
+                  <option value="yearly">Yearly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                </select>
+              </div>
+            )}
           </div>
+        </div>
 
-          {selectedCollection && (
-            <>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">Event Type *</label>
-                  <select
-                    value={eventType}
-                    onChange={(e) => setEventType(e.target.value)}
-                    className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
-                  >
-                    {eventTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
+        {/* Event Details (only when adding to collection) */}
+        {selectedCollection && (
+          <>
+            {/* Location */}
+            <div className="space-y-6 rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="flex items-center justify-center w-10 h-10 bg-[#6b2fa5]/10 rounded-lg">
+                  <MapPin className="w-5 h-5 text-[#6b2fa5]" />
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">Venue *</label>
-                  <input
-                    type="text"
-                    value={eventVenue}
-                    onChange={(e) => setEventVenue(e.target.value)}
-                    placeholder="Enter venue name or address"
-                    className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
-                  />
-                </div>
+                <h2 className="text-2xl font-bold text-slate-900">Location</h2>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Event Venue <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-3">
+                  <div className="flex-1 relative">
+                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Enter event venue or address"
+                      value={eventVenue}
+                      onChange={(e) => setEventVenue(e.target.value)}
+                      required
+                      className="w-full pl-11 pr-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMapPicker(true)}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-[#6b2fa5] hover:bg-[#5a2589] text-white font-semibold rounded-lg transition-all duration-200 shadow-sm hover:shadow-md whitespace-nowrap"
+                  >
+                    <MapPinned className="w-5 h-5" />
+                    Pick on Map
+                  </button>
+                </div>
+                {venueCoordinates && (
+                  <p className="text-xs text-slate-600 mt-2 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3 text-emerald-600" />
+                    Location coordinates saved
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Date and Time */}
+            <div className="space-y-6 rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="flex items-center justify-center w-10 h-10 bg-[#6b2fa5]/10 rounded-lg">
+                  <Calendar className="w-5 h-5 text-[#6b2fa5]" />
+                </div>
+                <h2 className="text-2xl font-bold text-slate-900">Date & Time</h2>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-5">
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">Start Date *</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Start Date <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="date"
                     value={eventDate}
                     onChange={(e) => setEventDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">Start Time *</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Start Time <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="time"
                     value={eventStart}
                     onChange={(e) => setEventStart(e.target.value)}
-                    className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">End Date *</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    End Date <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="date"
                     value={eventEndDate}
                     onChange={(e) => setEventEndDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">End Time *</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    End Time <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="time"
                     value={eventEnd}
                     onChange={(e) => setEventEnd(e.target.value)}
-                    className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="rounded-lg border border-border bg-card p-6">
-                <AddPricing
-                  enablePricing={enablePricing}
-                  setEnablePricing={setEnablePricing}
-                  ticketPrices={ticketPrices}
-                  setTicketPrices={setTicketPrices}
+            {/* Pricing */}
+            <div className="rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm">
+              <AddPricing
+                enablePricing={enablePricing}
+                setEnablePricing={setEnablePricing}
+                ticketPrices={ticketPrices}
+                setTicketPrices={setTicketPrices}
+              />
+            </div>
+          </>
+        )}
+
+        {/* Images (only when creating new collection) */}
+        {!selectedCollection && (
+          <div className="space-y-6 rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="flex items-center justify-center w-10 h-10 bg-[#6b2fa5]/10 rounded-lg">
+                <ImageIcon className="w-5 h-5 text-[#6b2fa5]" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-900">Collection Images</h2>
+            </div>
+
+            <div className="space-y-5">
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-300 ${
+                  isDragging
+                    ? "border-[#6b2fa5] bg-[#6b2fa5]/5 scale-[1.02]"
+                    : "border-slate-300 hover:border-[#6b2fa5] hover:bg-slate-50"
+                }`}
+              >
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-2xl mb-4">
+                  <Upload className="h-8 w-8 text-slate-400" />
+                </div>
+                <p className="text-lg font-bold text-slate-900 mb-2">
+                  {eventImages.length === 0 ? "Upload Collection Images" : "Add More Images"}
+                </p>
+                <p className="text-sm text-slate-600 mb-3">Drag and drop images here, or click to select files</p>
+                <div className="inline-flex items-center gap-2 bg-[#6b2fa5]/10 border border-[#6b2fa5]/20 rounded-full px-4 py-2">
+                  <span className="text-xs font-semibold text-[#6b2fa5]">
+                    Maximum 8 images • First image will be the main collection image • {eventImages.length}/8 uploaded
+                  </span>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageChange}
+                  className="hidden"
                 />
               </div>
-            </>
-          )}
 
-          {!selectedCollection && (
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Recurrence Frequency *</label>
-              <select
-                value={frequency}
-                onChange={(e) => setFrequency(e.target.value as "yearly" | "monthly" | "quarterly")}
-                className="w-full px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
-              >
-                <option value="yearly">Yearly</option>
-                <option value="quarterly">Quarterly (4 times/year)</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </div>
-          )}
-        </div>
+              {imagePreviewUrls.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {imagePreviewUrls.map((url, index) => (
+                    <div key={index} className="relative group">
+                      <div className="relative w-full h-44 rounded-xl overflow-hidden border-2 border-slate-200 group-hover:border-[#6b2fa5] transition-all duration-300">
+                        <Image
+                          src={url || "/placeholder.svg"}
+                          alt={`Collection image ${index + 1}`}
+                          fill
+                          className="object-cover group-hover:scale-110 transition-transform duration-500"
+                        />
 
-        {!selectedCollection && (
-          <div className="space-y-6 rounded-lg border border-border bg-card p-6">
-            <h2 className="text-2xl font-bold text-foreground">Event Group Image</h2>
+                        {index === 0 && (
+                          <div className="absolute top-3 left-3 bg-gradient-to-r from-[#6b2fa5] to-purple-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-md">
+                            Main Image
+                          </div>
+                        )}
 
-            <div className="space-y-4">
-              {imagePreviewUrl && (
-                <div className="relative w-full h-64">
-                  <Image
-                    src={imagePreviewUrl || "/placeholder.svg"}
-                    alt="Event group preview"
-                    fill
-                    className="object-cover rounded-lg"
-                  />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeImage(index)
+                          }}
+                          className="absolute top-3 right-3 bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 shadow-md hover:scale-110"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+
+                        {isUploading[index] && (
+                          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm">
+                            <div className="w-3/4 h-2.5 bg-slate-700 rounded-full overflow-hidden mb-2">
+                              <div
+                                className="h-full bg-gradient-to-r from-[#6b2fa5] to-purple-500 transition-all duration-300"
+                                style={{ width: `${uploadProgress[index] || 0}%` }}
+                              />
+                            </div>
+                            <p className="text-white text-sm font-semibold">{uploadProgress[index] || 0}%</p>
+                          </div>
+                        )}
+
+                        {uploadComplete[index] && (
+                          <div className="absolute inset-0 bg-emerald-500/30 backdrop-blur-sm flex items-center justify-center">
+                            <div className="bg-emerald-500 rounded-full p-3">
+                              <CheckCircle className="h-8 w-8 text-white" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageChange}
-                className="w-full px-4 py-2 border border-border rounded-lg bg-background"
-              />
+              <div className="flex items-start gap-2 p-4 rounded-lg bg-blue-50 border border-blue-200">
+                <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-800">
+                  All images are automatically uploaded to Cloudinary for fast, reliable hosting.
+                </p>
+              </div>
             </div>
           </div>
         )}
 
+        {/* Submit Button */}
         <div className="flex gap-4">
           <button
             type="submit"
-            disabled={loading}
-            className="flex-1 px-6 py-3 bg-[#6b2fa5] text-white font-semibold rounded-lg hover:bg-[#5a26a3] disabled:opacity-50 transition-colors"
+            disabled={loading || isUploading.some((uploading) => uploading)}
+            className="flex-1 group inline-flex items-center justify-center gap-3 px-8 py-4 bg-gradient-to-r from-[#6b2fa5] to-purple-600 hover:from-[#5a2589] hover:to-[#6b2fa5] text-white font-bold text-lg rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-[#6b2fa5]/30 hover:shadow-xl hover:shadow-[#6b2fa5]/40 hover:-translate-y-0.5 active:translate-y-0"
           >
-            {loading ? "Creating..." : selectedCollection ? "Add Event to Collection" : "Create Event Group"}
+            {loading ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Creating...
+              </>
+            ) : isUploading.some((uploading) => uploading) ? (
+              <>
+                <Upload className="w-5 h-5 animate-pulse" />
+                Uploading Images...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+                {selectedCollection ? "Add Event to Collection" : "Create Event Group"}
+              </>
+            )}
           </button>
         </div>
       </form>
+
+      <MapPickerModal
+        isOpen={showMapPicker}
+        onClose={() => setShowMapPicker(false)}
+        onSelectLocation={(address, coordinates) => {
+          setEventVenue(address)
+          setVenueCoordinates(coordinates)
+        }}
+        currentAddress={eventVenue}
+      />
     </>
   )
 }
