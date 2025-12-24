@@ -2,12 +2,12 @@ import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["firebase-admin"],
-
   typescript: {
     ignoreBuildErrors: true,
   },
 
-    webpack: (config, { isServer }) => {
+  turbopack: {},
+  webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -18,7 +18,6 @@ const nextConfig: NextConfig = {
     }
     return config
   },
-
   images: {
     unoptimized: true,
     remotePatterns: [
