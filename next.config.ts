@@ -7,6 +7,18 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
 
+    webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        "firebase-admin": false,
+        "firebase-admin/app": false,
+        "firebase-admin/firestore": false,
+      }
+    }
+    return config
+  },
+
   images: {
     unoptimized: true,
     remotePatterns: [

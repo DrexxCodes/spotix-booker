@@ -735,7 +735,7 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
               <div className="flex items-start gap-2 p-4 rounded-lg bg-blue-50 border border-blue-200">
                 <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-blue-800">
-                  All images are automatically uploaded to Cloudinary for fast, reliable hosting.
+                  All images are automatically uploaded to Spotix Servers for fast, reliable hosting.
                 </p>
               </div>
             </div>
