@@ -1,6 +1,5 @@
 import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
-import { ClientLayoutWrapper } from "./components/ClientLayoutWrapper"
 import "./globals.css"
 
 const geistSans = Geist({
@@ -90,7 +89,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <div className="min-h-screen flex flex-col">
-        <ClientLayoutWrapper>{children}</ClientLayoutWrapper>
+        {children}
         </div>
       </body>
     </html>
