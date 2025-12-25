@@ -1,10 +1,10 @@
 import Link from "next/link"
-import { Nav } from "@/components/nav"
+// import { Nav } from "@/components/nav"
 
 export default function NotFound() {
   return (
     <>
-      <Nav />
+      {/* <Nav /> */}
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-100 flex flex-col items-center justify-center px-4 py-8">
         <div className="max-w-2xl mx-auto text-center">
           <div className="mb-8 flex justify-center">
