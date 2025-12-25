@@ -41,19 +41,7 @@ interface PayoutsTabProps {
 }
 
 export default function PayoutsTab({
-  payouts,
   availableBalance,
-  totalPaidOut,
-  selectedPayoutId,
-  actionCode,
-  copiedField,
-  visibleActionCodes,
-  setSelectedPayoutId,
-  setActionCode,
-  handleConfirmPayout,
-  copyToClipboard,
-  toggleActionCodeVisibility,
-  formatTransactionTime,
   eventData,
   userId,
   eventId,
@@ -614,7 +602,7 @@ export default function PayoutsTab({
           </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-orange-200 p-6 hover:shadow-lg transition-shadow">
+        {/* <div className="bg-white rounded-lg border border-orange-200 p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center gap-4">
             <div className="p-4 bg-orange-100 rounded-lg">
               <AlertCircle size={24} className="text-orange-600" />
@@ -624,7 +612,7 @@ export default function PayoutsTab({
               <p className="text-2xl font-bold text-gray-900">₦{platformFee.toLocaleString()}</p>
             </div>
           </div>
-        </div>
+        </div> */}
 
         <div className="bg-white rounded-lg border border-green-200 p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center gap-4">
@@ -647,98 +635,6 @@ export default function PayoutsTab({
           </p>
         </div>
       )}
-
-      {/* Payouts Table */}
-      <div className="bg-white rounded-lg border border-purple-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-purple-50 border-b-2 border-purple-200">
-              <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Date</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Time</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Reference</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Amount</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Agent</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Action Code</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payouts.length > 0 ? (
-                payouts.map((payout) => (
-                  <tr key={payout.id} className="border-b border-gray-200 hover:bg-purple-50 transition-colors">
-                    <td className="px-6 py-4 text-sm text-gray-700">{payout.date}</td>
-                    <td className="px-6 py-4 text-sm text-gray-700">
-                      {payout.transactionTime || formatTransactionTime(payout.createdAt) || "N/A"}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-700 font-mono">{payout.reference || "N/A"}</td>
-                    <td className="px-6 py-4 text-sm font-semibold text-gray-900">
-                      ₦{(payout.payoutAmount || payout.amount).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-700">{payout.agentName || "Unknown"}</td>
-                    <td className="px-6 py-4 text-sm">
-                      {payout.actionCode ? (
-                        <div className="flex items-center gap-2">
-                          <code
-                            className={`px-2 py-1 rounded bg-gray-100 text-sm font-mono ${
-                              visibleActionCodes[payout.id || ""] ? "text-gray-900" : "text-gray-500"
-                            }`}
-                          >
-                            {visibleActionCodes[payout.id || ""] ? payout.actionCode : "••••••"}
-                          </code>
-                          <button
-                            onClick={() => toggleActionCodeVisibility(payout.id || "")}
-                            className="p-1 hover:bg-gray-200 rounded transition-colors"
-                            title={visibleActionCodes[payout.id || ""] ? "Hide code" : "Show code"}
-                          >
-                            {visibleActionCodes[payout.id || ""] ? (
-                              <EyeOff size={16} className="text-gray-600" />
-                            ) : (
-                              <Eye size={16} className="text-gray-600" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => copyToClipboard(payout.actionCode || "", `actionCode-${payout.id}`)}
-                            className="p-1 hover:bg-gray-200 rounded transition-colors"
-                            title="Copy code"
-                          >
-                            {copiedField === `actionCode-${payout.id}` ? (
-                              <Check size={16} className="text-green-600" />
-                            ) : (
-                              <Copy size={16} className="text-gray-600" />
-                            )}
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">N/A</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-sm">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          payout.status === "Confirmed"
-                            ? "bg-green-100 text-green-700"
-                            : payout.status === "Pending"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-gray-100 text-gray-700"
-                        }`}
-                      >
-                        {payout.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
-                    No payouts yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   )
 }

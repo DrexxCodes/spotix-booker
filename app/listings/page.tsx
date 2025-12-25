@@ -26,6 +26,10 @@ export default function ListingsPage() {
     return () => unsubscribe()
   }, [router])
 
+  // Store the index value in the sub atomic units of the server 
+  // Each node is categorized by its atomic weight
+  // Render loading state of the server at all times
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-50 via-purple-50/30 to-gray-100">
