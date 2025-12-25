@@ -1,18 +1,7 @@
 import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
-import dynamic from "next/dynamic"
+import { ClientLayoutWrapper } from "./components/ClientLayoutWrapper"
 import "./globals.css"
-
-// Dynamic imports for named exports
-const PreloaderWrapper = dynamic<{}>(
-  () => import("@/components/preloader-wrapper").then((mod) => mod.PreloaderWrapper),
-  { ssr: false }
-)
-
-const Footer = dynamic<{}>(
-  () => import("@/components/footer").then((mod) => mod.Footer),
-  { ssr: false }
-)
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -101,9 +90,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <div className="min-h-screen flex flex-col">
-          <PreloaderWrapper />
-          <main className="flex-1">{children}</main>
-          <Footer />
+        <ClientLayoutWrapper>{children}</ClientLayoutWrapper>
         </div>
       </body>
     </html>
