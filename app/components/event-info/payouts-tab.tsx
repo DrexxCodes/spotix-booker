@@ -71,8 +71,9 @@ export default function PayoutsTab({
   const [isInPayQueue, setIsInPayQueue] = useState(false)
   const [checkingPayQueue, setCheckingPayQueue] = useState(true)
 
-  const platformFee = availableBalance * 0.05 + 100
-  const payableAmount = availableBalance - platformFee
+  const ticketsSold = attendees.length
+  const platformFee = eventData?.isFree ? 0 : availableBalance * 0.05 + ticketsSold * 100
+  const payableAmount = eventData?.isFree ? 0 : availableBalance - platformFee
 
   useEffect(() => {
     if (eventId) {
@@ -430,12 +431,19 @@ export default function PayoutsTab({
       {/* Request Payout Button - Only show if not in payQueue */}
       {!checkingPayQueue && !isInPayQueue && (
         <div className="flex justify-end">
-          <button
-            onClick={handleRequestPayout}
-            className="px-6 py-3 bg-[#6b2fa5] text-white font-semibold rounded-lg hover:bg-[#5a2589] transition-colors shadow-lg hover:shadow-xl"
-          >
-            Request Payout
-          </button>
+          {eventData?.isFree ? (
+            <div className="text-right">
+              <p className="text-gray-600 font-medium">This is a free event</p>
+              <p className="text-sm text-gray-500">No payouts needed for free events</p>
+            </div>
+          ) : (
+            <button
+              onClick={handleRequestPayout}
+              className="px-6 py-3 bg-[#6b2fa5] text-white font-semibold rounded-lg hover:bg-[#5a2589] transition-colors shadow-lg hover:shadow-xl"
+            >
+              Request Payout
+            </button>
+          )}
         </div>
       )}
 
@@ -588,7 +596,7 @@ export default function PayoutsTab({
         <AlertCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
         <p className="text-sm text-blue-700">
           Your payout will be processed after all verifications are complete. The payable amount excludes our platform
-          fee of 5% + ₦100.
+          fee of 5% + ₦100 of each ticket sold.
         </p>
       </div>
 

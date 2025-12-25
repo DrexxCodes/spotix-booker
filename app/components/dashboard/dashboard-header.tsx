@@ -127,7 +127,7 @@ export function DashboardHeader({ userName, onRefresh, isRefreshing }: Dashboard
               <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#6b2fa5' }}>
                 <Settings size={16} className="text-white" />
               </div>
-              Quick Actions
+              So, wanna...
             </h3>
             
             <div className="space-y-3">
