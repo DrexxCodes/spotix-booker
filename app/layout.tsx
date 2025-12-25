@@ -1,38 +1,61 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { PreloaderWrapper } from "@/components/preloader-wrapper";
-import {Footer} from "@/components/footer";
-import "./globals.css";
+"use client"
+
+import type { Metadata } from "next"
+import { Geist, Geist_Mono } from "next/font/google"
+import dynamic from "next/dynamic"
+import "./globals.css"
+
+// Dynamic imports for named exports
+const PreloaderWrapper = dynamic<{}>(
+  () => import("@/components/preloader-wrapper").then((mod) => mod.PreloaderWrapper),
+  { ssr: false }
+)
+
+const Footer = dynamic<{}>(
+  () => import("@/components/footer").then((mod) => mod.Footer),
+  { ssr: false }
+)
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
-});
+})
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
-});
+})
 
 export const metadata: Metadata = {
   title: {
     default: "Spotix Booker - Professional Event Management Platform",
-    template: "%s | Spotix Booker"
+    template: "%s | Spotix Booker",
   },
-  description: "Create, manage, and grow your events with Spotix Booker. The all-in-one event planning platform for seamless ticketing, attendee management, and real-time analytics. Perfect for conferences, concerts, workshops, and more.",
-  keywords: ["event management", "ticket booking", "event planning", "event ticketing", "spotix", "conference management", "event registration", "Nigeria events", "online ticketing"],
+  description:
+    "Create, manage, and grow your events with Spotix Booker. The all-in-one event planning platform for seamless ticketing, attendee management, and real-time analytics. Perfect for conferences, concerts, workshops, and more.",
+  keywords: [
+    "event management",
+    "ticket booking",
+    "event planning",
+    "event ticketing",
+    "spotix",
+    "conference management",
+    "event registration",
+    "Nigeria events",
+    "online ticketing",
+  ],
   authors: [{ name: "Spotix" }],
   creator: "Spotix",
   publisher: "Spotix",
-  metadataBase: new URL('https://booker.spotix.com.ng'), 
-  
+  metadataBase: new URL("https://booker.spotix.com.ng"),
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://booker.spotix.com.ng", 
+    url: "https://booker.spotix.com.ng",
     siteName: "Spotix Booker",
     title: "Spotix Booker - Professional Event Management Platform",
-    description: "Create, manage, and grow your events with Spotix Booker. The all-in-one event planning platform for seamless ticketing, attendee management, and real-time analytics.",
+    description:
+      "Create, manage, and grow your events with Spotix Booker. The all-in-one event planning platform for seamless ticketing, attendee management, and real-time analytics.",
     images: [
       {
         url: "https://i.postimg.cc/FR5xpcpZ/hero.jpg",
@@ -42,72 +65,49 @@ export const metadata: Metadata = {
       },
     ],
   },
-  
   twitter: {
     card: "summary_large_image",
     title: "Spotix Booker - Professional Event Management Platform",
-    description: "Create, manage, and grow your events with Spotix Booker. Seamless ticketing, attendee management, and real-time analytics.",
+    description:
+      "Create, manage, and grow your events with Spotix Booker. Seamless ticketing, attendee management, and real-time analytics.",
     images: ["https://i.postimg.cc/FR5xpcpZ/hero.jpg"],
     creator: "@spotix.ng",
   },
-  
   robots: {
     index: true,
     follow: true,
     googleBot: {
       index: true,
       follow: true,
-      'max-video-preview': -1,
-      'max-image-preview': 'large',
-      'max-snippet': -1,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
     },
   },
-  
   icons: {
     icon: [
-      {
-        url: "/xmas.png",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        url: "/xmas.png",
-        media: "(prefers-color-scheme: dark)",
-      },
-      {
-        url: "/xmas.png",
-        type: "image/png",
-      },
+      { url: "/xmas.png", media: "(prefers-color-scheme: light)" },
+      { url: "/xmas.png", media: "(prefers-color-scheme: dark)" },
+      { url: "/xmas.png", type: "image/png" },
     ],
     apple: "/xmas.png",
   },
-  
   manifest: "/manifest.json",
-  
   verification: {
-    // Add verification codes here when I have them
-    // google: "google-verification-code",
-    // yandex: "yandex-verification-code",
+    // Add verification codes here when available
   },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <div className="min-h-screen flex flex-col">
           <PreloaderWrapper />
-          <main className="flex-1">
-            {children}
-          </main>
+          <main className="flex-1">{children}</main>
           <Footer />
         </div>
       </body>
     </html>
-  );
+  )
 }
