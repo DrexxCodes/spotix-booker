@@ -1,13 +1,31 @@
 "use client"
 
-import type React from "react"
+import React from "react"
+
+import type { ReactElement } from "react"
 import { useState, useEffect } from "react"
-import { Plus, X, AlertCircle, Calendar, MapPin, Clock, Tag, Ticket, DollarSign, Users, FileText, Upload, Image as ImageIcon } from "lucide-react"
+import {
+  Plus,
+  X,
+  AlertCircle,
+  Calendar,
+  MapPin,
+  Clock,
+  Tag,
+  Ticket,
+  DollarSign,
+  Users,
+  FileText,
+  Upload,
+  ImageIcon,
+  HelpCircle,
+} from "lucide-react"
 import { db } from "@/lib/firebase"
 import { storage } from "@/lib/firebase"
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage"
 import { doc, updateDoc } from "firebase/firestore"
-import Image from "next/image"
+import Image from "next/image" // Imported Image
+import { uploadImage } from "@/lib/image-uploader" // Imported uploadImage
 
 interface TicketType {
   policy: string
@@ -36,15 +54,24 @@ export default function EditEventTab({
   setEditFormData,
   userId,
   eventId,
-}: EditEventTabProps) {
+}: EditEventTabProps): ReactElement {
   const [errorMessage, setErrorMessage] = useState("")
   const [uploadProgress, setUploadProgress] = useState(0)
   const [isUploading, setIsUploading] = useState(false)
   const [imagePreview, setImagePreview] = useState<string>(editFormData.eventImage || "")
+  const [eventImages, setEventImages] = useState<string[]>(editFormData.eventImages || [])
+  const [isUploadingImages, setIsUploadingImages] = useState<boolean[]>([])
+  const [imageUploadProgress, setImageUploadProgress] = useState<number[]>([])
+  const fileInputRef = React.createRef<HTMLInputElement>() // Added fileInputRef
 
   useEffect(() => {
     setImagePreview(editFormData.eventImage || "")
   }, [editFormData.eventImage])
+
+  // Initialize eventImages state from editFormData
+  useEffect(() => {
+    setEventImages(editFormData.eventImages || [])
+  }, [editFormData.eventImages])
 
   useEffect(() => {
     if (editFormData.enablePricing && editFormData.ticketPrices) {
@@ -73,14 +100,14 @@ export default function EditEventTab({
     if (!file) return
 
     // Validate file type
-    if (!file.type.startsWith('image/')) {
-      alert('Please upload an image file')
+    if (!file.type.startsWith("image/")) {
+      alert("Please upload an image file")
       return
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image size should be less than 5MB')
+      alert("Image size should be less than 5MB")
       return
     }
 
@@ -90,7 +117,7 @@ export default function EditEventTab({
     try {
       // Create a storage reference - use timestamp for unique filename
       const timestamp = Date.now()
-      const fileExtension = file.name.split('.').pop()
+      const fileExtension = file.name.split(".").pop()
       const fileName = `${timestamp}.${fileExtension}`
       const storageRef = ref(storage, `events/${fileName}`)
 
@@ -98,15 +125,15 @@ export default function EditEventTab({
       const uploadTask = uploadBytesResumable(storageRef, file)
 
       uploadTask.on(
-        'state_changed',
+        "state_changed",
         (snapshot) => {
           // Calculate upload progress
           const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100
           setUploadProgress(Math.round(progress))
         },
         (error) => {
-          console.error('Upload error:', error)
-          alert('Failed to upload image. Please try again.')
+          console.error("Upload error:", error)
+          alert("Failed to upload image. Please try again.")
           setIsUploading(false)
           setUploadProgress(0)
         },
@@ -114,7 +141,7 @@ export default function EditEventTab({
           // Upload completed successfully
           try {
             const downloadURL = await getDownloadURL(uploadTask.snapshot.ref)
-            
+
             // Update the form data with new image URL
             setEditFormData({ ...editFormData, eventImage: downloadURL })
             setImagePreview(downloadURL)
@@ -124,28 +151,28 @@ export default function EditEventTab({
               try {
                 const eventDocRef = doc(db, "events", userId, "userEvents", eventId)
                 await updateDoc(eventDocRef, {
-                  eventImage: downloadURL
+                  eventImage: downloadURL,
                 })
-                alert('Image uploaded and saved successfully!')
+                alert("Image uploaded and saved successfully!")
               } catch (firestoreError) {
-                console.error('Error updating Firestore:', firestoreError)
+                console.error("Error updating Firestore:", firestoreError)
                 alert('Image uploaded to storage, but failed to update event. Please click "Save Changes" to retry.')
               }
             } else {
               alert('Image uploaded successfully! Click "Save Changes" to update your event.')
             }
           } catch (error) {
-            console.error('Error getting download URL:', error)
-            alert('Failed to get image URL. Please try again.')
+            console.error("Error getting download URL:", error)
+            alert("Failed to get image URL. Please try again.")
           } finally {
             setIsUploading(false)
             setUploadProgress(0)
           }
-        }
+        },
       )
     } catch (error) {
-      console.error('Error initializing upload:', error)
-      alert('Failed to start upload. Please try again.')
+      console.error("Error initializing upload:", error)
+      alert("Failed to start upload. Please try again.")
       setIsUploading(false)
       setUploadProgress(0)
     }
@@ -156,90 +183,214 @@ export default function EditEventTab({
     setImagePreview("")
   }
 
+  const handleEventImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please upload an image file")
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image size should be less than 5MB")
+      return
+    }
+
+    setIsUploadingImages((prev) => {
+      const newState = [...prev]
+      newState[index] = true
+      return newState
+    })
+
+    try {
+      const { uploadPromise } = uploadImage(file, {
+        cloudinaryFolder: "Events",
+        onProgress: (progress) => {
+          setImageUploadProgress((prev) => {
+            const newState = [...prev]
+            newState[index] = progress
+            return newState
+          })
+        },
+      })
+
+      const result = await uploadPromise
+
+      if (result.url) {
+        const newImages = [...eventImages]
+        newImages[index] = result.url
+        setEventImages(newImages)
+        setEditFormData({ ...editFormData, eventImages: newImages })
+        alert("Image uploaded successfully!")
+      } else {
+        alert("Failed to upload image. Please try again.")
+      }
+    } catch (error) {
+      console.error("Error uploading image:", error)
+      alert("Failed to upload image. Please try again.")
+    } finally {
+      setIsUploadingImages((prev) => {
+        const newState = [...prev]
+        newState[index] = false
+        return newState
+      })
+    }
+  }
+
+  const handleEventImageUrlChange = (index: number, url: string) => {
+    const newImages = [...eventImages]
+    newImages[index] = url
+    setEventImages(newImages)
+    setEditFormData({ ...editFormData, eventImages: newImages })
+  }
+
+  const removeEventImage = (index: number) => {
+    const newImages = eventImages.filter((_, i) => i !== index)
+    setEventImages(newImages)
+    setEditFormData({ ...editFormData, eventImages: newImages })
+  }
+
+  const addEventImage = () => {
+    if (eventImages.length < 8) {
+      const newImages = [...eventImages, ""]
+      setEventImages(newImages)
+      setEditFormData({ ...editFormData, eventImages: newImages })
+    }
+  }
+
   return (
     <div className="space-y-6">
-      {/* Event Image Upload Section */}
+      {/* Event Image Upload Section - READ ONLY */}
       <div className="bg-white rounded-xl border-2 border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-2.5 bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] rounded-lg">
             <ImageIcon size={20} className="text-white" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900">Event Image</h3>
+          <h3 className="text-xl font-bold text-slate-900">Main Event Image</h3>
+          <div className="group relative">
+            {" "}
+            {/* Added tooltip for HelpCircle */}
+            <HelpCircle size={18} className="text-slate-400 cursor-help" />
+            <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-slate-900 text-white text-xs rounded-lg py-2 px-3 whitespace-nowrap z-10">
+              To edit this, please contact support
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4">
           {/* Image Preview */}
           {imagePreview && (
-            <div className="relative w-full h-64 sm:h-80 rounded-xl overflow-hidden border-2 border-slate-200 group">
-              <Image
-                src={imagePreview}
+            <div className="relative w-full h-64 sm:h-80 rounded-xl overflow-hidden border-2 border-slate-200">
+              <Image // Changed img to next/image.Image
+                src={imagePreview || "/placeholder.svg"}
                 alt="Event preview"
-                fill
+                fill // Added fill prop
                 className="object-cover"
               />
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
-                <button
-                  type="button"
-                  onClick={removeImage}
-                  className="px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors flex items-center gap-2"
-                >
-                  <X size={18} />
-                  Remove Image
-                </button>
-              </div>
             </div>
           )}
 
-          {/* Upload Button */}
-          <div className="relative">
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleImageUpload}
-              disabled={isUploading}
-              className="hidden"
-              id="event-image-upload"
-            />
-            <label
-              htmlFor="event-image-upload"
-              className={`flex flex-col items-center justify-center w-full p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-200 ${
-                isUploading
-                  ? 'border-slate-300 bg-slate-50 cursor-not-allowed'
-                  : 'border-slate-300 hover:border-[#6b2fa5] hover:bg-[#6b2fa5]/5'
-              }`}
-            >
-              <Upload size={40} className={`mb-3 ${isUploading ? 'text-slate-400' : 'text-[#6b2fa5]'}`} />
-              <p className="text-sm font-semibold text-slate-700 mb-1">
-                {isUploading ? 'Uploading...' : imagePreview ? 'Change Event Image' : 'Upload Event Image'}
-              </p>
-              <p className="text-xs text-slate-500">PNG, JPG, WEBP up to 5MB</p>
-            </label>
+          {/* Disabled message */}
+          <div className="p-4 bg-slate-50 border-2 border-slate-200 rounded-xl">
+            <p className="text-sm text-slate-600">
+              The main event image cannot be edited. Please contact support if you need to change it.
+            </p>
           </div>
 
-          {/* Upload Progress Bar */}
-          {isUploading && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-slate-700">Uploading...</span>
-                <span className="font-bold text-[#6b2fa5]">{uploadProgress}%</span>
-              </div>
-              <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] h-3 rounded-full transition-all duration-300 ease-out relative overflow-hidden"
-                  style={{ width: `${uploadProgress}%` }}
-                >
-                  <div className="absolute inset-0 bg-white/20 animate-pulse" />
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Hidden input to store image URL */}
-          <input
-            type="hidden"
-            name="eventImage"
-            value={editFormData.eventImage || ""}
-          />
+          <input type="hidden" name="eventImage" value={editFormData.eventImage || ""} />
+        </div>
+      </div>
+
+      {/* Other Event Images Section */}
+      <div className="bg-white rounded-xl border-2 border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2.5 bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] rounded-lg">
+            <ImageIcon size={20} className="text-white" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-900">Additional Event Images</h3>
+        </div>
+
+        <p className="text-sm text-slate-600 mb-6">
+          Add up to 8 additional images. Edit the URL directly or upload a new image using the button.
+        </p>
+
+        <div className="space-y-4">
+          {eventImages.map((imageUrl, index) => (
+            <div key={index} className="space-y-3 p-4 bg-slate-50 rounded-xl border-2 border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-semibold text-slate-700">Image {index + 1}</label>
+                <button
+                  type="button"
+                  onClick={() => removeEventImage(index)}
+                  className="text-red-500 hover:text-red-700 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Image URL input */}
+              <div>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Image URL</label>
+                <input
+                  type="text"
+                  value={imageUrl}
+                  onChange={(e) => handleEventImageUrlChange(index, e.target.value)}
+                  placeholder="https://example.com/image.jpg"
+                  className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200 text-sm"
+                />
+              </div>
+
+              {/* Upload button */}
+              <div>
+                <input
+                  ref={fileInputRef} // Assigned fileInputRef
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleEventImageUpload(e, index)}
+                  disabled={isUploadingImages[index]}
+                  className="hidden"
+                  id={`image-upload-${index}`}
+                />
+                <label
+                  htmlFor={`image-upload-${index}`}
+                  className={`flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg border-2 border-dashed transition-all duration-200 cursor-pointer text-sm font-semibold ${
+                    isUploadingImages[index]
+                      ? "border-slate-300 bg-slate-100 text-slate-400 cursor-not-allowed"
+                      : "border-[#6b2fa5]/30 hover:border-[#6b2fa5] hover:bg-[#6b2fa5]/5 text-[#6b2fa5]"
+                  }`}
+                >
+                  <Upload size={16} />
+                  {isUploadingImages[index] ? `Uploading... ${imageUploadProgress[index]}%` : "Upload Image"}
+                </label>
+              </div>
+
+              {/* Image preview */}
+              {imageUrl && (
+                <div className="relative w-full h-40 rounded-lg overflow-hidden border-2 border-slate-200">
+                  <Image // Changed img to next/image.Image
+                    src={imageUrl || "/placeholder.svg"}
+                    alt={`Event image ${index + 1}`}
+                    fill // Added fill prop
+                    className="object-cover"
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Add more images button */}
+          {eventImages.length < 8 && (
+            <button
+              type="button"
+              onClick={addEventImage}
+              className="w-full px-4 py-3 border-2 border-dashed border-[#6b2fa5]/30 hover:border-[#6b2fa5] hover:bg-[#6b2fa5]/5 rounded-xl text-[#6b2fa5] font-semibold transition-all duration-200 flex items-center justify-center gap-2"
+            >
+              <Plus size={18} />
+              Add Another Image ({eventImages.length}/8)
+            </button>
+          )}
         </div>
       </div>
 
@@ -251,22 +402,22 @@ export default function EditEventTab({
           </div>
           <h3 className="text-xl font-bold text-slate-900">Event Bio-Data</h3>
         </div>
-        
+
         <div className="space-y-5">
           <div>
             <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
               <Tag size={16} className="text-[#6b2fa5]" />
               Event Name
+              <div className="group relative">
+                <HelpCircle size={16} className="text-slate-400 cursor-help" />
+                <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-slate-900 text-white text-xs rounded-lg py-2 px-3 whitespace-nowrap z-10">
+                  To edit this, please contact support
+                </div>
+              </div>
             </label>
-            <input
-              type="text"
-              name="eventName"
-              value={editFormData.eventName}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
-              placeholder="Enter event name"
-              required
-            />
+            <div className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-200 rounded-xl text-slate-600 font-medium">
+              {editFormData.eventName}
+            </div>
           </div>
 
           <div>
@@ -290,75 +441,53 @@ export default function EditEventTab({
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
                 <Calendar size={16} className="text-[#6b2fa5]" />
                 Event Date
+                <div className="group relative">
+                  <HelpCircle size={16} className="text-slate-400 cursor-help" />
+                  <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-slate-900 text-white text-xs rounded-lg py-2 px-3 whitespace-nowrap z-10">
+                    To edit this, please contact support
+                  </div>
+                </div>
               </label>
-              <input
-                type="datetime-local"
-                name="eventDate"
-                value={editFormData.eventDate}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
-                required
-              />
+              <div className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-200 rounded-xl text-slate-600 font-medium">
+                {editFormData.eventDate}
+              </div>
             </div>
             <div>
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
                 <MapPin size={16} className="text-[#6b2fa5]" />
                 Event Venue
+                <div className="group relative">
+                  <HelpCircle size={16} className="text-slate-400 cursor-help" />
+                  <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-slate-900 text-white text-xs rounded-lg py-2 px-3 whitespace-nowrap z-10">
+                    To edit this, please contact support
+                  </div>
+                </div>
               </label>
-              <input
-                type="text"
-                name="eventVenue"
-                value={editFormData.eventVenue}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
-                placeholder="Enter venue location"
-                required
-              />
+              <div className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-200 rounded-xl text-slate-600 font-medium">
+                {editFormData.eventVenue}
+              </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
-                <Clock size={16} className="text-[#6b2fa5]" />
-                Start Time
-              </label>
-              <input
-                type="time"
-                name="eventStart"
-                value={editFormData.eventStart}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
-                required
-              />
             </div>
             <div>
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
                 <Calendar size={16} className="text-[#6b2fa5]" />
                 End Date
+                <div className="group relative">
+                  <HelpCircle size={16} className="text-slate-400 cursor-help" />
+                  <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-slate-900 text-white text-xs rounded-lg py-2 px-3 whitespace-nowrap z-10">
+                    To edit this, please contact support
+                  </div>
+                </div>
               </label>
-              <input
-                type="date"
-                name="eventEndDate"
-                value={editFormData.eventEndDate}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
-                required
-              />
+              <div className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-200 rounded-xl text-slate-600 font-medium">
+                {editFormData.eventEndDate}
+              </div>
             </div>
             <div>
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
-                <Clock size={16} className="text-[#6b2fa5]" />
-                End Time
-              </label>
-              <input
-                type="time"
-                name="eventEnd"
-                value={editFormData.eventEnd}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl focus:outline-none focus:border-[#6b2fa5] focus:ring-4 focus:ring-[#6b2fa5]/10 transition-all duration-200"
-                required
-              />
             </div>
           </div>
 
@@ -492,7 +621,10 @@ export default function EditEventTab({
             )}
 
             {editFormData.ticketPrices.map((ticket: TicketType, index: number) => (
-              <div key={index} className="p-5 border-2 border-slate-200 rounded-xl bg-gradient-to-br from-white to-slate-50 hover:shadow-md transition-all duration-200">
+              <div
+                key={index}
+                className="p-5 border-2 border-slate-200 rounded-xl bg-gradient-to-br from-white to-slate-50 hover:shadow-md transition-all duration-200"
+              >
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] rounded-lg flex items-center justify-center text-white text-sm font-bold">
@@ -614,4 +746,4 @@ export default function EditEventTab({
       </div>
     </div>
   )
-}     
+}

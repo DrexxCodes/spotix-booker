@@ -89,6 +89,68 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
     }
   }, [])
 
+  // Validation: Get minimum date (current date + 2 days)
+  const getMinDate = () => {
+    const today = new Date()
+    const minDate = new Date(today)
+    minDate.setDate(today.getDate() + 2)
+    return minDate.toISOString().split("T")[0]
+  }
+
+  // Validation: Get max stop date (event start date - 3 days)
+  const getMaxStopDate = () => {
+    if (!eventDate) return ""
+    const eventStartDate = new Date(eventDate)
+    const maxStopDate = new Date(eventStartDate)
+    maxStopDate.setDate(eventStartDate.getDate() - 3)
+    return maxStopDate.toISOString().split("T")[0]
+  }
+
+  // Validation: Check if end date/time is valid
+  const validateEndDateTime = () => {
+    if (!eventDate || !eventStart || !eventEndDate || !eventEnd) return true
+
+    const startDateTime = new Date(`${eventDate}T${eventStart}`)
+    const endDateTime = new Date(`${eventEndDate}T${eventEnd}`)
+
+    return endDateTime > startDateTime
+  }
+
+  // Validation: Check if stop date is valid
+  const validateStopDate = () => {
+    if (!enableStopDate || !stopDate || !eventDate) return true
+
+    const eventStartDate = new Date(eventDate)
+    const stopDateTime = new Date(stopDate)
+    const maxStopDate = new Date(eventStartDate)
+    maxStopDate.setDate(eventStartDate.getDate() - 3)
+
+    // Stop date must be at least 3 days before event start
+    return stopDateTime <= maxStopDate && stopDateTime < eventStartDate
+  }
+
+  // Auto-clear end date/time when start date/time changes
+  useEffect(() => {
+    if (!eventDate || !eventStart) {
+      setEventEndDate("")
+      setEventEnd("")
+    }
+  }, [eventDate, eventStart])
+
+  // Auto-adjust stop date if it becomes invalid
+  useEffect(() => {
+    if (enableStopDate && stopDate && eventDate) {
+      const eventStartDate = new Date(eventDate)
+      const stopDateTime = new Date(stopDate)
+      const maxStopDate = new Date(eventStartDate)
+      maxStopDate.setDate(eventStartDate.getDate() - 3)
+
+      if (stopDateTime > maxStopDate) {
+        setStopDate("")
+      }
+    }
+  }, [eventDate, stopDate, enableStopDate])
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
@@ -256,6 +318,20 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
       return
     }
 
+    // Validate end date/time
+    if (!validateEndDateTime()) {
+      setError("Event end date and time must be after the start date and time")
+      return
+    }
+
+    // Validate stop date
+    if (enableStopDate && stopDate) {
+      if (!validateStopDate()) {
+        setError("Stop date must be at least 3 days before the event start date")
+        return
+      }
+    }
+
     if (enablePricing && ticketPrices.length === 0) {
       setError("Please add at least one ticket type when pricing is enabled")
       return
@@ -280,13 +356,12 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
     setLoading(true)
 
     try {
-      const eventDateTimeString = `${eventDate}T${eventStart}`
-      const eventEndDateTimeString = `${eventEndDate}T${eventEnd}`
-
       console.log("[v0] Creating event with data:", {
         eventName,
-        eventDateTimeString,
-        eventEndDateTimeString,
+        eventDate,
+        eventStart,
+        eventEndDate,
+        eventEnd,
         userId: auth.currentUser.uid,
       })
 
@@ -294,13 +369,16 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
       const eventImage = uploadedUrls.length > 0 ? uploadedUrls[0] : null
       const eventImagesArray = uploadedUrls.slice(1)
 
-      const eventData = {
+      // Build event data with separate date/time fields
+      const eventData: any = {
         eventName,
         eventDescription,
         eventImage,
         eventImages: eventImagesArray,
-        eventDate: eventDateTimeString,
-        eventEndDate: eventEndDateTimeString,
+        eventDate, // Start date (YYYY-MM-DD)
+        eventStart, // Start time (HH:MM)
+        eventEndDate, // End date (YYYY-MM-DD)
+        eventEnd, // End time (HH:MM)
         eventVenue,
         venueCoordinates: venueCoordinates || null,
         eventType,
@@ -311,10 +389,17 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
         status: "active",
         ticketsSold: 0,
         revenue: 0,
-        hasStopDate: enableStopDate,
-        stopDate: enableStopDate && stopDate ? new Date(stopDate) : null,
         enabledCollaboration,
         allowAgents: enabledCollaboration ? allowAgents : false,
+      }
+
+      // Only add stop date if enabled and set
+      if (enableStopDate && stopDate) {
+        eventData.hasStopDate = true
+        eventData.stopDate = new Date(stopDate)
+      } else {
+        eventData.hasStopDate = false
+        eventData.stopDate = null
       }
 
       console.log("[v0] Saving to user events collection...")
@@ -327,7 +412,7 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
         imageURL: eventImage,
         eventType: eventType,
         venue: eventVenue,
-        eventStartDate: eventDate,
+        eventStartDate: eventDate, // Only the start date (YYYY-MM-DD)
         eventName: eventName,
         freeOrPaid:
           enablePricing && ticketPrices.length > 0 && ticketPrices.some((ticket) => ticket.policy && ticket.price),
@@ -501,57 +586,92 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
             <h2 className="text-2xl font-bold text-slate-900">Date & Time</h2>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-5">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">
-                Start Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={eventDate}
-                onChange={(e) => setEventDate(e.target.value)}
-                required
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
-              />
+          <div className="space-y-6">
+            {/* Event Start Section */}
+            <div className="p-5 rounded-lg border-2 border-slate-200 bg-slate-50/50">
+              <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                Event Start
+              </h3>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Start Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={eventDate}
+                    onChange={(e) => setEventDate(e.target.value)}
+                    min={getMinDate()}
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Event must be at least 2 days from today</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Start Time <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={eventStart}
+                    onChange={(e) => setEventStart(e.target.value)}
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">
-                Start Time <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                value={eventStart}
-                onChange={(e) => setEventStart(e.target.value)}
-                required
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
-              />
-            </div>
+            {/* Event End Section */}
+            <div className="p-5 rounded-lg border-2 border-slate-200 bg-slate-50/50">
+              <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                Event End
+              </h3>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    End Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={eventEndDate}
+                    onChange={(e) => setEventEndDate(e.target.value)}
+                    min={eventDate || getMinDate()}
+                    disabled={!eventDate || !eventStart}
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900 disabled:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
+                  />
+                  {(!eventDate || !eventStart) && (
+                    <p className="text-xs text-amber-600 mt-1">Set start date and time first</p>
+                  )}
+                </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">
-                End Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={eventEndDate}
-                onChange={(e) => setEventEndDate(e.target.value)}
-                required
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">
-                End Time <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                value={eventEnd}
-                onChange={(e) => setEventEnd(e.target.value)}
-                required
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
-              />
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    End Time <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={eventEnd}
+                    onChange={(e) => setEventEnd(e.target.value)}
+                    disabled={!eventDate || !eventStart}
+                    required
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900 disabled:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
+                  />
+                  {(!eventDate || !eventStart) && (
+                    <p className="text-xs text-amber-600 mt-1">Set start date and time first</p>
+                  )}
+                </div>
+              </div>
+              {eventEndDate && eventEnd && eventDate && eventStart && !validateEndDateTime() && (
+                <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
+                  <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-800">End date and time must be after start date and time</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -695,19 +815,45 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
                   <input
                     type="checkbox"
                     checked={enableStopDate}
-                    onChange={(e) => setEnableStopDate(e.target.checked)}
+                    onChange={(e) => {
+                      setEnableStopDate(e.target.checked)
+                      if (!e.target.checked) {
+                        setStopDate("")
+                      }
+                    }}
                     className="sr-only peer"
                   />
                   <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-[#6b2fa5]/20 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#6b2fa5]"></div>
                 </label>
               </div>
               {enableStopDate && (
-                <input
-                  type="datetime-local"
-                  value={stopDate}
-                  onChange={(e) => setStopDate(e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900"
-                />
+                <div className="space-y-3">
+                  <input
+                    type="datetime-local"
+                    value={stopDate}
+                    onChange={(e) => setStopDate(e.target.value)}
+                    max={getMaxStopDate()}
+                    disabled={!eventDate}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 text-slate-900 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  />
+                  {eventDate && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200">
+                      <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-blue-800">
+                        Stop date must be at least 3 days before event start date. Maximum date:{" "}
+                        {new Date(getMaxStopDate()).toLocaleDateString()}
+                      </p>
+                    </div>
+                  )}
+                  {stopDate && eventDate && !validateStopDate() && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
+                      <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-red-800">
+                        Stop date must be at least 3 days before the event start date
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
