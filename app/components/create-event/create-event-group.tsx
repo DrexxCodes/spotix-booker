@@ -179,7 +179,7 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
         })
 
         if (url) {
-          console.log(`[v0] Image ${index + 1} uploaded successfully to`, provider)
+          console.log(` Image ${index + 1} uploaded successfully to`, provider)
           setUploadComplete((prev) => {
             const newState = [...prev]
             newState[index] = true
@@ -199,11 +199,11 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
             })
           }, 5000)
         } else {
-          console.error(`[v0] Upload failed for image ${index + 1}: No URL returned`)
+          console.error(` Upload failed for image ${index + 1}: No URL returned`)
         }
       })
       .catch((error) => {
-        console.error(`[v0] Upload failed for image ${index + 1}:`, error)
+        console.error(` Upload failed for image ${index + 1}:`, error)
         setIsUploading((prev) => {
           const newState = [...prev]
           newState[index] = false
@@ -238,24 +238,22 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
-    console.log("[v0] Event group form submitted")
 
     if (!auth.currentUser) {
       setError("You must be logged in")
-      console.log("[v0] Missing auth.currentUser")
       return
     }
 
     if (!eventName || !eventDescription) {
       setError("Please fill in all required fields")
-      console.log("[v0] Missing eventName or eventDescription")
+      console.log(" Missing eventName or eventDescription")
       return
     }
 
     if (selectedCollection) {
       if (!eventDate || !eventVenue || !eventStart || !eventEndDate || !eventEnd) {
         setError("Please fill in all event details")
-        console.log("[v0] Missing event details for selected collection")
+        console.log(" Missing event details for selected collection")
         return
       }
     }
@@ -277,7 +275,6 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
       const user = auth.currentUser
 
       if (selectedCollection) {
-        console.log("[v0] Adding event to existing collection:", selectedCollection.id)
 
         const eventDateTimeString = `${eventDate}T${eventStart}`
         const eventEndDateTimeString = `${eventEndDate}T${eventEnd}`
@@ -306,12 +303,9 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
           collectionId: selectedCollection.id,
         }
 
-        console.log("[v0] Saving event to user events collection...")
         const eventsRef = collection(db, "events", user.uid, "userEvents")
         const docRef = await addDoc(eventsRef, eventData)
-        console.log("[v0] Event saved with ID:", docRef.id)
 
-        console.log("[v0] Saving to public events collection...")
         const publicEventData = {
           imageURL: eventImage,
           eventType: eventType,
@@ -326,9 +320,7 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
           eventGroup: false,
         }
         await setDoc(doc(db, "publicEvents", eventName), publicEventData)
-        console.log("[v0] Event saved to public events")
 
-        console.log("[v0] Saving to collection events...")
         const collectionEventsRef = collection(
           db,
           "EventCollection",
@@ -338,15 +330,12 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
           "events",
         )
         await addDoc(collectionEventsRef, eventData)
-        console.log("[v0] Event saved to collection")
 
         const payId = "PAY" + Math.random().toString(36).substring(2, 10).toUpperCase()
         const successUrl = `/create-event/success?eventId=${docRef.id}&payId=${payId}&type=one-time&eventName=${encodeURIComponent(eventName)}`
-        console.log("[v0] Event added to collection, redirecting to:", successUrl)
         await new Promise((resolve) => setTimeout(resolve, 500))
         router.push(successUrl)
       } else {
-        console.log("[v0] Creating new event collection")
 
         const collectionPayId = generatePayId()
 
@@ -363,12 +352,9 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
           events: [],
         }
 
-        console.log("[v0] Saving collection to EventCollection...")
         const collectionRef = doc(db, "EventCollection", user.uid, "collections", eventName)
         await setDoc(collectionRef, collectionData)
-        console.log("[v0] Collection saved successfully")
 
-        console.log("[v0] Saving collection to public events...")
         const publicCollectionRef = doc(db, "publicEvents", eventName)
         await setDoc(publicCollectionRef, {
           eventName,
@@ -378,16 +364,14 @@ export function CreateEventGroup({ onSuccess, selectedCollection }: CreateEventG
           createdBy: user.uid,
           frequency,
         })
-        console.log("[v0] Collection saved to public events")
 
         const successUrl = `/create-event/success?eventName=${encodeURIComponent(eventName)}&type=event-group`
-        console.log("[v0] Event group created, redirecting to:", successUrl)
         await new Promise((resolve) => setTimeout(resolve, 500))
         router.push(successUrl)
       }
     } catch (err: any) {
-      console.error("[v0] Error:", err)
-      console.error("[v0] Error details:", {
+      console.error(" Error:", err)
+      console.error(" Error details:", {
         message: err.message,
         code: err.code,
         stack: err.stack,

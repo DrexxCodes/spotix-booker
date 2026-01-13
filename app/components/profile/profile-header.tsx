@@ -27,7 +27,7 @@ interface ProfileHeaderProps {
 }
 
 export function ProfileHeader({ profileData }: ProfileHeaderProps) {
-  const editProfileUrl = process.env.NEXT_PUBLIC_SPOTIX_USER_URL || "https://spotix.com/profile/edit"
+  const editProfileUrl = process.env.NEXT_PUBLIC_SPOTIX_USER_URL || "https://spotix.com.ng/profile"
   const [copied, setCopied] = useState(false)
 
   const handleCopyBVT = async () => {

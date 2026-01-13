@@ -11,7 +11,7 @@ export default function Home() {
     // Redirect to dashboard after 5 seconds
     const timer = setTimeout(() => {
       router.push("/dashboard")
-    }, 5000)
+    }, 6000)
 
     return () => clearTimeout(timer)
   }, [router])

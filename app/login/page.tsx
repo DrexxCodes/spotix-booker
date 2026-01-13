@@ -48,7 +48,7 @@ export default function LoginPage() {
             <div className="inline-flex items-center justify-center mx-auto">
               <div className="relative w-32 h-32 rounded-2xl overflow-hidden shadow-lg">
                 <Image
-                  src="/xmas.png"
+                  src="/logo.png"
                   alt="Spotix"
                   fill
                   className="object-cover"
@@ -59,7 +59,7 @@ export default function LoginPage() {
             
             <div className="space-y-2">
               <h1 className="text-5xl font-bold bg-gradient-to-r from-[#6b2fa5] via-[#8b3fc5] to-[#6b2fa5] bg-clip-text text-transparent">
-                Spotix
+                Spotix Booker
               </h1>
               <p className="text-lg text-slate-600">Sign in to your booker dashboard</p>
             </div>

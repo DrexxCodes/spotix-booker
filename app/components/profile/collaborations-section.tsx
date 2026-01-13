@@ -22,10 +22,10 @@ export function CollaborationsSection({ profileData }: CollaborationsSectionProp
   const handleToggleCollaboration = async () => {
     setIsSaving(true)
     try {
-      console.log("[v0] Toggle collaboration called with uid:", profileData.uid)
+      console.log(" Toggle collaboration called with uid:", profileData.uid)
       
       if (!profileData.uid) {
-        console.error("[v0] No UID available")
+        console.error(" No UID available")
         alert("User ID not found. Please refresh the page.")
         setIsSaving(false)
         return
@@ -39,19 +39,19 @@ export function CollaborationsSection({ profileData }: CollaborationsSectionProp
         }),
       })
 
-      console.log("[v0] Response status:", response.status)
+      console.log(" Response status:", response.status)
 
       if (response.ok) {
         const data = await response.json()
-        console.log("[v0] API returned:", data)
+        console.log(" API returned:", data)
         setCollaborationEnabled(data.enabledCollaboration)
       } else {
         const errorData = await response.json()
-        console.error("[v0] API error response:", errorData)
+        console.error(" API error response:", errorData)
         alert(`Error: ${errorData.error}`)
       }
     } catch (error) {
-      console.error("[v0] Failed to toggle collaboration:", error)
+      console.error(" Failed to toggle collaboration:", error)
       alert("Failed to toggle collaboration. Check console for details.")
     } finally {
       setIsSaving(false)

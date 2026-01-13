@@ -26,9 +26,6 @@ export default function ListingsPage() {
     return () => unsubscribe()
   }, [router])
 
-  // Store the index value in the sub atomic units of the server 
-  // Each node is categorized by its atomic weight
-  // Render loading state of the server at all times
 
   if (loading) {
     return (
@@ -37,7 +34,7 @@ export default function ListingsPage() {
           <div className="w-16 h-16 border-4 border-[#6b2fa5]/30 border-t-[#6b2fa5] rounded-full animate-spin"></div>
           <Package className="w-8 h-8 text-[#6b2fa5] absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
         </div>
-        <p className="mt-4 text-gray-600 font-medium">Loading your workspace...</p>
+        <p className="mt-4 text-gray-600 font-medium">Loading your listings...</p>
       </div>
     )
   }

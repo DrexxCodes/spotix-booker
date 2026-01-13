@@ -235,12 +235,12 @@ export default function PayoutsTab({
   // Verification Check 3: Check for Reports
   const checkForReports = async (): Promise<{ passed: boolean; message: string }> => {
     try {
-      console.log("[v0] Checking reports for userId:", userId, "eventId:", eventId)
+      // console.log(" Checking reports for userId:", userId, "eventId:", eventId)
 
       const reportsCollectionRef = collection(db, "reports", userId, "events", eventId, "reports")
       const reportsSnapshot = await getDocs(reportsCollectionRef)
 
-      console.log("[v0] Found", reportsSnapshot.size, "report(s)")
+      // console.log(" Found", reportsSnapshot.size, "report(s)")
 
       if (!reportsSnapshot.empty) {
         // Check if any report has unresolved or pending status
@@ -249,7 +249,7 @@ export default function PayoutsTab({
 
         reportsSnapshot.forEach((reportDoc) => {
           const reportData = reportDoc.data()
-          console.log("[v0] Report ID:", reportDoc.id, "Status:", reportData.status)
+          // console.log(" Report ID:", reportDoc.id, "Status:", reportData.status)
 
           if (reportData.status === "unresolved" || reportData.status === "pending") {
             hasUnresolvedOrPending = true
@@ -258,7 +258,7 @@ export default function PayoutsTab({
         })
 
         if (hasUnresolvedOrPending) {
-          console.log("[v0] Blocking payout due to unresolved/pending reports:", problematicReports)
+          console.log(" Blocking payout due to unresolved/pending reports:", problematicReports)
           return {
             passed: false,
             message:
@@ -266,14 +266,14 @@ export default function PayoutsTab({
           }
         }
 
-        console.log("[v0] All reports are resolved/settled")
+        // console.log(" All reports are resolved/settled")
       } else {
-        console.log("[v0] No reports found for this event")
+        console.log(" No reports found for this event")
       }
 
       return { passed: true, message: "" }
     } catch (error) {
-      console.error("[v0] Error checking reports:", error)
+      console.error(" Error checking reports:", error)
       return { passed: true, message: "" } // If no reports collection, pass the check
     }
   }
@@ -304,17 +304,17 @@ export default function PayoutsTab({
   // Verification Check 5: Check if Event is Flagged
   const checkEventFlagged = async (): Promise<{ passed: boolean; message: string }> => {
     try {
-      console.log("[v0] Checking if event is flagged")
-      console.log("[v0] Fetching event from path: events/{userId}/userEvents/{eventId}")
-      console.log("[v0] userId (creatorId):", userId)
-      console.log("[v0] eventId:", eventId)
+      console.log(" Checking if event is flagged")
+      console.log(" Fetching event from path: events/{userId}/userEvents/{eventId}")
+      console.log(" userId (creatorId):", userId)
+      console.log(" eventId:", eventId)
 
       // Fetch event document directly from Firestore to get the most current flagged status
       const eventDocRef = doc(db, "events", userId, "userEvents", eventId)
       const eventDoc = await getDoc(eventDocRef)
 
       if (!eventDoc.exists()) {
-        console.log("[v0] Event document not found")
+        console.log(" Event document not found")
         return {
           passed: false,
           message: "Event not found. Unable to verify event status.",
@@ -324,7 +324,7 @@ export default function PayoutsTab({
       const eventDocData = eventDoc.data()
       const flaggedValue = eventDocData?.flagged
 
-      console.log("[v0] Event document data:", {
+      console.log(" Event document data:", {
         eventId: eventDoc.id,
         eventName: eventDocData?.eventName,
         flagged: flaggedValue,
@@ -335,7 +335,7 @@ export default function PayoutsTab({
       // CRITICAL: If flagged is explicitly true (boolean true), BLOCK payout immediately
       // DO NOT PROCEED if flagged === true
       if (flaggedValue === true) {
-        console.log("[v0] CRITICAL: Event is flagged with true value - BLOCKING PAYOUT")
+        console.log(" CRITICAL: Event is flagged with true value - BLOCKING PAYOUT")
         return {
           passed: false,
           message:
@@ -345,10 +345,10 @@ export default function PayoutsTab({
 
       // Only allow payout if flagged is false or absent (undefined/null)
       // This includes: flagged === false, flagged === undefined, flagged === null
-      console.log("[v0] Event flagged field is not true (value:", flaggedValue, ") - allowing payout to proceed")
+      console.log(" Event flagged field is not true (value:", flaggedValue, ") - allowing payout to proceed")
       return { passed: true, message: "" }
     } catch (error) {
-      console.error("[v0] Error checking event flagged status:", error)
+      console.error(" Error checking event flagged status:", error)
       return {
         passed: false,
         message: "Unable to verify event status. Please try again later.",
