@@ -25,7 +25,7 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
   const qrCodeRef = useRef<HTMLDivElement>(null)
   const qrCodeInstance = useRef<any>(null)
 
-  const origin = typeof window !== "undefined" ? window.location.origin : ""
+  const origin = "https://spotix.com.ng"
 
   // Generate slug from event name
   const slugFromName = (name: string): string => {
@@ -90,16 +90,22 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
     }
   }, [existingSlug, origin])
 
-  // Check if shortlink exists on load
+  // Check if shortlink exists on load, and create if it doesn't
   useEffect(() => {
     let active = true
 
-    async function checkExisting() {
+    async function checkAndCreateIfNeeded() {
       setLinkError(null)
       setCheckingLink(true)
 
       if (!slugCandidate) {
         setExistingSlug(null)
+        setCheckingLink(false)
+        return
+      }
+
+      // Validate required data before checking
+      if (!eventData.eventName || !eventData.id || !currentUserId) {
         setCheckingLink(false)
         return
       }
@@ -111,88 +117,50 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
         if (!active) return
 
         if (snapshot.exists()) {
+          // Link already exists, just set it
           setExistingSlug(slugCandidate)
+          setCheckingLink(false)
         } else {
-          setExistingSlug(null)
+          // Link doesn't exist, create it automatically
+          setCreating(true)
+          
+          const linkData = {
+            slug: slugCandidate,
+            eventName: eventData.eventName,
+            eventId: eventData.id,
+            bookerId: currentUserId,
+            createdAt: serverTimestamp()
+          }
+
+          await setDoc(linkDocRef, linkData)
+
+          // Verify creation
+          const verifyDoc = await getDoc(linkDocRef)
+          if (verifyDoc.exists()) {
+            setExistingSlug(slugCandidate)
+          } else {
+            setLinkError("Failed to verify shortlink creation")
+          }
+          
+          setCreating(false)
+          setCheckingLink(false)
         }
       } catch (e: any) {
-        console.error("Error checking shortlink:", e)
+        console.error("Error checking/creating shortlink:", e)
         if (active) {
-          setLinkError(`Failed to check shortlink: ${e?.message || "Unknown error"}`)
+          setLinkError(`Failed to check/create shortlink: ${e?.message || "Unknown error"}`)
           setExistingSlug(null)
-        }
-      } finally {
-        if (active) {
+          setCreating(false)
           setCheckingLink(false)
         }
       }
     }
 
-    checkExisting()
+    checkAndCreateIfNeeded()
     return () => {
       active = false
     }
-  }, [slugCandidate])
-
-  const handleCreateShortlink = async () => {
-    setLinkError(null)
-
-    // Validate required data
-    if (!eventData.eventName) {
-      setLinkError("Event name is required to create a shortlink.")
-      return
-    }
-    if (!eventData.id) {
-      setLinkError("Event ID is missing.")
-      return
-    }
-    if (!currentUserId) {
-      setLinkError("User must be logged in to create a shortlink.")
-      return
-    }
-    if (!slugCandidate) {
-      setLinkError("Could not generate a shortlink slug from the event name.")
-      return
-    }
-
-    try {
-      setCreating(true)
-
-      const linkDocRef = doc(db, "Links", slugCandidate)
-
-      // Double-check if it exists
-      const existing = await getDoc(linkDocRef)
-      if (existing.exists()) {
-        setExistingSlug(slugCandidate)
-        setCreating(false)
-        return
-      }
-
-      // Create the shortlink document
-      const linkData = {
-        slug: slugCandidate,
-        eventName: eventData.eventName,
-        eventId: eventData.id,
-        bookerId: currentUserId,
-        createdAt: serverTimestamp()
-      }
-
-      await setDoc(linkDocRef, linkData)
-
-      // Verify creation
-      const verifyDoc = await getDoc(linkDocRef)
-      if (verifyDoc.exists()) {
-        setExistingSlug(slugCandidate)
-      } else {
-        setLinkError("Failed to verify shortlink creation")
-      }
-    } catch (e: any) {
-      console.error("Error creating shortlink:", e)
-      setLinkError(`Failed to create shortlink: ${e?.message || "Unknown error"}`)
-    } finally {
-      setCreating(false)
-    }
-  }
+  }, [slugCandidate, eventData.eventName, eventData.id, currentUserId])
 
   const handleCopyShortlink = async () => {
     if (!shortlinkUrl) return
@@ -214,15 +182,13 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
     }
   }
 
-  const isButtonDisabled = creating || checkingLink || !eventData.eventName || !eventData.id || !currentUserId || !slugCandidate
-
   return (
     <div className="event-link-tab">
       <div className="header-section">
         <div className="header-content">
           <h2 className="section-title">Event Shortlink & QR Code</h2>
           <p className="section-description">
-            Create a memorable shortlink and QR code for your event that's easy to share
+            Your memorable shortlink and QR code for easy sharing
           </p>
         </div>
       </div>
@@ -234,10 +200,10 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
         </div>
       )}
 
-      {checkingLink ? (
+      {checkingLink || creating ? (
         <div className="loading-state">
           <Loader2 className="spin" size={20} />
-          <span>Checking for existing shortlink...</span>
+          <span>{creating ? "Creating shortlink..." : "Checking for existing shortlink..."}</span>
         </div>
       ) : existingSlug ? (
         <div className="link-created-section">
@@ -305,35 +271,9 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
       ) : (
         <div className="create-link-section">
           <div className="create-card">
-            <div className="icon-wrapper">
-              <Link2 size={32} />
-            </div>
-            <h3>Create Your Event Shortlink</h3>
-            <p>Generate a custom shortlink and QR code to make sharing your event easier</p>
-            
-            <div className="preview-slug">
-              <span className="preview-label">Your shortlink will be:</span>
-              <code className="preview-url">{origin}/discover/{slugCandidate || "..."}</code>
-            </div>
-
-            <button
-              className="btn btn-primary btn-large"
-              onClick={handleCreateShortlink}
-              disabled={isButtonDisabled}
-              type="button"
-            >
-              {creating ? (
-                <>
-                  <Loader2 className="spin" size={18} />
-                  <span>Creating Shortlink...</span>
-                </>
-              ) : (
-                <>
-                  <Link2 size={18} />
-                  <span>Create Shortlink</span>
-                </>
-              )}
-            </button>
+            <p className="no-link-message">
+              Unable to create shortlink. Please ensure all event details are complete.
+            </p>
           </div>
         </div>
       )}
@@ -510,52 +450,10 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
           box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
 
-        .icon-wrapper {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 64px;
-          height: 64px;
-          background: linear-gradient(135deg, #6b2fa5, #8a4bd6);
-          color: white;
-          border-radius: 16px;
-          margin-bottom: 1.5rem;
-        }
-
-        .create-card h3 {
-          font-size: 1.5rem;
-          font-weight: 700;
-          color: #1e293b;
-          margin: 0 0 0.75rem 0;
-        }
-
-        .create-card p {
+        .no-link-message {
           color: #64748b;
           font-size: 1rem;
-          margin: 0 0 1.5rem 0;
-          line-height: 1.6;
-        }
-
-        .preview-slug {
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          padding: 1rem;
-          margin-bottom: 1.5rem;
-        }
-
-        .preview-label {
-          display: block;
-          font-size: 0.85rem;
-          color: #64748b;
-          margin-bottom: 0.5rem;
-        }
-
-        .preview-url {
-          font-family: 'Monaco', 'Courier New', monospace;
-          color: #6b2fa5;
-          font-size: 0.95rem;
-          word-break: break-all;
+          margin: 0;
         }
 
         .btn {
@@ -598,26 +496,6 @@ const EventLinkTab: React.FC<EventLinkTabProps> = ({ eventData, userId, currentU
         .btn-download:hover:not(:disabled) {
           background: #f1f5f9;
           border-color: #cbd5e1;
-        }
-
-        .btn-primary {
-          background: linear-gradient(135deg, #6b2fa5, #8a4bd6);
-          color: white;
-          box-shadow: 0 4px 12px rgba(107, 47, 165, 0.3);
-        }
-
-        .btn-primary:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(107, 47, 165, 0.4);
-        }
-
-        .btn-primary:active:not(:disabled) {
-          transform: translateY(0);
-        }
-
-        .btn-large {
-          padding: 1rem 2rem;
-          font-size: 1rem;
         }
 
         @media (max-width: 640px) {
