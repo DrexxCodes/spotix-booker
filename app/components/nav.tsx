@@ -26,6 +26,7 @@ export function Nav() {
     { href: "/dashboard", label: "Home" },
     { href: "/create-event", label: "Create Event" },
     { href: "/events", label: "Events" },
+    { href: "/profile", label: "Profile" },
     { href: "/reports", label: "Reports" },
     { href: "/listings", label: "Spotix Store" },
   ]

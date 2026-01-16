@@ -17,6 +17,7 @@ import PayoutsTab from "@/components/event-info/payouts-tab"
 import EditEventTab from "@/components/event-info/edit-event-tab"
 import MerchTab from "@/components/event-info/merch-tab"
 import ReferralsTab from "@/components/event-info/referrals-tab"
+import EventLinkTab from "@/components/event-info/event-link-tab"
 
 interface EventData {
   id: string
@@ -138,7 +139,7 @@ export default function EventInfoPage({
   const [attendees, setAttendees] = useState<AttendeeData[]>([])
   const [payouts, setPayouts] = useState<PayoutData[]>([])
   const [activeTab, setActiveTab] = useState<
-    "overview" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals"
+    "overview" | "eventlink" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals"
   >("overview")
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(["overview"]))
   const [ticketSalesByDay, setTicketSalesByDay] = useState<any[]>([])
@@ -176,7 +177,7 @@ export default function EventInfoPage({
   }, [eventData, attendees])
 
   const handleTabSwitch = (
-    tab: "overview" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals",
+    tab: "overview" | "eventlink" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals",
   ) => {
     setActiveTab(tab)
     setLoadedTabs((prev) => new Set([...Array.from(prev), tab]))
@@ -612,7 +613,7 @@ export default function EventInfoPage({
           {/* Tab Navigation */}
           <div className="border-b border-slate-200 bg-white rounded-t-lg">
             <div className="flex overflow-x-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-[#6b2fa5] [&::-webkit-scrollbar-thumb]:rounded-full">
-              {(["overview", "attendees", "discounts", "merch", "referrals", "payouts", "edit"] as const).map((tab) => (
+              {(["overview", "eventlink", "attendees", "discounts", "merch", "referrals", "payouts", "edit"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => handleTabSwitch(tab)}
@@ -624,6 +625,8 @@ export default function EventInfoPage({
                 >
                   {tab === "overview"
                     ? "Overview"
+                    : tab === "eventlink"
+                     ? "Event Link"
                     : tab === "attendees"
                       ? "Attendees"
                       : tab === "discounts"
@@ -660,6 +663,21 @@ export default function EventInfoPage({
                 )}
               </>
             )}
+
+          {activeTab === "eventlink" && (
+              <>
+              {loadedTabs.has("eventlink") && eventData && currentUser ? (
+             <EventLinkTab
+                  eventData={eventData}
+                  userId={userId}
+                  currentUserId={currentUser.uid}
+      />
+    ) : (
+      <TabSkeleton />
+    )}
+  </>
+)}
+
 
             {activeTab === "attendees" && (
               <>
