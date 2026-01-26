@@ -28,7 +28,7 @@ export function Nav() {
     { href: "/events", label: "Events" },
     { href: "/profile", label: "Profile" },
     { href: "/reports", label: "Reports" },
-    { href: "/listings", label: "Spotix Store" },
+    { href: "/listings", label: "My Store" },
   ]
 
   return (

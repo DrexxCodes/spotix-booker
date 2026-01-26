@@ -18,6 +18,8 @@ import EditEventTab from "@/components/event-info/edit-event-tab"
 import MerchTab from "@/components/event-info/merch-tab"
 import ReferralsTab from "@/components/event-info/referrals-tab"
 import EventLinkTab from "@/components/event-info/event-link-tab"
+import FormTab from "@/components/event-info/form-tab"
+import ResponsesTab from "@/components/event-info/responses-tab"
 
 interface EventData {
   id: string
@@ -139,7 +141,7 @@ export default function EventInfoPage({
   const [attendees, setAttendees] = useState<AttendeeData[]>([])
   const [payouts, setPayouts] = useState<PayoutData[]>([])
   const [activeTab, setActiveTab] = useState<
-    "overview" | "eventlink" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals"
+    "overview" | "eventlink" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals" | "form" | "responses"
   >("overview")
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(["overview"]))
   const [ticketSalesByDay, setTicketSalesByDay] = useState<any[]>([])
@@ -177,7 +179,7 @@ export default function EventInfoPage({
   }, [eventData, attendees])
 
   const handleTabSwitch = (
-    tab: "overview" | "eventlink" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals",
+    tab: "overview" | "eventlink" | "attendees" | "payouts" | "edit" | "discounts" | "merch" | "referrals" | "form" | "responses",
   ) => {
     setActiveTab(tab)
     setLoadedTabs((prev) => new Set([...Array.from(prev), tab]))
@@ -613,7 +615,7 @@ export default function EventInfoPage({
           {/* Tab Navigation */}
           <div className="border-b border-slate-200 bg-white rounded-t-lg">
             <div className="flex overflow-x-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-[#6b2fa5] [&::-webkit-scrollbar-thumb]:rounded-full">
-              {(["overview", "eventlink", "attendees", "discounts", "merch", "referrals", "payouts", "edit"] as const).map((tab) => (
+              {(["overview", "eventlink", "attendees", "discounts", "merch", "referrals", "form", "responses", "payouts", "edit"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => handleTabSwitch(tab)}
@@ -635,9 +637,13 @@ export default function EventInfoPage({
                           ? "Merch"
                           : tab === "referrals"
                             ? "Referrals"
-                            : tab === "payouts"
-                              ? "Payouts"
-                              : "Edit Event"}
+                            : tab === "form"
+                              ? "Form"
+                              : tab === "responses"
+                                ? "Responses"
+                                : tab === "payouts"
+                                  ? "Payouts"
+                                  : "Edit Event"}
                 </button>
               ))}
             </div>
@@ -722,6 +728,30 @@ export default function EventInfoPage({
 
             {activeTab === "referrals" && (
               <>{loadedTabs.has("referrals") ? <ReferralsTab userId={userId} eventId={eventId} /> : <TabSkeleton />}</>
+            )}
+
+            {activeTab === "form" && (
+              <>
+                {loadedTabs.has("form") && eventData ? (
+                  <FormTab
+                    userId={userId}
+                    eventId={eventId}
+                    ticketTypes={eventData.ticketPrices || []}
+                  />
+                ) : (
+                  <TabSkeleton />
+                )}
+              </>
+            )}
+
+            {activeTab === "responses" && (
+              <>
+                {loadedTabs.has("responses") ? (
+                  <ResponsesTab userId={userId} eventId={eventId} />
+                ) : (
+                  <TabSkeleton />
+                )}
+              </>
             )}
 
             {activeTab === "payouts" && (

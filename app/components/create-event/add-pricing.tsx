@@ -51,7 +51,7 @@ export function AddPricing({ enablePricing, setEnablePricing, ticketPrices, setT
     )
 
     if (freeTickets.length > 1) {
-      setErrorMessage("Only one ticket type can be set as free when pricing is enabled.")
+      setErrorMessage("Only one ticket type can be set as free. You can have multiple paid tickets, but only one free ticket type is allowed.")
       return false
     } else {
       setErrorMessage("")
@@ -151,8 +151,8 @@ export function AddPricing({ enablePricing, setEnablePricing, ticketPrices, setT
           <div className="flex items-start gap-3 p-4 rounded-xl bg-blue-50 border border-blue-200">
             <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-blue-800 leading-relaxed">
-              Configure your ticket types and prices. You can have multiple ticket types, but only <strong>one</strong>{" "}
-              can be set as free.
+              Configure your ticket types and prices. You can have as many paid tickets as you want, and optionally include{" "}
+              <strong>one free ticket</strong> type alongside them. Only one ticket can be set as free.
             </p>
           </div>
 
