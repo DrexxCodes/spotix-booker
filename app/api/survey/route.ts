@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      const validTypes = ["short", "long", "number", "radio", "checkbox"]
+      const validTypes = ["short", "long", "number", "radio", "checkbox", "phone", "date", "time", "datetime"]
       if (!validTypes.includes(question.questionType)) {
         return NextResponse.json(
           { error: `Invalid question type. Must be one of: ${validTypes.join(", ")}` },

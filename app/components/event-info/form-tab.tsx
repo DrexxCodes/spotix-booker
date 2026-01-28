@@ -13,13 +13,15 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle,
+  Calendar,
+  Clock,
 } from "lucide-react"
 import { FormSettings } from "./helper/form-settings"
 
 interface Question {
   id?: string
   questionText: string
-  questionType: "short" | "long" | "number" | "radio" | "checkbox"
+  questionType: "short" | "long" | "number" | "radio" | "checkbox" | "date" | "time" | "datetime"
   options?: string[]
   required: boolean
 }
@@ -237,6 +239,12 @@ export default function FormTab({ userId, eventId, ticketTypes }: FormTabProps) 
         return <Circle className="w-4 h-4" />
       case "checkbox":
         return <ListChecks className="w-4 h-4" />
+      case "date":
+        return <Calendar className="w-4 h-4" />
+      case "time":
+        return <Clock className="w-4 h-4" />
+      case "datetime":
+        return <Calendar className="w-4 h-4" />
       default:
         return <FileText className="w-4 h-4" />
     }
@@ -376,8 +384,11 @@ export default function FormTab({ userId, eventId, ticketTypes }: FormTabProps) 
                               <option value="short">Short Answer</option>
                               <option value="long">Long Answer</option>
                               <option value="number">Number</option>
-                              <option value="radio">Multiple Choice</option>
-                              <option value="checkbox">Checkboxes</option>
+                              <option value="radio">Single Choice</option>
+                              <option value="checkbox">Multiple Choice</option>
+                              <option value="date">Date</option>
+                              <option value="time">Time</option>
+                              <option value="datetime">Date & Time</option>
                             </select>
                             <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                               {getQuestionTypeIcon(question.questionType)}
