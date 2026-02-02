@@ -11,15 +11,45 @@ import { useAuth } from "@/hooks/useAuth"
 
 export function Nav() {
   const [isOpen, setIsOpen] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const { user } = useAuth()
   const router = useRouter()
 
   const toggleMenu = () => setIsOpen((prev) => !prev)
 
   const handleLogout = async () => {
-    await signOut(auth)
-    setIsOpen(false)
-    router.push("/login")
+    setIsLoggingOut(true)
+    try {
+      // Step 1: Call server-side logout API to clear session cookies and revoke tokens
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+
+      if (response.ok) {
+        console.log("✅ Server session cleared successfully")
+      } else {
+        console.warn("⚠️ Server logout failed, but continuing with client logout")
+      }
+    } catch (error) {
+      console.error("❌ Error clearing server session:", error)
+      // Continue with client logout even if server logout fails
+    }
+
+    try {
+      // Step 2: Sign out from Firebase client SDK
+      await signOut(auth)
+      console.log("✅ Client session cleared successfully")
+    } catch (error) {
+      console.error("❌ Error signing out from client:", error)
+    } finally {
+      setIsLoggingOut(false)
+      setIsOpen(false)
+      // Redirect to login page
+      router.push("/login")
+    }
   }
 
   const navItems = [
@@ -29,6 +59,7 @@ export function Nav() {
     { href: "/profile", label: "Profile" },
     { href: "/reports", label: "Reports" },
     { href: "/listings", label: "My Store" },
+    { href: "/verification", label: "Apply for Verification" },
   ]
 
   return (
@@ -61,10 +92,20 @@ export function Nav() {
             {user ? (
               <button
                 onClick={handleLogout}
-                className="ml-2 flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-white font-semibold hover:bg-red-600 transition"
+                disabled={isLoggingOut}
+                className="ml-2 flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-white font-semibold hover:bg-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <LogOut size={18} />
-                Logout
+                {isLoggingOut ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Logging out...
+                  </>
+                ) : (
+                  <>
+                    <LogOut size={18} />
+                    Logout
+                  </>
+                )}
               </button>
             ) : (
               <Link
@@ -87,7 +128,7 @@ export function Nav() {
           </button>
         </div>
 
-        {/* MOBILE MENU — SMOOTH HEIGHT ANIMATION */}
+        {/* MOBILE MENU – SMOOTH HEIGHT ANIMATION */}
         <div
           className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${
             isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
@@ -110,10 +151,20 @@ export function Nav() {
               {user ? (
                 <button
                   onClick={handleLogout}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-4 text-white font-semibold hover:bg-red-600 transition"
+                  disabled={isLoggingOut}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-4 text-white font-semibold hover:bg-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <LogOut size={18} />
-                  Logout
+                  {isLoggingOut ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Logging out...
+                    </>
+                  ) : (
+                    <>
+                      <LogOut size={18} />
+                      Logout
+                    </>
+                  )}
                 </button>
               ) : (
                 <Link

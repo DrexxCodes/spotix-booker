@@ -2,23 +2,27 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { auth } from "@/lib/firebase"
 import { signInWithEmailAndPassword } from "firebase/auth"
 import { Preloader } from "@/components/preloader"
 import { ParticlesBackground } from "@/components/particles-background"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Mail, Lock, AlertCircle, ArrowRight, Eye, EyeOff } from "lucide-react"
 import Image from "next/image"
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  // Get redirect parameter
+  const redirect = searchParams.get("redirect") || "/"
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,11 +30,60 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
+      // Step 1: Sign in with Firebase Client SDK
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
-      router.push(`/`)
+      const user = userCredential.user
+
+      // Step 2: Get ID token
+      const idToken = await user.getIdToken()
+
+      // Step 3: Create server session and verify booker status in one call
+      const sessionResponse = await fetch("/api/auth", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ idToken }),
+      })
+
+      if (!sessionResponse.ok) {
+        const errorData = await sessionResponse.json()
+        throw new Error(errorData.message || "Failed to create session")
+      }
+
+      const sessionData = await sessionResponse.json()
+      const isBooker = sessionData?.user?.isBooker || false
+
+      console.log("✅ Session created successfully")
+      console.log("📊 User data:", sessionData.user)
+
+      // Step 4: Handle redirect based on isBooker status
+      if (!isBooker) {
+        // Non-booker users are redirected to not-booker page
+        console.log("⚠️ User is not a booker, redirecting to /not-booker")
+        router.push("/not-booker")
+      } else {
+        // Booker users are redirected to their intended destination
+        console.log("✅ User is a booker, redirecting to:", redirect)
+        router.push(redirect)
+      }
     } catch (err: any) {
       console.error("Login error:", err)
-      setError(err.message || "Failed to login. Please try again.")
+      
+      // Handle specific Firebase errors
+      let errorMessage = err.message || "Failed to login. Please try again."
+      
+      if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+        errorMessage = "Incorrect email or password"
+      } else if (err.code === "auth/invalid-email") {
+        errorMessage = "Please enter a valid email address"
+      } else if (err.code === "auth/too-many-requests") {
+        errorMessage = "Too many failed login attempts. Please try again later"
+      } else if (err.code === "auth/user-disabled") {
+        errorMessage = "This account has been disabled"
+      }
+      
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -63,6 +116,16 @@ export default function LoginPage() {
               </h1>
               <p className="text-lg text-slate-600">Sign in to your booker dashboard</p>
             </div>
+
+            {/* Show redirect notice if present */}
+            {redirect && redirect !== "/" && (
+              <div className="flex items-center gap-2 justify-center p-3 rounded-lg bg-blue-50 border border-blue-200">
+                <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <p className="text-sm text-blue-800">
+                  Please sign in to continue to <span className="font-semibold">{redirect}</span>
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Login Form Card */}

@@ -1,189 +1,178 @@
 "use client"
 
-import React from "react"
+import { useState } from "react"
 import Link from "next/link"
-import { ArrowRight } from "lucide-react"
+import Image from "next/image"
+import { AlertCircle, ArrowRight, LogOut, Mail } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { signOut } from "firebase/auth"
+import { auth } from "@/lib/firebase"
+import { ParticlesBackground } from "@/components/particles-background"
 
 export default function NotBookerPage() {
+  const router = useRouter()
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true)
+    try {
+      // Call server-side logout API
+      await fetch("/api/auth/logout", {
+        method: "POST",
+      })
+
+      // Sign out from Firebase client
+      await signOut(auth)
+      
+      // Redirect to login
+      router.push("/login")
+    } catch (error) {
+      console.error("Logout error:", error)
+    } finally {
+      setIsLoggingOut(false)
+    }
+  }
+
   return (
-    <div className="not-booker-page">
-      <div className="container">
-        <div className="content-card">
-          {/* Image */}
-          <div className="image-wrapper">
-            <img 
-              src="/not-booker.svg" 
-              alt="Not a booker illustration" 
-              className="illustration"
-            />
+    <>
+      <ParticlesBackground />
+      
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-purple-50/30 to-slate-100 flex flex-col items-center justify-center px-4 py-12">
+        <div className="max-w-2xl w-full space-y-8 animate-in fade-in zoom-in-95 duration-700">
+          {/* Header */}
+          <div className="text-center space-y-6">
+            <div className="inline-flex items-center justify-center mx-auto">
+              <div className="relative w-32 h-32 rounded-2xl overflow-hidden shadow-lg">
+                <Image
+                  src="/logo.png"
+                  alt="Spotix"
+                  fill
+                  className="object-cover"
+                  priority
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-3">
+              <h1 className="text-5xl font-bold bg-gradient-to-r from-[#6b2fa5] via-[#8b3fc5] to-[#6b2fa5] bg-clip-text text-transparent">
+                Access Restricted
+              </h1>
+              <p className="text-xl text-slate-600">
+                You don't have booker privileges
+              </p>
+            </div>
           </div>
 
-          {/* Heading */}
-          <h1 className="heading">Become a Booker</h1>
+          {/* Main Content Card */}
+          <div className="bg-white rounded-2xl shadow-xl border-2 border-slate-200 p-8 space-y-6">
+            {/* Alert Banner */}
+            <div className="flex gap-4 p-5 bg-amber-50 border-2 border-amber-200 rounded-xl">
+              <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="space-y-2">
+                <p className="font-bold text-amber-900 text-lg">
+                  Booker Portal Access Required
+                </p>
+                <p className="text-amber-800 leading-relaxed">
+                  This portal is exclusively for event creators and bookers. Your account doesn't currently have the necessary permissions to access this area.
+                </p>
+              </div>
+            </div>
 
-          {/* Text Content */}
-          <div className="text-content">
-            <p>
-              Seems like the system has detected you are not a booker. A booker is an event 
-              organizer on Spotix. Becoming one is super easy. Just click the link below and 
-              it will take you to your profile. Scroll down and click become booker. Follow 
-              onscreen prompts and that's it.
-            </p>
-            <p className="highlight">
-              Be sure to add profile first. Could even be a logo!
-            </p>
+            {/* Information Section */}
+            <div className="space-y-4 pt-2">
+              <h2 className="text-xl font-bold text-slate-900">
+                Want to become a booker?
+              </h2>
+              
+              <div className="space-y-3 text-slate-700">
+                <p className="leading-relaxed">
+                  To gain access to the Spotix Booker Portal and start creating events, you'll need to upgrade your account to a booker account. Here's how:
+                </p>
+                
+                <ol className="space-y-3 ml-5">
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-[#6b2fa5] text-white font-bold text-sm">
+                      1
+                    </span>
+                    <span className="pt-0.5">
+                      <strong className="text-slate-900">Contact Support:</strong> Reach out to our support team to request booker access
+                    </span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-[#6b2fa5] text-white font-bold text-sm">
+                      2
+                    </span>
+                    <span className="pt-0.5">
+                      <strong className="text-slate-900">Verification:</strong> Complete our verification process for event creators
+                    </span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-[#6b2fa5] text-white font-bold text-sm">
+                      3
+                    </span>
+                    <span className="pt-0.5">
+                      <strong className="text-slate-900">Activation:</strong> Once approved, your account will be upgraded and you'll have full access
+                    </span>
+                  </li>
+                </ol>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-3 pt-4">
+              <Link
+                href="mailto:support@spotix.com"
+                className="group flex-1 inline-flex items-center justify-center gap-3 bg-gradient-to-r from-[#6b2fa5] to-purple-600 hover:from-[#5a2589] hover:to-[#6b2fa5] text-white font-bold py-3.5 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-[#6b2fa5]/30 hover:shadow-xl hover:shadow-[#6b2fa5]/40 hover:-translate-y-0.5 active:translate-y-0"
+              >
+                <Mail className="w-5 h-5" />
+                <span>Contact Support</span>
+                <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+              </Link>
+              
+              <button
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+                className="flex-1 inline-flex items-center justify-center gap-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3.5 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed border-2 border-slate-200"
+              >
+                {isLoggingOut ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-slate-400/30 border-t-slate-700 rounded-full animate-spin" />
+                    <span>Logging out...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="w-5 h-5" />
+                    <span>Logout</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
-          {/* Button */}
-          <Link href="https://spotix.com.ng/profile">
-            <button className="cta-button">
-              <span>Go to Profile</span>
-              <ArrowRight size={20} />
-            </button>
-          </Link>
+          {/* Footer */}
+          <div className="text-center space-y-3">
+            <p className="text-sm text-slate-600">
+              Looking for the customer app?{" "}
+              <Link 
+                href="https://spotix.com" 
+                className="text-[#6b2fa5] hover:underline font-semibold"
+              >
+                Visit Spotix
+              </Link>
+            </p>
+            
+            <p className="text-xs text-slate-500">
+              If you believe this is an error, please{" "}
+              <Link 
+                href="mailto:support@spotix.com" 
+                className="text-[#6b2fa5] hover:underline font-semibold"
+              >
+                contact our support team
+              </Link>
+            </p>
+          </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .not-booker-page {
-          min-height: 100vh;
-          background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 50%, #faf5ff 100%);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 2rem;
-        }
-
-        .container {
-          width: 100%;
-          max-width: 600px;
-        }
-
-        .content-card {
-          background: white;
-          border-radius: 24px;
-          padding: 3rem 2.5rem;
-          box-shadow: 0 10px 40px rgba(107, 47, 165, 0.1);
-          text-align: center;
-          border: 1px solid rgba(107, 47, 165, 0.1);
-        }
-
-        .image-wrapper {
-          margin-bottom: 2rem;
-          display: flex;
-          justify-content: center;
-        }
-
-        .illustration {
-          width: 100%;
-          max-width: 280px;
-          height: auto;
-          object-fit: contain;
-        }
-
-        .heading {
-          font-size: 2.5rem;
-          font-weight: 800;
-          color: #1e293b;
-          margin: 0 0 1.5rem 0;
-          background: linear-gradient(135deg, #6b2fa5, #8a4bd6);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-        }
-
-        .text-content {
-          margin-bottom: 2.5rem;
-        }
-
-        .text-content p {
-          color: #475569;
-          font-size: 1.05rem;
-          line-height: 1.7;
-          margin: 0 0 1rem 0;
-        }
-
-        .text-content p:last-child {
-          margin-bottom: 0;
-        }
-
-        .highlight {
-          color: #6b2fa5;
-          font-weight: 600;
-          background: rgba(107, 47, 165, 0.08);
-          padding: 0.75rem 1rem;
-          border-radius: 12px;
-          display: inline-block;
-          margin-top: 0.5rem;
-        }
-
-        .cta-button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.75rem;
-          background: linear-gradient(135deg, #6b2fa5, #8a4bd6);
-          color: white;
-          border: none;
-          padding: 1rem 2.5rem;
-          border-radius: 12px;
-          font-size: 1.1rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.3s ease;
-          box-shadow: 0 6px 20px rgba(107, 47, 165, 0.3);
-          font-family: inherit;
-        }
-
-        .cta-button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 25px rgba(107, 47, 165, 0.4);
-        }
-
-        .cta-button:active {
-          transform: translateY(0);
-        }
-
-        /* Responsive Design */
-        @media (max-width: 640px) {
-          .not-booker-page {
-            padding: 1.5rem;
-          }
-
-          .content-card {
-            padding: 2rem 1.5rem;
-            border-radius: 20px;
-          }
-
-          .illustration {
-            max-width: 220px;
-          }
-
-          .heading {
-            font-size: 2rem;
-          }
-
-          .text-content p {
-            font-size: 1rem;
-          }
-
-          .cta-button {
-            padding: 0.875rem 2rem;
-            font-size: 1rem;
-            width: 100%;
-          }
-        }
-
-        @media (max-width: 400px) {
-          .heading {
-            font-size: 1.75rem;
-          }
-
-          .illustration {
-            max-width: 180px;
-          }
-        }
-      `}</style>
-    </div>
+    </>
   )
 }

@@ -3,19 +3,10 @@
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { auth, db } from "@/lib/firebase"
-import {
-  collection,
-  addDoc,
-  setDoc,
-  doc,
-  serverTimestamp,
-  increment,
-  writeBatch,
-} from "firebase/firestore"
+import { auth } from "@/lib/firebase"
 import { Preloader } from "@/components/preloader"
 import { AddPricing } from "./add-pricing"
-import { AlertCircle, Sparkles } from "lucide-react"
+import { AlertCircle, Sparkles, CheckCircle } from "lucide-react"
 import { uploadImage } from "@/lib/image-uploader"
 import { MapPickerModal } from "./map-picker-modal"
 import type { TicketType } from "@/types/ticket"
@@ -36,6 +27,7 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [apiWarnings, setApiWarnings] = useState<string[]>([])
   const [currentStep, setCurrentStep] = useState(1)
   const totalSteps = 6
 
@@ -183,7 +175,7 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
         })
 
         if (url) {
-          console.log(` Image ${index + 1} uploaded successfully to`, provider)
+          console.log(`✅ Image ${index + 1} uploaded successfully to`, provider)
           setUploadComplete((prev) => {
             const newState = [...prev]
             newState[index] = true
@@ -203,11 +195,11 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
             })
           }, 5000)
         } else {
-          console.error(` Upload failed for image ${index + 1}: No URL returned`)
+          console.error(`❌ Upload failed for image ${index + 1}: No URL returned`)
         }
       })
       .catch((error) => {
-        console.error(` Upload failed for image ${index + 1}:`, error)
+        console.error(`❌ Upload failed for image ${index + 1}:`, error)
         setIsUploading((prev) => {
           const newState = [...prev]
           newState[index] = false
@@ -263,49 +255,69 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
     if (canProceedToNextStep()) {
       setCurrentStep((prev) => Math.min(prev + 1, totalSteps))
       setError("")
+      setApiWarnings([])
     }
   }
 
   const handlePrevious = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 1))
     setError("")
+    setApiWarnings([])
   }
 
   const handleSubmit = async () => {
     setError("")
-    console.log(" Form submitted - starting validation")
+    setApiWarnings([])
+    console.log("📝 Form submitted - starting validation")
 
     if (!auth.currentUser) {
       setError("You must be logged in to create an event")
       return
     }
 
+    // Step 1 & 3 validation
     if (!eventName || !eventDate || !eventVenue || !eventStart || !eventEndDate || !eventEnd) {
-      setError("Please fill in all required fields")
+      const missingFields = []
+      if (!eventName) missingFields.push("event name (Step 1)")
+      if (!eventVenue) missingFields.push("venue (Step 2)")
+      if (!eventDate || !eventStart || !eventEndDate || !eventEnd) missingFields.push("date/time (Step 3)")
+      
+      setError(`Missing required fields: ${missingFields.join(", ")}`)
       return
     }
 
+    // Step 3 validation - Date/Time
     if (!validateEndDateTime()) {
-      setError("Event end date and time must be after the start date and time")
+      setError("Step 3: Event end date and time must be after the start date and time")
       return
     }
 
+    // Step 5 validation - Stop Date
     if (enableStopDate && stopDate) {
       if (!validateStopDate()) {
-        setError("Stop date must be at least 3 days before the event start date")
+        setError("Step 5: Stop date must be at least 3 days before the event start date")
         return
       }
     }
 
+    // Step 4 validation - Pricing
     if (enablePricing && ticketPrices.length === 0) {
-      setError("Please add at least one ticket type when pricing is enabled")
+      setError("Step 4: Please add at least one ticket type when pricing is enabled")
       return
     }
 
     if (enablePricing) {
-      const hasInvalidTicket = ticketPrices.some((ticket) => !ticket.policy || !ticket.price)
+      // Check if all tickets have required fields (policy name is required, price can be 0 for free tickets)
+      const hasInvalidTicket = ticketPrices.some((ticket) => !ticket.policy || ticket.price === undefined || ticket.price === "")
       if (hasInvalidTicket) {
-        setError("Please fill in all ticket details")
+        setError("Step 4: Fix pricing details properly - each ticket must have a name and price (use 0 for free tickets)")
+        return
+      }
+
+      // Validate that there's at least one ticket with a name
+      const hasValidTicket = ticketPrices.some((ticket) => ticket.policy && ticket.policy.trim() !== "")
+      if (!hasValidTicket) {
+        setError("Step 4: Fix pricing details properly - at least one ticket must have a valid name")
         return
       }
     }
@@ -314,14 +326,14 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
     const stillUploading = isUploading.some((uploading) => uploading)
 
     if (eventImages.length > 0 && (!allUploadsComplete || stillUploading)) {
-      setError("Please wait for all images to finish uploading")
+      setError("Step 1: Please wait for all images to finish uploading")
       return
     }
 
     setLoading(true)
 
     try {
-      console.log(" Creating event with data:", {
+      console.log("🚀 Creating event via API with data:", {
         eventName,
         eventDate,
         eventStart,
@@ -331,105 +343,76 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
       })
 
       const uploadedUrls = uploadedImageUrls.filter((url): url is string => url !== null)
-      const eventImage = uploadedUrls.length > 0 ? uploadedUrls[0] : null
-      const eventImagesArray = uploadedUrls.slice(1)
 
-      const eventData: any = {
+      // Prepare the request body for the API
+      const requestBody = {
+        userId: auth.currentUser.uid,
         eventName,
         eventDescription,
-        eventImage,
-        eventImages: eventImagesArray,
+        eventImages: uploadedUrls,
         eventDate,
-        eventStart,
-        eventEndDate,
-        eventEnd,
         eventVenue,
         venueCoordinates: venueCoordinates || null,
+        eventStart,
+        eventEnd,
+        eventEndDate,
         eventType,
-        isFree: !enablePricing,
+        enablePricing,
         ticketPrices: enablePricing ? ticketPrices : [],
-        createdAt: serverTimestamp(),
-        createdBy: auth.currentUser.uid,
-        status: "active",
-        ticketsSold: 0,
-        revenue: 0,
+        enableStopDate,
+        stopDate: enableStopDate && stopDate ? stopDate : null,
         enabledCollaboration,
         allowAgents: enabledCollaboration ? allowAgents : false,
         affiliateId: verifiedAffiliate ? verifiedAffiliate.id : null,
-        affiliateName: verifiedAffiliate ? verifiedAffiliate.name : null,
       }
 
-      if (enableStopDate && stopDate) {
-        eventData.hasStopDate = true
-        eventData.stopDate = new Date(stopDate)
-      } else {
-        eventData.hasStopDate = false
-        eventData.stopDate = null
+      console.log("📤 Sending request to API...")
+
+      // Call the API endpoint
+      const response = await fetch("/api/event/one", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        // Handle API errors
+        console.error("❌ API Error:", data)
+        throw new Error(data.message || "Failed to create event")
       }
 
-      console.log(" Saving to user events collection...")
-      const eventsRef = collection(db, "events", auth.currentUser.uid, "userEvents")
-      const docRef = await addDoc(eventsRef, eventData)
-      console.log(" Event saved to user collection with ID:", docRef.id)
+      console.log("✅ Event created successfully:", data)
 
-      console.log(" Saving to public events collection...")
-      const publicEventData = {
-        imageURL: eventImage,
-        eventType: eventType,
-        venue: eventVenue,
-        eventStartDate: eventDate,
-        eventName: eventName,
-        freeOrPaid:
-          enablePricing && ticketPrices.length > 0 && ticketPrices.some((ticket) => ticket.policy && ticket.price),
-        timestamp: serverTimestamp(),
-        creatorID: auth.currentUser.uid,
-        eventId: docRef.id,
-        eventGroup: false,
-      }
-      await setDoc(doc(db, "publicEvents", eventName), publicEventData)
-      console.log(" Event saved to public events collection with name:", eventName)
-
-      // Handle affiliate relationship
-      if (verifiedAffiliate) {
-        console.log(" Creating affiliate relationship...")
-        const batch = writeBatch(db)
-
-        // Add to affiliate's subcollection
-        const affiliateEventRef = doc(
-          db,
-          "Affiliates",
-          verifiedAffiliate.id,
-          "affiliatedEvents",
-          docRef.id
-        )
-        batch.set(affiliateEventRef, {
-          creatorUID: auth.currentUser.uid,
-          eventId: docRef.id,
-          eventName: eventName,
-          createdAt: serverTimestamp(),
-        })
-
-        // Increment eventCount
-        const affiliateRef = doc(db, "Affiliates", verifiedAffiliate.id)
-        batch.update(affiliateRef, {
-          eventCount: increment(1),
-        })
-
-        await batch.commit()
-        console.log(" Affiliate relationship created successfully")
+      // Show warnings if any
+      if (data.warnings && data.warnings.length > 0) {
+        setApiWarnings(data.warnings)
+        console.warn("⚠️ API Warnings:", data.warnings)
       }
 
+      // Generate success URL with payId
       const payId = "PAY" + Math.random().toString(36).substring(2, 10).toUpperCase()
-      const successUrl = `/create-event/success?eventId=${docRef.id}&payId=${payId}&type=one-time&eventName=${encodeURIComponent(eventName)}`
+      const successUrl = `/create-event/success?eventId=${data.eventId}&payId=${payId}&type=one-time&eventName=${encodeURIComponent(eventName)}`
 
-      console.log(" Event created successfully, redirecting to:", successUrl)
+      console.log("🎉 Event created successfully, redirecting to:", successUrl)
+      
+      // Small delay to ensure everything is processed
       await new Promise((resolve) => setTimeout(resolve, 500))
+      
+      // Redirect to success page
       router.push(successUrl)
+
+      // Call onSuccess callback if provided
+      if (onSuccess) {
+        onSuccess()
+      }
     } catch (err: any) {
-      console.error(" Error creating event:", err)
-      console.error(" Error details:", {
+      console.error("❌ Error creating event:", err)
+      console.error("❌ Error details:", {
         message: err.message,
-        code: err.code,
         stack: err.stack,
       })
       setError(err.message || "Failed to create event. Please try again.")
@@ -607,6 +590,23 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
             <div className="flex-1">
               <p className="font-semibold text-red-900 mb-1">Error</p>
               <p className="text-red-800 text-sm">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* API Warnings */}
+        {apiWarnings.length > 0 && (
+          <div className="flex gap-3 p-4 rounded-xl bg-amber-50 border-2 border-amber-200 shadow-sm animate-in slide-in-from-top-2 duration-300">
+            <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold text-amber-900 mb-2">Warnings</p>
+              <ul className="space-y-1">
+                {apiWarnings.map((warning, index) => (
+                  <li key={index} className="text-amber-800 text-sm">
+                    • {warning}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         )}
