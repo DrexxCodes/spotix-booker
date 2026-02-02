@@ -255,7 +255,6 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
     if (canProceedToNextStep()) {
       setCurrentStep((prev) => Math.min(prev + 1, totalSteps))
       setError("")
-      setApiWarnings([])
     }
   }
 
@@ -364,6 +363,7 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
         enabledCollaboration,
         allowAgents: enabledCollaboration ? allowAgents : false,
         affiliateId: verifiedAffiliate ? verifiedAffiliate.id : null,
+        affiliateName: verifiedAffiliate ? verifiedAffiliate.name : null,
       }
 
       console.log("📤 Sending request to API...")
