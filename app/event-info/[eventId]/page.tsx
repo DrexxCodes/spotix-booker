@@ -1,13 +1,11 @@
 // app/event-info/[eventId]/page.tsx
 "use client"
 
-import { useMemo, use, useState, useEffect, useRef, Suspense } from "react"
+import { useMemo, use, useState, useEffect } from "react"
 import type React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { tryRefreshTokens, getAccessToken, authFetch } from "@/lib/auth-client"
-import { auth } from "@/lib/firebase"
-import { onAuthStateChanged } from "firebase/auth"
 import { ArrowLeft, RefreshCw, LogOut, Shield, UserCheck, Calculator, AlertTriangle, Settings } from "lucide-react"
 import { eventCacheManager } from "@/lib/cache-manger"
 import OverviewTab from "@/components/event-info/overview-tab"
@@ -22,6 +20,7 @@ import FormTab from "@/components/event-info/form-tab"
 import ResponsesTab from "@/components/event-info/responses-tab"
 import WeatherTab from "@/components/event-info/weather-tab"
 import TransferTab from "@/components/event-info/transfer-tab"
+import { Suspense } from "react"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface EventData {
@@ -195,14 +194,16 @@ function TabSkeleton() {
 }
 
 // ── Inner page (needs useSearchParams) ────────────────────────────────────────
-function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }) {
+function EventInfoInner({ eventId }: { eventId: string }) {
   const router       = useRouter()
-  const searchParams = useSearchParams()
+  // useSearchParams is used implicitly by Next.js — keep Suspense wrapper above
+  useSearchParams()
 
   const [pageReady, setPageReady]       = useState(false)
   const [saving, setSaving]             = useState(false)
   const [refreshing, setRefreshing]     = useState(false)
-  const [currentUser, setCurrentUser]   = useState<any>(null)
+  // uid from /api/user/me — the single source of truth, no Firebase dependency
+  const [currentUid, setCurrentUid]     = useState<string>("")
   const [eventData, setEventData]       = useState<EventData | null>(null)
   const [attendees, setAttendees]       = useState<AttendeeData[]>([])
   const [discounts, setDiscounts]       = useState<DiscountData[]>([])
@@ -223,10 +224,6 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
   const [collabInfo, setCollabInfo]       = useState<CollabInfo | null>(null)
   const [exitDialog, setExitDialog]       = useState(false)
   const [exitLoading, setExitLoading]     = useState(false)
-
-  // Tracks whether Firebase has emitted at least one non-null user.
-  // Lives in a ref so it survives Strict Mode double-effect invocations.
-  const firebaseInitialized = useRef(false)
 
   const visibleTabs = useMemo(
     () => resolveVisibleTabs(isOwner, collabInfo),
@@ -265,7 +262,6 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
   async function loadCollabAccess(uid: string) {
     console.log("[EventInfo] loadCollabAccess — uid:", uid, "eventId:", eventId)
     try {
-      // authFetch auto-attaches Bearer token and retries once on 401
       const res = await authFetch(`/api/teams?eventId=${eventId}&action=myAccess`)
       console.log("[EventInfo] myAccess status:", res.status)
 
@@ -321,7 +317,6 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
   }
 
   // ── Main load function ─────────────────────────────────────────────────────
-  // Called once we have a confirmed Firebase uid.
   async function loadPage(uid: string, forceRefresh = false) {
     console.log("[EventInfo] loadPage — uid:", uid, "eventId:", eventId, "forceRefresh:", forceRefresh)
 
@@ -348,8 +343,6 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
       }
 
       // ── Step 1: attempt owner fetch ─────────────────────────────────────
-      // authFetch attaches the Bearer token and retries once on 401 with a
-      // refreshed token — no silent 401 failures mid-session.
       console.log("[EventInfo] Fetching owner data from /api/event/list/" + eventId)
       const ownerRes = await authFetch(`/api/event/list/${eventId}`)
       console.log("[EventInfo] Owner fetch status:", ownerRes.status)
@@ -366,9 +359,6 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
       }
 
       // ── Step 2: not the owner — check collaborations ────────────────────
-      // Queries collaborations/{collabId} where collaboratorId == uid
-      // and eventId == current eventId. The API returns the event data
-      // filtered to what this role is allowed to see.
       console.log("[EventInfo] Not owner (status " + ownerRes.status + "), checking collaboration...")
       await loadCollabAccess(uid)
 
@@ -376,73 +366,61 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
       console.error("[EventInfo] loadPage error:", err)
     } finally {
       setRefreshing(false)
-      setPageReady(true) // always unblock the UI
+      setPageReady(true)
     }
   }
 
-  // ── Auth bootstrap ─────────────────────────────────────────────────────────
-  //
-  // Strategy: ensure we have a valid access token first (refresh if needed),
-  // then listen for the Firebase user. We use a ref to guard against the
-  // cold-start null that Firebase emits on first tick while restoring the
-  // IndexedDB session.
-  //
-  // We do NOT kick off the page load until we have a confirmed uid because
-  // the API routes need the Bearer token (attached by authFetch) to identify
-  // the caller — there's no point racing the fetch against auth.
+  // ── Auth bootstrap — /api/user/me only, no Firebase ───────────────────────
   useEffect(() => {
-    console.log("[EventInfo] useEffect — setting up auth listener, eventId:", eventId)
+    console.log("[EventInfo] useEffect — bootstrapping auth, eventId:", eventId)
 
-    const ensureAuth = async (): Promise<boolean> => {
+    async function bootstrap() {
       try {
+        // Ensure we have a valid access token first
         let token = getAccessToken()
         if (!token) {
           console.log("[EventInfo] No token, attempting refresh...")
           const ok = await tryRefreshTokens()
-          if (!ok) { console.warn("[EventInfo] Refresh failed"); router.push("/login"); return false }
+          if (!ok) {
+            console.warn("[EventInfo] Refresh failed — redirecting to login")
+            router.push("/login")
+            return
+          }
           console.log("[EventInfo] Token refreshed")
         }
-        return true
-      } catch (e) {
-        console.error("[EventInfo] Auth error:", e)
+
+        // Resolve the logged-in uid the same way every other page does
+        const meRes = await authFetch("/api/user/me")
+        if (!meRes.ok) {
+          console.warn("[EventInfo] /api/user/me failed:", meRes.status, "— redirecting to login")
+          router.push("/login")
+          return
+        }
+
+        const me = await meRes.json()
+        const uid: string = me.uid ?? me.userId ?? me.id ?? ""
+        if (!uid) {
+          console.warn("[EventInfo] /api/user/me returned no uid — redirecting to login")
+          router.push("/login")
+          return
+        }
+
+        console.log("[EventInfo] Resolved uid from /api/user/me:", uid)
+        setCurrentUid(uid)
+        await loadPage(uid)
+      } catch (err) {
+        console.error("[EventInfo] bootstrap error:", err)
         router.push("/login")
-        return false
       }
     }
 
-    let unsubscribe: (() => void) | undefined
-
-    ensureAuth().then((authed) => {
-      if (!authed) return
-
-      unsubscribe = onAuthStateChanged(auth, (user) => {
-        console.log("[EventInfo] onAuthStateChanged — user:", user?.uid ?? "null", "initialized:", firebaseInitialized.current)
-
-        if (user) {
-          firebaseInitialized.current = true
-          setCurrentUser(user)
-          loadPage(user.uid)
-        } else if (firebaseInitialized.current) {
-          // User was confirmed signed-in before and is now gone — genuine sign-out
-          console.warn("[EventInfo] Firebase user signed out, redirecting to login")
-          router.push("/login")
-        } else {
-          // First emission is null — Firebase is still restoring the session.
-          // Mark initialized and wait for the next emission.
-          // firebaseInitialized.current = true
-          console.log("[EventInfo] Firebase cold-start null — waiting for session restore")
-        }
-      })
-    })
-
-    return () => {
-      if (unsubscribe) unsubscribe()
-    }
+    bootstrap()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId])
 
+  // ── Refresh — uses the uid already stored in state ─────────────────────────
   const handleRefreshData = () => {
-    if (currentUser) loadPage(currentUser.uid, true)
+    if (currentUid) loadPage(currentUid, true)
   }
 
   // ── Clipboard ──────────────────────────────────────────────────────────────
@@ -655,8 +633,8 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
             )}
 
             {activeTab === "merch" && visibleTabs.includes("merch") && (
-              loadedTabs.has("merch") && currentUser && eventData
-                ? <MerchTab eventId={eventId} eventName={eventData.eventName} currentUserId={currentUser.uid} />
+              loadedTabs.has("merch") && currentUid && eventData
+                ? <MerchTab eventId={eventId} eventName={eventData.eventName} currentUserId={currentUid} />
                 : <TabSkeleton />
             )}
 
@@ -666,17 +644,17 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
 
             {activeTab === "form" && visibleTabs.includes("form") && (
               loadedTabs.has("form") && eventData
-                ? <FormTab userId={userId} eventId={eventId} ticketTypes={eventData.ticketPrices ?? []} />
+                ? <FormTab userId={currentUid} eventId={eventId} ticketTypes={eventData.ticketPrices ?? []} />
                 : <TabSkeleton />
             )}
 
             {activeTab === "responses" && visibleTabs.includes("responses") && (
-              loadedTabs.has("responses") ? <ResponsesTab userId={userId} eventId={eventId} /> : <TabSkeleton />
+              loadedTabs.has("responses") ? <ResponsesTab userId={currentUid} eventId={eventId} /> : <TabSkeleton />
             )}
 
             {activeTab === "payouts" && visibleTabs.includes("payouts") && (
               loadedTabs.has("payouts") && eventData
-                ? <PayoutsTab availableBalance={availableBalance} eventData={eventData} userId={userId} eventId={eventId} currentUserId={currentUser?.uid ?? ""} attendees={attendees} payId={eventData.payId ?? ""} />
+                ? <PayoutsTab availableBalance={availableBalance} eventData={eventData} userId={currentUid} eventId={eventId} currentUserId={currentUid} attendees={attendees} payId={eventData.payId ?? ""} />
                 : <TabSkeleton />
             )}
 
@@ -686,13 +664,13 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
 
             {activeTab === "transfer" && visibleTabs.includes("transfer") && (
               loadedTabs.has("transfer") && eventData
-                ? <TransferTab eventId={eventId} organizerId={eventData.createdBy ?? ""} currentUserId={currentUser?.uid ?? ""} eventName={""} />
+                ? <TransferTab eventId={eventId} organizerId={eventData.createdBy ?? ""} currentUserId={currentUid} eventName={""} />
                 : <TabSkeleton />
             )}
 
             {activeTab === "edit" && visibleTabs.includes("edit") && (
               loadedTabs.has("edit") && editFormData
-                ? <EditEventTab editFormData={editFormData} handleInputChange={handleInputChange} handleTicketPriceChange={handleTicketPriceChange} addTicketPrice={addTicketPrice} handleSubmitEdit={handleSubmitEdit} setEditFormData={setEditFormData} userId="" eventId="" />
+                ? <EditEventTab editFormData={editFormData} handleInputChange={handleInputChange} handleTicketPriceChange={handleTicketPriceChange} addTicketPrice={addTicketPrice} handleSubmitEdit={handleSubmitEdit} setEditFormData={setEditFormData} userId={currentUid} eventId={eventId} />
                 : <TabSkeleton />
             )}
 
@@ -724,9 +702,9 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
 export default function EventInfoPage({
   params,
 }: {
-  params: Promise<{ userId: string; eventId: string }>
+  params: Promise<{ eventId: string }>
 }) {
-  const { userId, eventId } = use(params)
+  const { eventId } = use(params)
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
@@ -736,7 +714,7 @@ export default function EventInfoPage({
         </div>
       </div>
     }>
-      <EventInfoInner eventId={eventId} userId={userId} />
+      <EventInfoInner eventId={eventId} />
     </Suspense>
   )
 }
