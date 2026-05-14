@@ -429,7 +429,7 @@ function EventInfoInner({ eventId, userId }: { eventId: string; userId: string }
         } else {
           // First emission is null — Firebase is still restoring the session.
           // Mark initialized and wait for the next emission.
-          firebaseInitialized.current = true
+          // firebaseInitialized.current = true
           console.log("[EventInfo] Firebase cold-start null — waiting for session restore")
         }
       })
