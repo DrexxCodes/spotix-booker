@@ -1,7 +1,8 @@
 "use client"
 
-import { Eye, Calendar, Ticket, TrendingUp, Wallet } from "lucide-react"
+import { Eye, Calendar, Ticket, TrendingUp, Wallet, ArrowRight } from "lucide-react"
 import Link from "next/link"
+import { MaskedAmount } from "@/components/ui/masked-amount"
 
 interface Event {
   id: string
@@ -13,197 +14,154 @@ interface Event {
   status: string
 }
 
-interface EventsSectionProps {
-  events: Event[]
-  userId: string | null // Added userId prop to construct proper navigation links
+function fmtCurrency(n: number) {
+  return `₦${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
-function formatNumber(num: number): string {
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-}
-
-function formatCurrency(amount: number): string {
-  return `₦${formatNumber(Number.parseFloat(amount.toFixed(2)))}`
-}
-
-const StatusBadge = ({ status }: { status: string }) => (
-  <span
-    className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold shadow-sm ${
-      status === "active"
-        ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white"
-        : "bg-gradient-to-r from-gray-400 to-gray-500 text-white"
-    }`}
-  >
-    <span
-      className={`w-1.5 h-1.5 rounded-full mr-2 ${status === "active" ? "bg-white animate-pulse" : "bg-gray-200"}`}
-    ></span>
-    {status.charAt(0).toUpperCase() + status.slice(1)}
-  </span>
-)
-
-export function EventsSection({ events, userId }: EventsSectionProps) {
+const StatusBadge = ({ status }: { status: string }) => {
+  const cfg: Record<string, string> = {
+    active:    "bg-emerald-50 text-emerald-700 border-emerald-200",
+    inactive:  "bg-slate-100 text-slate-500 border-slate-200",
+    cancelled: "bg-red-50 text-red-600 border-red-200",
+    completed: "bg-blue-50 text-blue-600 border-blue-200",
+    past:      "bg-amber-50 text-amber-600 border-amber-200",
+  }
+  const cls = cfg[status] ?? "bg-slate-100 text-slate-500 border-slate-200"
   return (
-    <div className="mb-8">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-3xl font-bold bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] bg-clip-text text-transparent">
-          Recent Events
-        </h2>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${status === "active" ? "bg-emerald-500 animate-pulse" : "bg-current opacity-50"}`} />
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </span>
+  )
+}
+
+export function EventsSection({ events, userId }: { events: Event[]; userId: string | null }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Recent Events</p>
+          <h2 className="text-lg font-bold text-slate-900">Your Events</h2>
+        </div>
         <Link
           href="/events"
-          className="group flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white rounded-lg hover:shadow-lg hover:shadow-[#6b2fa5]/30 hover:scale-105 font-semibold transition-all duration-300"
+          className="group inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-200 bg-white hover:border-[#6b2fa5] hover:text-[#6b2fa5] text-slate-600 text-sm font-semibold transition-all duration-200 shadow-sm"
         >
           View All
-          <span className="group-hover:translate-x-1 transition-transform duration-300">→</span>
+          <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
         </Link>
       </div>
 
-      <div className="bg-white rounded-2xl overflow-hidden shadow-xl border border-gray-100">
-        {/* Desktop Table */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white">
-                <th className="px-6 py-4 text-left text-sm font-bold">Event Name</th>
-                <th className="px-6 py-4 text-left text-sm font-bold">Date</th>
-                <th className="px-6 py-4 text-left text-sm font-bold">Tickets</th>
-                <th className="px-6 py-4 text-left text-sm font-bold">Revenue</th>
-                <th className="px-6 py-4 text-left text-sm font-bold">Balance</th>
-                <th className="px-6 py-4 text-left text-sm font-bold">Status</th>
-                <th className="px-6 py-4 text-left text-sm font-bold">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.length > 0 ? (
-                events.map((event, index) => (
-                  <tr
-                    key={event.id}
-                    className={`border-b border-gray-100 hover:bg-gradient-to-r hover:from-[#6b2fa5]/5 hover:to-[#8b4fc5]/5 transition-all duration-300 group ${
-                      index % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                    }`}
-                  >
-                    <td className="px-6 py-4 font-semibold text-gray-900 group-hover:text-[#6b2fa5] transition-colors">
-                      {event.eventName}
-                    </td>
-                    <td className="px-6 py-4 text-gray-700">
-                      <div className="flex items-center gap-2">
-                        <Calendar size={16} className="text-[#6b2fa5]" />
-                        {new Date(event.eventDate).toLocaleDateString()}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Ticket size={16} className="text-[#6b2fa5]" />
-                        <span className="font-medium text-gray-900">{formatNumber(event.ticketsSold)}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <TrendingUp size={16} className="text-green-600" />
-                        <span className="font-semibold text-gray-900">{formatCurrency(event.revenue)}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Wallet size={16} className="text-emerald-600" />
-                        <span className="font-bold text-emerald-600">{formatCurrency(event.availableBalance)}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <StatusBadge status={event.status} />
-                    </td>
-                    <td className="px-6 py-4">
-                      <Link
-                        href={userId ? `/event-info/${event.id}` : `/event/${event.id}`}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white hover:shadow-lg hover:shadow-[#6b2fa5]/30 hover:scale-105 transition-all duration-300 text-sm font-semibold"
-                      >
-                        <Eye size={16} />
-                        View
-                      </Link>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#6b2fa5]/10 to-[#8b4fc5]/10 flex items-center justify-center">
-                        <Calendar size={32} className="text-[#6b2fa5]" />
-                      </div>
-                      <p className="text-gray-500 font-medium">No events found. Create your first event!</p>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile Cards */}
-        <div className="md:hidden">
-          {events.length > 0 ? (
-            events.map((event, index) => (
-              <div
-                key={event.id}
-                className={`p-5 border-b border-gray-100 last:border-b-0 hover:bg-gradient-to-r hover:from-[#6b2fa5]/5 hover:to-[#8b4fc5]/5 transition-all duration-300 ${
-                  index % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                }`}
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <h3 className="font-bold text-lg text-gray-900">{event.eventName}</h3>
-                  <StatusBadge status={event.status} />
-                </div>
-                <div className="space-y-3 mb-4">
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-[#6b2fa5]/5 to-[#8b4fc5]/5">
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <Calendar size={18} className="text-[#6b2fa5]" />
-                      <span className="text-sm font-medium">Date</span>
-                    </div>
-                    <span className="font-semibold text-gray-900">
-                      {new Date(event.eventDate).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-[#6b2fa5]/5 to-[#8b4fc5]/5">
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <Ticket size={18} className="text-[#6b2fa5]" />
-                      <span className="text-sm font-medium">Tickets</span>
-                    </div>
-                    <span className="font-semibold text-gray-900">{formatNumber(event.ticketsSold)}</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-[#6b2fa5]/5 to-[#8b4fc5]/5">
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <TrendingUp size={18} className="text-green-600" />
-                      <span className="text-sm font-medium">Revenue</span>
-                    </div>
-                    <span className="font-semibold text-gray-900">{formatCurrency(event.revenue)}</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-emerald-500/10 to-green-600/10 border border-emerald-200">
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <Wallet size={18} className="text-emerald-600" />
-                      <span className="text-sm font-medium">Balance</span>
-                    </div>
-                    <span className="font-bold text-emerald-600">{formatCurrency(event.availableBalance)}</span>
-                  </div>
-                </div>
-                <Link
-                  href={userId ? `/event-info/${event.id}` : `/event/${event.id}`}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] text-white hover:shadow-lg hover:shadow-[#6b2fa5]/30 hover:scale-[1.02] transition-all duration-300 text-sm font-semibold"
-                >
-                  <Eye size={16} />
-                  View Details
-                </Link>
-              </div>
-            ))
-          ) : (
-            <div className="p-8 text-center">
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#6b2fa5]/10 to-[#8b4fc5]/10 flex items-center justify-center">
-                  <Calendar size={32} className="text-[#6b2fa5]" />
-                </div>
-                <p className="text-gray-500 font-medium">No events found. Create your first event!</p>
-              </div>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {events.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center px-6">
+            <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+              <Calendar size={24} className="text-slate-300" />
             </div>
-          )}
-        </div>
+            <p className="font-semibold text-slate-600 mb-1">No events yet</p>
+            <p className="text-sm text-slate-400 mb-5">Create your first event to start selling tickets</p>
+            <Link
+              href="/create-event"
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#6b2fa5] hover:bg-[#5a2589] text-white rounded-xl font-semibold text-sm transition-colors shadow-sm"
+            >
+              Create Event
+            </Link>
+          </div>
+        ) : (
+          <>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50">
+                    {["Event", "Date", "Tickets", "Revenue", "Balance", "Status", ""].map((h) => (
+                      <th key={h} className="px-5 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {events.map((event) => (
+                    <tr key={event.id} className="hover:bg-slate-50/80 transition-colors group">
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-slate-900 group-hover:text-[#6b2fa5] transition-colors text-sm truncate max-w-[180px]">
+                          {event.eventName}
+                        </p>
+                      </td>
+                      <td className="px-5 py-4 text-slate-500 text-sm whitespace-nowrap">
+                        {new Date(event.eventDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-1.5">
+                          <Ticket size={13} className="text-[#6b2fa5]" />
+                          <span className="text-sm font-medium text-slate-700">{event.ticketsSold.toLocaleString()}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <MaskedAmount value={fmtCurrency(event.revenue)} size="sm" className="text-slate-700" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <MaskedAmount value={fmtCurrency(event.availableBalance)} size="sm" className="text-[#6b2fa5] font-bold" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <StatusBadge status={event.status} />
+                      </td>
+                      <td className="px-5 py-4">
+                        <Link
+                          href={userId ? `/event-info/${event.id}` : `/event/${event.id}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#6b2fa5] hover:bg-[#5a2589] text-white text-xs font-semibold transition-colors"
+                        >
+                          <Eye size={12} /> View
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="md:hidden divide-y divide-slate-100">
+              {events.map((event) => (
+                <div key={event.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-bold text-slate-900 text-sm leading-tight">{event.eventName}</p>
+                    <StatusBadge status={event.status} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-slate-50 rounded-lg p-2.5">
+                      <p className="text-slate-400 mb-0.5">Date</p>
+                      <p className="font-semibold text-slate-700">
+                        {new Date(event.eventDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </p>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-2.5">
+                      <p className="text-slate-400 mb-0.5">Tickets</p>
+                      <p className="font-semibold text-slate-700">{event.ticketsSold.toLocaleString()}</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-2.5">
+                      <p className="text-slate-400 mb-0.5">Revenue</p>
+                      <MaskedAmount value={fmtCurrency(event.revenue)} size="sm" className="text-slate-700" />
+                    </div>
+                    <div className="bg-[#6b2fa5]/5 border border-[#6b2fa5]/15 rounded-lg p-2.5">
+                      <p className="text-slate-400 mb-0.5">Balance</p>
+                      <MaskedAmount value={fmtCurrency(event.availableBalance)} size="sm" className="text-[#6b2fa5] font-bold" />
+                    </div>
+                  </div>
+
+                  <Link
+                    href={userId ? `/event-info/${event.id}` : `/event/${event.id}`}
+                    className="flex items-center justify-center gap-2 w-full py-2.5 bg-[#6b2fa5] hover:bg-[#5a2589] text-white rounded-xl font-semibold text-sm transition-colors"
+                  >
+                    <Eye size={14} /> View Details
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

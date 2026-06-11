@@ -57,12 +57,7 @@ export default function TransferTab({
     setLookupLoading(true)
     try {
       const res = await fetch(
-        `/api/user/whoru?type=email&value=${encodeURIComponent(trimmed)}&limit=1`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_ACCESS_TOKEN_SECRET}`,
-          },
-        }
+        `/api/user/whoru?type=email&value=${encodeURIComponent(trimmed)}&limit=1`
       )
 
       const data = await res.json()

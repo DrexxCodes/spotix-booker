@@ -1,73 +1,78 @@
 "use client"
 
-import { Ticket, User, Plus, BarChart3 } from "lucide-react"
+import { FileWarning, User, Plus, BarChart3, ChevronRight } from "lucide-react"
 import Link from "next/link"
 
 const actions = [
   {
-    icon: Ticket,
-    label: "Verify Ticket",
-    href: "/verify-ticket",
-    gradient: "from-[#6b2fa5] via-[#7d3db5] to-[#8b4fc5]",
-  },
-  {
-    icon: User,
-    label: "View Profile",
-    href: "/profile",
-    gradient: "from-[#7d3db5] via-[#8b4fc5] to-[#9a5fd5]",
-  },
-  {
     icon: Plus,
     label: "Create Event",
+    description: "Launch a new event",
     href: "/create-event",
-    gradient: "from-[#8b4fc5] via-[#9a5fd5] to-[#a96fe5]",
+    accent: "bg-[#6b2fa5] text-white",
+    iconBg: "bg-white/20",
+    primary: true,
   },
   {
     icon: BarChart3,
     label: "All Events",
+    description: "View and manage events",
     href: "/events",
-    gradient: "from-[#9a5fd5] via-[#a96fe5] to-[#b87ff5]",
+    accent: "bg-white border border-slate-200",
+    iconBg: "bg-[#6b2fa5]/10",
+    iconColor: "text-[#6b2fa5]",
+    textColor: "text-slate-800",
+  },
+  {
+    icon: FileWarning,
+    label: "View Reports",
+    description: "See if any of your events were reported",
+    href: "/reports",
+    accent: "bg-white border border-slate-200",
+    iconBg: "bg-emerald-50",
+    iconColor: "text-emerald-600",
+    textColor: "text-slate-800",
+  },
+  {
+    icon: User,
+    label: "Profile",
+    description: "Account & settings",
+    href: "/profile",
+    accent: "bg-white border border-slate-200",
+    iconBg: "bg-blue-50",
+    iconColor: "text-blue-600",
+    textColor: "text-slate-800",
   },
 ]
 
 export function QuickActions() {
   return (
-    <div className="mb-8">
-      <h2 className="text-3xl font-bold mb-6 bg-gradient-to-r from-[#6b2fa5] to-[#8b4fc5] bg-clip-text text-transparent">
-        Quick Actions
-      </h2>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {actions.map((action, index) => {
+    <div>
+      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Quick Actions</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {actions.map((action) => {
           const Icon = action.icon
           return (
             <Link
               key={action.href}
               href={action.href}
-              className="group relative overflow-hidden rounded-2xl p-6 text-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:scale-105"
-              style={{ animationDelay: `${index * 100}ms` }}
+              className={`group flex flex-col gap-3 p-4 rounded-xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ${action.accent}`}
             >
-              {/* Animated gradient background */}
-              <div
-                className={`absolute inset-0 bg-gradient-to-br ${action.gradient} transition-all duration-300`}
-              />
-              
-              {/* Shine effect on hover */}
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-200%] group-hover:translate-x-[200%] transition-transform duration-700" />
-              
-              {/* Floating orb */}
-              <div className="absolute -top-8 -right-8 w-24 h-24 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-500" />
-              
-              <div className="relative flex flex-col items-center text-center gap-3">
-                <div className="p-4 rounded-xl bg-white/20 backdrop-blur-sm group-hover:bg-white/30 group-hover:scale-110 group-hover:rotate-6 transition-all duration-300 shadow-lg">
-                  <Icon size={32} className="drop-shadow-lg" />
-                </div>
-                <span className="text-sm font-bold drop-shadow-md group-hover:scale-105 transition-transform duration-300">
-                  {action.label}
-                </span>
+              <div className={`w-9 h-9 ${action.iconBg} rounded-xl flex items-center justify-center flex-shrink-0`}>
+                <Icon size={18} className={action.primary ? "text-white" : action.iconColor} />
               </div>
-              
-              {/* Bottom accent line */}
-              <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 scale-x-0 group-hover:scale-x-100 transition-transform duration-300" />
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-bold leading-tight ${action.primary ? "text-white" : action.textColor}`}>
+                  {action.label}
+                </p>
+                <p className={`text-xs mt-0.5 ${action.primary ? "text-white/70" : "text-slate-400"}`}>
+                  {action.description}
+                </p>
+              </div>
+              <ChevronRight
+                size={14}
+                className={`self-end group-hover:translate-x-0.5 transition-transform ${action.primary ? "text-white/60" : "text-slate-300"}`}
+              />
             </Link>
           )
         })}

@@ -1,17 +1,21 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { auth, db } from "@/lib/firebase"
-import { onAuthStateChanged } from "firebase/auth"
+import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
+import { waitForAuthInit } from "@/hooks/useAuth"
+import { db } from "@/lib/firebase"
 import { doc, getDoc, updateDoc, collection, addDoc, query, where, getDocs } from "firebase/firestore"
 import { uploadImage } from "@/lib/image-uploader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { AlertCircle, CheckCircle2, Copy, Upload, FileText, Camera, MapPin } from "lucide-react"
+import {
+  AlertCircle, CheckCircle2, Copy, Upload,
+  FileText, Camera, MapPin, Shield, ArrowLeft,
+  User, Landmark, Home, ClipboardList,
+} from "lucide-react"
 
 interface UserData {
   uid: string
@@ -43,364 +47,223 @@ interface VerificationData {
   uid: string
 }
 
+function calculateAge(dateOfBirth: string): string {
+  try {
+    const dob   = new Date(dateOfBirth)
+    const today = new Date()
+    let age = today.getFullYear() - dob.getFullYear()
+    const md = today.getMonth() - dob.getMonth()
+    if (md < 0 || (md === 0 && today.getDate() < dob.getDate())) age--
+    return age.toString()
+  } catch {
+    return "Unknown"
+  }
+}
+
+const DOC_META: Record<string, { label: string; icon: React.ReactNode; hint: string }> = {
+  nin:            { label: "National ID (NIN)", icon: <FileText size={15} />, hint: "Upload a clear photo of your NIN slip or virtual NIN" },
+  selfie:         { label: "Selfie",            icon: <Camera size={15} />,   hint: "A clear photo of your face — image files only" },
+  proofOfAddress: { label: "Proof of Address",  icon: <MapPin size={15} />,   hint: "Utility bill, bank statement, or government letter" },
+}
+
 export default function VerificationPage() {
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
-  const [userData, setUserData] = useState<UserData | null>(null)
+  const [loading, setLoading]         = useState(true)
+  const [saving, setSaving]           = useState(false)
+  const [userData, setUserData]       = useState<UserData | null>(null)
+  const [uid, setUid]                 = useState<string>("")
   const [phoneNumber, setPhoneNumber] = useState("")
-  const [ageError, setAgeError] = useState<string | null>(null)
+  const [ageError, setAgeError]       = useState<string | null>(null)
   const [verificationData, setVerificationData] = useState<VerificationData>({
-    nin: { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
-    selfie: { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
+    nin:            { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
+    selfie:         { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
     proofOfAddress: { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
-    address: "",
+    address:        "",
     verificationState: "Not Verified",
     uid: "",
   })
-  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({
-    nin: 0,
-    selfie: 0,
-    proofOfAddress: 0,
-  })
+  const [uploadProgress, setUploadProgress]   = useState<Record<string, number>>({ nin: 0, selfie: 0, proofOfAddress: 0 })
   const [showUploadDialog, setShowUploadDialog] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [verificationId, setVerificationId] = useState<string>("")
-  const [copiedToClipboard, setCopiedToClipboard] = useState(false)
-  const [allRequirementsMet, setAllRequirementsMet] = useState(false)
+  const fileInputRef   = useRef<HTMLInputElement>(null)
+  const [verificationId, setVerificationId]   = useState("")
+  const [copied, setCopied]                   = useState(false)
+  const [allMet, setAllMet]                   = useState(false)
 
-  const resetFileInput = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ""
-    }
-  }
-
+  // ── Auth (JWT only, no Firebase client Auth) ──────────────────────────────
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        router.push("/login")
-        return
-      }
-
+    const init = async () => {
       try {
-        const userDocRef = doc(db, "users", user.uid)
-        const userDoc = await getDoc(userDocRef)
+        await waitForAuthInit()
 
-        if (userDoc.exists()) {
-          const data = userDoc.data()
-
-          if (data.isVerified) {
-            alert("You are already verified! Redirecting to your profile.")
-            router.push("/profile")
-            return
-          }
-
-          if (data.dateOfBirth) {
-            const age = calculateAge(data.dateOfBirth)
-            if (Number.parseInt(age) < 18) {
-              setAgeError("You must be at least 18 years old to be verified as a booker.")
-            }
-          }
-
-          const userData = {
-            uid: user.uid,
-            username: data.username || "",
-            email: data.email || "",
-            fullName: data.fullName || "",
-            phoneNumber: data.phoneNumber || "",
-            dateOfBirth: data.dateOfBirth || "",
-            accountName: data.accountName || "",
-            accountNumber: data.accountNumber || "",
-            bankName: data.bankName || "",
-            isVerified: data.isVerified || false,
-          }
-
-          setUserData(userData)
-          setPhoneNumber(userData.phoneNumber || "")
-
-          const verificationQuery = query(collection(db, "verification"), where("uid", "==", user.uid))
-          const verificationSnapshot = await getDocs(verificationQuery)
-
-          if (!verificationSnapshot.empty) {
-            const verificationDoc = verificationSnapshot.docs[0]
-            const verificationData = verificationDoc.data() as VerificationData
-            setVerificationId(verificationDoc.id || "")
-            setVerificationData({
-              nin: verificationData.nin || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
-              selfie: verificationData.selfie || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
-              proofOfAddress: verificationData.proofOfAddress || {
-                status: "pending",
-                dateUploaded: "",
-                timeUploaded: "",
-                fileUrl: "",
-              },
-              address: verificationData.address || "",
-              verificationState: verificationData.verificationState || "Not Verified",
-              uid: user.uid,
-            })
-          } else {
-            setVerificationData((prev) => ({
-              ...prev,
-              uid: user.uid,
-            }))
-          }
-        } else {
-          router.push("/profile")
+        let token = getAccessToken()
+        if (!token) {
+          const ok = await tryRefreshTokens()
+          if (!ok) { router.push("/login"); return }
+          token = getAccessToken()
         }
-      } catch (error) {
-        console.error("Error fetching user data:", error)
+        if (!token) { router.push("/login"); return }
+
+        const meRes = await authFetch("/api/user/me")
+        if (!meRes.ok) { router.push("/login"); return }
+
+        const me = await meRes.json()
+        const resolvedUid: string = me?.uid ?? me?.id ?? ""
+        if (!resolvedUid) { router.push("/login"); return }
+        setUid(resolvedUid)
+
+        // Fetch Firestore user doc using Admin-side uid
+        const userDocRef = doc(db, "users", resolvedUid)
+        const userDoc    = await getDoc(userDocRef)
+
+        if (!userDoc.exists()) { router.push("/profile"); return }
+
+        const data = userDoc.data()
+        if (data.isVerified) {
+          alert("You are already verified! Redirecting to your profile.")
+          router.push("/profile")
+          return
+        }
+
+        if (data.dateOfBirth) {
+          const age = calculateAge(data.dateOfBirth)
+          if (parseInt(age) < 18) setAgeError("You must be at least 18 years old to be verified as a booker.")
+        }
+
+        const u: UserData = {
+          uid:           resolvedUid,
+          username:      data.username      || "",
+          email:         data.email         || "",
+          fullName:      data.fullName       || "",
+          phoneNumber:   data.phoneNumber    || "",
+          dateOfBirth:   data.dateOfBirth    || "",
+          accountName:   data.accountName    || "",
+          accountNumber: data.accountNumber  || "",
+          bankName:      data.bankName       || "",
+          isVerified:    data.isVerified     || false,
+        }
+        setUserData(u)
+        setPhoneNumber(u.phoneNumber)
+
+        const vq       = query(collection(db, "verification"), where("uid", "==", resolvedUid))
+        const vSnap    = await getDocs(vq)
+        if (!vSnap.empty) {
+          const vDoc  = vSnap.docs[0]
+          const vData = vDoc.data() as VerificationData
+          setVerificationId(vDoc.id)
+          setVerificationData({
+            nin:            vData.nin            || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
+            selfie:         vData.selfie          || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
+            proofOfAddress: vData.proofOfAddress  || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
+            address:        vData.address         || "",
+            verificationState: vData.verificationState || "Not Verified",
+            uid:            resolvedUid,
+          })
+        } else {
+          setVerificationData((p) => ({ ...p, uid: resolvedUid }))
+        }
+      } catch (err) {
+        console.error("Verification auth error:", err)
+        router.push("/login")
       } finally {
         setLoading(false)
       }
-    })
-
-    return () => unsubscribe()
+    }
+    init()
   }, [router])
 
+  // ── Requirements check ────────────────────────────────────────────────────
   useEffect(() => {
-    const allDocumentsUploaded =
-      verificationData.nin.status === "completed" &&
-      verificationData.selfie.status === "completed" &&
-      verificationData.proofOfAddress.status === "completed"
-
-    const addressFilled = verificationData.address.trim() !== ""
-    const phoneNumberFilled = phoneNumber.trim() !== ""
-    const noAgeError = !ageError
-
-    setAllRequirementsMet(
-      allDocumentsUploaded && addressFilled && phoneNumberFilled && verificationId !== "" && noAgeError,
-    )
+    const docsOk    = verificationData.nin.status === "completed"
+                   && verificationData.selfie.status === "completed"
+                   && verificationData.proofOfAddress.status === "completed"
+    setAllMet(docsOk && verificationData.address.trim() !== "" && phoneNumber.trim() !== "" && verificationId !== "" && !ageError)
   }, [verificationData, verificationId, phoneNumber, ageError])
 
-  const handleAddressChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setVerificationData({
-      ...verificationData,
-      address: e.target.value,
-    })
+  // ── Firestore helpers ─────────────────────────────────────────────────────
+  const saveToFirestore = async (data: VerificationData) => {
+    const payload = {
+      nin:            { status: data.nin.status,            dateUploaded: data.nin.dateUploaded,            timeUploaded: data.nin.timeUploaded,            fileUrl: data.nin.fileUrl,            provider: data.nin.provider ?? null },
+      selfie:         { status: data.selfie.status,         dateUploaded: data.selfie.dateUploaded,         timeUploaded: data.selfie.timeUploaded,         fileUrl: data.selfie.fileUrl,         provider: data.selfie.provider ?? null },
+      proofOfAddress: { status: data.proofOfAddress.status, dateUploaded: data.proofOfAddress.dateUploaded, timeUploaded: data.proofOfAddress.timeUploaded, fileUrl: data.proofOfAddress.fileUrl, provider: data.proofOfAddress.provider ?? null },
+      address: data.address, verificationState: data.verificationState, uid: data.uid,
+    }
+    if (verificationId) {
+      await updateDoc(doc(db, "verification", verificationId), payload)
+    } else {
+      const ref = await addDoc(collection(db, "verification"), payload)
+      setVerificationId(ref.id)
+    }
   }
 
-  const handlePhoneNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/[^0-9]/g, "").slice(0, 11)
-    setPhoneNumber(value)
-  }
-
-  const handleUploadClick = (documentType: string) => {
-    setShowUploadDialog(documentType)
-    resetFileInput()
-
-    setTimeout(() => {
-      if (fileInputRef.current) {
-        fileInputRef.current.click()
-      }
-    }, 100)
+  // ── Upload ────────────────────────────────────────────────────────────────
+  const handleUploadClick = (docType: string) => {
+    setShowUploadDialog(docType)
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    setTimeout(() => fileInputRef.current?.click(), 100)
   }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0 || !showUploadDialog || !userData) {
-      setShowUploadDialog(null)
-      return
-    }
+    if (!e.target.files?.length || !showUploadDialog || !userData) { setShowUploadDialog(null); return }
+    const file     = e.target.files[0]
+    const docType  = showUploadDialog
 
-    const file = e.target.files[0]
-    const documentType = showUploadDialog
-
-    if (documentType === "selfie") {
-      if (!file.type.startsWith("image/")) {
-        alert("Please upload an image file for your selfie")
-        setShowUploadDialog(null)
-        return
-      }
-    } else {
-      if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-        alert("Please upload an image or PDF file")
-        setShowUploadDialog(null)
-        return
-      }
-    }
+    if (docType === "selfie" && !file.type.startsWith("image/")) { alert("Please upload an image file for your selfie"); setShowUploadDialog(null); return }
+    if (docType !== "selfie" && !file.type.startsWith("image/") && file.type !== "application/pdf") { alert("Please upload an image or PDF file"); setShowUploadDialog(null); return }
 
     try {
-      setUploadProgress({ ...uploadProgress, [documentType]: 10 })
-
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => {
-          const currentProgress = prev[documentType]
-          if (currentProgress < 90) {
-            return { ...prev, [documentType]: currentProgress + 10 }
-          }
-          return prev
-        })
-      }, 500)
-
-      const { uploadPromise } = uploadImage(file, {
-        cloudinaryFolder: "Verification",
-        showAlert: true,
-      })
+      setUploadProgress((p) => ({ ...p, [docType]: 10 }))
+      const interval = setInterval(() => setUploadProgress((p) => ({ ...p, [docType]: Math.min((p[docType] || 0) + 10, 90) })), 500)
+      const { uploadPromise } = uploadImage(file, { cloudinaryFolder: "Verification", showAlert: true })
       const { url: fileUrl, provider } = await uploadPromise
-
-      clearInterval(progressInterval)
-
-      if (!fileUrl) {
-        throw new Error("Upload failed on all providers")
-      }
-
-      setUploadProgress({ ...uploadProgress, [documentType]: 100 })
-
-      const now = new Date()
-      const dateUploaded = now.toLocaleDateString()
-      const timeUploaded = now.toLocaleTimeString()
-
-      const updatedVerificationData = {
+      clearInterval(interval)
+      if (!fileUrl) throw new Error("Upload failed")
+      setUploadProgress((p) => ({ ...p, [docType]: 100 }))
+      const now   = new Date()
+      const updated: VerificationData = {
         ...verificationData,
-        [documentType]: {
-          status: "completed" as const,
-          dateUploaded,
-          timeUploaded,
-          fileUrl,
-          provider,
-        },
+        [docType]: { status: "completed" as const, dateUploaded: now.toLocaleDateString(), timeUploaded: now.toLocaleTimeString(), fileUrl, provider },
       }
-
-      const allDocumentsUploaded =
-        updatedVerificationData.nin.status === "completed" &&
-        updatedVerificationData.selfie.status === "completed" &&
-        updatedVerificationData.proofOfAddress.status === "completed"
-
-      if (allDocumentsUploaded && updatedVerificationData.address.trim() !== "") {
-        updatedVerificationData.verificationState = "Awaiting Verification"
-      }
-
-      setVerificationData(updatedVerificationData)
-
-      await saveVerificationToFirestore(updatedVerificationData)
-
-      setTimeout(() => {
-        setShowUploadDialog(null)
-        setUploadProgress({ ...uploadProgress, [documentType]: 0 })
-      }, 1000)
-    } catch (error) {
-      console.error("Error uploading file:", error)
+      const allDone = updated.nin.status === "completed" && updated.selfie.status === "completed" && updated.proofOfAddress.status === "completed"
+      if (allDone && updated.address.trim()) updated.verificationState = "Awaiting Verification"
+      setVerificationData(updated)
+      await saveToFirestore(updated)
+      setTimeout(() => { setShowUploadDialog(null); setUploadProgress((p) => ({ ...p, [docType]: 0 })) }, 1000)
+    } catch {
       alert("Failed to upload file. Please try again.")
-      setUploadProgress({ ...uploadProgress, [documentType]: 0 })
+      setUploadProgress((p) => ({ ...p, [docType]: 0 }))
       setShowUploadDialog(null)
-    }
-  }
-
-  const saveVerificationToFirestore = async (data: VerificationData) => {
-    try {
-      const firestoreData = {
-        nin: {
-          status: data.nin.status,
-          dateUploaded: data.nin.dateUploaded,
-          timeUploaded: data.nin.timeUploaded,
-          fileUrl: data.nin.fileUrl,
-          provider: data.nin.provider || null,
-        },
-        selfie: {
-          status: data.selfie.status,
-          dateUploaded: data.selfie.dateUploaded,
-          timeUploaded: data.selfie.timeUploaded,
-          fileUrl: data.selfie.fileUrl,
-          provider: data.selfie.provider || null,
-        },
-        proofOfAddress: {
-          status: data.proofOfAddress.status,
-          dateUploaded: data.proofOfAddress.dateUploaded,
-          timeUploaded: data.proofOfAddress.timeUploaded,
-          fileUrl: data.proofOfAddress.fileUrl,
-          provider: data.proofOfAddress.provider || null,
-        },
-        address: data.address,
-        verificationState: data.verificationState,
-        uid: data.uid,
-      }
-
-      if (verificationId) {
-        await updateDoc(doc(db, "verification", verificationId), firestoreData)
-      } else {
-        const docRef = await addDoc(collection(db, "verification"), firestoreData)
-        setVerificationId(docRef.id)
-      }
-    } catch (error) {
-      console.error("Error saving verification data:", error)
-      throw error
     }
   }
 
   const saveVerification = async () => {
-    if (!userData) return
-
-    if (ageError) {
-      alert(ageError)
-      return
-    }
-
+    if (!userData || ageError) { if (ageError) alert(ageError); return }
+    setSaving(true)
     try {
-      setLoading(true)
-
-      if (phoneNumber !== userData.phoneNumber) {
-        const userDocRef = doc(db, "users", userData.uid)
-        await updateDoc(userDocRef, {
-          phoneNumber: phoneNumber,
-        })
-      }
-
-      await saveVerificationToFirestore(verificationData)
-
+      if (phoneNumber !== userData.phoneNumber) await updateDoc(doc(db, "users", userData.uid), { phoneNumber })
+      await saveToFirestore(verificationData)
       alert("Verification information saved successfully!")
       router.push("/profile")
-    } catch (error) {
-      console.error("Error saving verification data:", error)
-      alert("Failed to save verification data. Please try again.")
-    } finally {
-      setLoading(false)
-    }
+    } catch { alert("Failed to save verification data. Please try again.") }
+    finally { setSaving(false) }
   }
 
-  const copyVerificationId = () => {
-    if (verificationId) {
-      navigator.clipboard
-        .writeText(verificationId)
-        .then(() => {
-          setCopiedToClipboard(true)
-          setTimeout(() => setCopiedToClipboard(false), 3000)
-        })
-        .catch((err) => {
-          console.error("Failed to copy verification ID: ", err)
-        })
-    }
+  const copyId = () => {
+    if (!verificationId) return
+    navigator.clipboard.writeText(verificationId).then(() => { setCopied(true); setTimeout(() => setCopied(false), 3000) })
   }
 
-  const getDocumentName = (documentType: string): string => {
-    switch (documentType) {
-      case "nin":
-        return "National Identity Number (NIN)"
-      case "selfie":
-        return "Selfie Shot"
-      case "proofOfAddress":
-        return "Proof of Address"
-      default:
-        return "Document"
-    }
-  }
-
-  const getDocumentIcon = (documentType: string) => {
-    switch (documentType) {
-      case "nin":
-        return <FileText className="h-5 w-5" />
-      case "selfie":
-        return <Camera className="h-5 w-5" />
-      case "proofOfAddress":
-        return <MapPin className="h-5 w-5" />
-      default:
-        return <Upload className="h-5 w-5" />
-    }
-  }
+  const stateStyle = {
+    Verified:              "bg-emerald-50 text-emerald-700 border-emerald-200",
+    "Awaiting Verification": "bg-amber-50 text-amber-700 border-amber-200",
+    "Not Verified":        "bg-slate-50 text-slate-600 border-slate-200",
+  }[verificationData.verificationState] ?? "bg-slate-50 text-slate-600 border-slate-200"
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-white">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-[#6b2fa5] border-t-transparent"></div>
-          <p className="mt-4 text-[#6b2fa5] font-medium">Loading verification data...</p>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-[#6b2fa5]/30 border-t-[#6b2fa5] rounded-full animate-spin" />
+          <p className="text-sm text-slate-500">Loading verification data…</p>
         </div>
       </div>
     )
@@ -408,14 +271,12 @@ export default function VerificationPage() {
 
   if (!userData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-white">
-        <div className="max-w-md rounded-lg border border-red-200 bg-red-50 p-4 text-red-900">
-          <div className="flex gap-3">
-            <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <h5 className="font-semibold">Error</h5>
-              <p className="text-sm text-red-800">User data not found. Please log in again.</p>
-            </div>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="max-w-sm w-full bg-white rounded-xl border border-red-200 p-6 flex items-start gap-3">
+          <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-red-700">User data not found</p>
+            <p className="text-xs text-red-600 mt-1">Please log in again to continue.</p>
           </div>
         </div>
       </div>
@@ -423,361 +284,263 @@ export default function VerificationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-purple-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="rounded-lg border border-[#6b2fa5]/20 bg-white shadow-sm">
-          <div className="p-6 text-center space-y-4">
-            <div className="mx-auto w-24 h-24 bg-[#6b2fa5]/10 rounded-full flex items-center justify-center">
-              <svg className="w-12 h-12 text-[#6b2fa5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                />
-              </svg>
+    <div className="min-h-screen bg-slate-50">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-5">
+
+        {/* Page header */}
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.back()} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+            <ArrowLeft size={16} />
+          </button>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-[#6b2fa5]">Identity</p>
+            <h1 className="text-xl font-bold text-slate-900 leading-tight">Booker Verification</h1>
+          </div>
+          <span className={`ml-auto inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${stateStyle}`}>
+            {verificationData.verificationState}
+          </span>
+        </div>
+
+        {/* Info banner */}
+        <div className="bg-[#6b2fa5]/6 border border-[#6b2fa5]/15 rounded-xl p-4 flex gap-3">
+          <Shield size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Verification is free. We never publicly share your uploaded documents. All data is stored securely and used only for identity confirmation.
+          </p>
+        </div>
+
+        {/* Age error */}
+        {ageError && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3">
+            <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-700">Age requirement not met</p>
+              <p className="text-xs text-red-600 mt-1">{ageError}</p>
+              <button onClick={() => router.push("/profile")} className="mt-2 text-xs font-semibold text-red-600 underline underline-offset-2">
+                Return to profile
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Personal info */}
+        <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-100">
+            <User size={14} className="text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-800">Personal information</h2>
+          </div>
+          <div className="p-5 grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Full name</label>
+              <Input value={userData.fullName} readOnly className="bg-slate-50 text-slate-700 text-sm" />
             </div>
             <div>
-              <h2 className="text-3xl font-bold text-[#6b2fa5]">Booker Verification</h2>
-              <p className="mt-2 text-base text-gray-600">
-                The verification process is free and we don't publicly share the details that have been uploaded here.
-                Your information is securely stored and used only for verification purposes.
-              </p>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Email</label>
+              <Input value={userData.email} readOnly className="bg-slate-50 text-slate-700 text-sm" />
             </div>
-          </div>
-        </div>
-
-        {/* Age Error Alert */}
-        {ageError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-900">
-            <div className="flex gap-3">
-              <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <div className="space-y-2 flex-1">
-                <h5 className="font-semibold">Age Verification Failed</h5>
-                <div className="text-sm text-red-800 space-y-2">
-                  <p>{ageError}</p>
-                  <p>You must be at least 18 years old to be verified as a booker on Spotix.</p>
-                  <Button variant="outline" onClick={() => router.push("/profile")} className="mt-2">
-                    Return to Profile
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Personal Information */}
-        <div className="rounded-lg border border-[#6b2fa5]/20 bg-white shadow-sm">
-          <div className="p-6">
-            <h3 className="text-xl font-semibold text-[#6b2fa5] mb-4">Personal Information</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label htmlFor="fullName" className="text-sm font-medium text-gray-700">
-                  Full Name
-                </label>
-                <Input id="fullName" value={userData.fullName} readOnly className="bg-gray-50" />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="email" className="text-sm font-medium text-gray-700">
-                  Email
-                </label>
-                <Input id="email" type="email" value={userData.email} readOnly className="bg-gray-50" />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="phoneNumber" className="text-sm font-medium text-gray-700">
-                  Phone Number
-                </label>
-                <Input
-                  id="phoneNumber"
-                  type="text"
-                  value={phoneNumber}
-                  onChange={handlePhoneNumberChange}
-                  placeholder="Enter your phone number"
-                  maxLength={11}
-                />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <label htmlFor="age" className="text-sm font-medium text-gray-700">
-                  Age
-                </label>
-                <Input
-                  id="age"
-                  value={userData.dateOfBirth ? calculateAge(userData.dateOfBirth) : "Not provided"}
-                  readOnly
-                  className={`bg-gray-50 ${Number.parseInt(calculateAge(userData.dateOfBirth)) < 18 ? "border-red-500" : ""}`}
-                />
-                {Number.parseInt(calculateAge(userData.dateOfBirth)) < 18 && (
-                  <p className="text-xs text-red-500">Must be at least 18 years old</p>
-                )}
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <label htmlFor="verificationId" className="text-sm font-medium text-gray-700">
-                  Verification ID
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    id="verificationId"
-                    value={verificationId}
-                    readOnly
-                    placeholder="No verification ID yet"
-                    className="bg-gray-50"
-                  />
-                  {verificationId && (
-                    <Button
-                      onClick={copyVerificationId}
-                      variant="outline"
-                      className={`${copiedToClipboard ? "bg-green-50 text-green-700" : "text-[#6b2fa5]"} border-[#6b2fa5]/20`}
-                    >
-                      <Copy className="h-4 w-4 mr-2" />
-                      {copiedToClipboard ? "Copied!" : "Copy"}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Banking Information */}
-        <div className="rounded-lg border border-[#6b2fa5]/20 bg-white shadow-sm">
-          <div className="p-6">
-            <h3 className="text-xl font-semibold text-[#6b2fa5] mb-4">Banking Information</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label htmlFor="accountName" className="text-sm font-medium text-gray-700">
-                  Account Name
-                </label>
-                <Input id="accountName" value={userData.accountName} readOnly className="bg-gray-50" />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="accountNumber" className="text-sm font-medium text-gray-700">
-                  Account Number
-                </label>
-                <Input id="accountNumber" value={userData.accountNumber} readOnly className="bg-gray-50" />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <label htmlFor="bankName" className="text-sm font-medium text-gray-700">
-                  Bank Name
-                </label>
-                <Input id="bankName" value={userData.bankName} readOnly className="bg-gray-50" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Address Information */}
-        <div className="rounded-lg border border-[#6b2fa5]/20 bg-white shadow-sm">
-          <div className="p-6">
-            <h3 className="text-xl font-semibold text-[#6b2fa5] mb-4">Address Information</h3>
-            <div className="space-y-2">
-              <label htmlFor="address" className="text-sm font-medium text-gray-700">
-                Residential Address
-              </label>
-              <Textarea
-                id="address"
-                value={verificationData.address}
-                onChange={handleAddressChange}
-                placeholder="Enter your full residential address"
-                rows={3}
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Phone number</label>
+              <Input
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 11))}
+                placeholder="Enter your phone number"
+                maxLength={11}
+                className="text-sm"
               />
             </div>
-          </div>
-        </div>
-
-        {/* Upload Documents */}
-        <div className="rounded-lg border border-[#6b2fa5]/20 bg-white shadow-sm">
-          <div className="p-6">
-            <h3 className="text-xl font-semibold text-[#6b2fa5] mb-4">Upload Documents</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[#6b2fa5]/20">
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6b2fa5]">Document</th>
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6b2fa5]">Action</th>
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6b2fa5]">Status</th>
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6b2fa5]">Date</th>
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6b2fa5]">Time</th>
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6b2fa5]">Provider</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(["nin", "selfie", "proofOfAddress"] as const).map((docType) => (
-                    <tr key={docType} className="border-b border-gray-100">
-                      <td className="py-3 px-4 flex items-center gap-2">
-                        {getDocumentIcon(docType)}
-                        <span className="text-sm">{getDocumentName(docType)}</span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Button
-                          onClick={() => handleUploadClick(docType)}
-                          variant="default"
-                          className="bg-[#6b2fa5] hover:bg-[#5a2589] text-white"
-                        >
-                          <Upload className="h-4 w-4 mr-2" />
-                          {verificationData[docType].status === "completed" ? "Replace" : "Upload"}
-                        </Button>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            verificationData[docType].status === "completed"
-                              ? "bg-green-500 text-white"
-                              : "bg-gray-200 text-gray-700"
-                          }`}
-                        >
-                          {verificationData[docType].status === "completed" ? "Completed" : "Pending"}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-sm">{verificationData[docType].dateUploaded || "-"}</td>
-                      <td className="py-3 px-4 text-sm">{verificationData[docType].timeUploaded || "-"}</td>
-                      <td className="py-3 px-4 text-sm">{verificationData[docType].provider || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Age</label>
+              <Input
+                value={userData.dateOfBirth ? calculateAge(userData.dateOfBirth) : "Not provided"}
+                readOnly
+                className={`bg-slate-50 text-sm ${parseInt(calculateAge(userData.dateOfBirth)) < 18 ? "border-red-400 text-red-600" : "text-slate-700"}`}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Verification ID</label>
+              <div className="flex gap-2">
+                <Input value={verificationId} readOnly placeholder="Generated after first upload" className="bg-slate-50 text-slate-700 text-sm font-mono" />
+                {verificationId && (
+                  <Button variant="outline" onClick={copyId} className={`shrink-0 text-xs px-3 ${copied ? "border-emerald-300 text-emerald-600" : "border-slate-200 text-slate-600"}`}>
+                    <Copy size={13} className="mr-1.5" />
+                    {copied ? "Copied!" : "Copy"}
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Verification State */}
-        <div className="rounded-lg border border-[#6b2fa5]/20 bg-white shadow-sm">
-          <div className="p-6">
-            <h3 className="text-xl font-semibold text-[#6b2fa5] mb-4">Verification State</h3>
-            <span
-              className={`inline-flex items-center rounded-full border px-4 py-2 text-lg font-medium ${
-                verificationData.verificationState === "Verified"
-                  ? "bg-green-50 text-green-700 border-green-300"
-                  : verificationData.verificationState === "Awaiting Verification"
-                    ? "bg-yellow-50 text-yellow-700 border-yellow-300"
-                    : "bg-gray-50 text-gray-700 border-gray-300"
-              }`}
-            >
-              {verificationData.verificationState}
-            </span>
+        {/* Banking info */}
+        <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-100">
+            <Landmark size={14} className="text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-800">Banking information</h2>
           </div>
-        </div>
+          <div className="p-5 grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Account name</label>
+              <Input value={userData.accountName} readOnly className="bg-slate-50 text-slate-700 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Account number</label>
+              <Input value={userData.accountNumber} readOnly className="bg-slate-50 text-slate-700 text-sm font-mono" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Bank name</label>
+              <Input value={userData.bankName} readOnly className="bg-slate-50 text-slate-700 text-sm" />
+            </div>
+          </div>
+        </section>
 
-        {/* Verification Complete Message */}
-        {allRequirementsMet && (
-          <div className="rounded-lg border border-green-500 bg-green-50 p-4 text-green-900">
-            <div className="flex gap-3">
-              <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
-              <div className="space-y-3 flex-1">
-                <h5 className="font-semibold text-green-800">All Verification Requirements Completed!</h5>
-                <div className="text-sm text-green-700 space-y-3">
-                  <p>
-                    You have successfully uploaded all required documents and completed all required fields. Please copy
-                    your Verification ID and share it with our customer service team to complete your verification
-                    process.
-                  </p>
-                  <div className="bg-white p-4 rounded-lg border border-green-200">
-                    <p className="font-semibold text-green-800 mb-2">Your Verification ID:</p>
-                    <div className="flex gap-2">
-                      <Input value={verificationId} readOnly className="bg-white" />
-                      <Button
-                        onClick={copyVerificationId}
-                        className={`${copiedToClipboard ? "bg-green-600" : "bg-[#6b2fa5]"} hover:bg-[#5a2589]`}
-                      >
-                        <Copy className="h-4 w-4 mr-2" />
-                        {copiedToClipboard ? "Copied!" : "Copy ID"}
-                      </Button>
+        {/* Address */}
+        <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-100">
+            <Home size={14} className="text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-800">Residential address</h2>
+          </div>
+          <div className="p-5">
+            <Textarea
+              value={verificationData.address}
+              onChange={(e) => setVerificationData((p) => ({ ...p, address: e.target.value }))}
+              placeholder="Enter your full residential address"
+              rows={3}
+              className="text-sm resize-none"
+            />
+          </div>
+        </section>
+
+        {/* Documents */}
+        <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-100">
+            <ClipboardList size={14} className="text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-800">Documents</h2>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {(["nin", "selfie", "proofOfAddress"] as const).map((docType) => {
+              const meta     = DOC_META[docType]
+              const docState = verificationData[docType]
+              const done     = docState.status === "completed"
+              return (
+                <div key={docType} className="flex items-start sm:items-center justify-between gap-4 p-5 flex-col sm:flex-row">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${done ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+                      {meta.icon}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800">{meta.label}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{meta.hint}</p>
+                      {done && (
+                        <p className="text-xs text-emerald-600 mt-1 font-medium">
+                          Uploaded {docState.dateUploaded} at {docState.timeUploaded}
+                          {docState.provider && ` · ${docState.provider}`}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <p className="text-sm">
-                    Contact our customer service team at <strong>support@spotix.com</strong> or through the chat widget.
-                  </p>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {done && <span className="w-2 h-2 rounded-full bg-emerald-500" />}
+                    <Button
+                      onClick={() => handleUploadClick(docType)}
+                      className={done
+                        ? "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs h-8 px-3"
+                        : "bg-[#6b2fa5] hover:bg-[#5a2589] text-white text-xs h-8 px-3"
+                      }
+                      variant={done ? "outline" : "default"}
+                    >
+                      <Upload size={12} className="mr-1.5" />
+                      {done ? "Replace" : "Upload"}
+                    </Button>
+                  </div>
                 </div>
+              )
+            })}
+          </div>
+        </section>
+
+        {/* Completion banner */}
+        {allMet && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 flex gap-3">
+            <CheckCircle2 size={18} className="text-emerald-600 flex-shrink-0 mt-0.5" />
+            <div className="space-y-3 flex-1">
+              <div>
+                <p className="text-sm font-semibold text-emerald-800">All requirements met</p>
+                <p className="text-xs text-emerald-700 mt-1">
+                  Share your Verification ID with our team at{" "}
+                  <strong>support@spotix.com.ng</strong> to complete the process.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Input value={verificationId} readOnly className="bg-white text-sm font-mono h-8 text-xs" />
+                <Button onClick={copyId} className={`shrink-0 h-8 px-3 text-xs ${copied ? "bg-emerald-600" : "bg-[#6b2fa5]"} text-white`}>
+                  <Copy size={12} className="mr-1" />
+                  {copied ? "Copied!" : "Copy"}
+                </Button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Action Buttons */}
-        <div className="flex gap-4 justify-end">
-          <Button variant="outline" onClick={() => router.push("/profile")} className="border-[#6b2fa5]/20">
+        {/* Actions */}
+        <div className="flex justify-end gap-3 pb-4">
+          <Button variant="outline" onClick={() => router.push("/profile")} className="border-slate-200 text-slate-600 text-sm">
             Cancel
           </Button>
           <Button
             onClick={saveVerification}
-            disabled={!!ageError || loading}
-            className="bg-[#6b2fa5] hover:bg-[#5a2589] text-white"
+            disabled={!!ageError || saving}
+            className="bg-[#6b2fa5] hover:bg-[#5a2589] text-white text-sm px-5"
           >
-            Save Verification
+            {saving ? "Saving…" : "Save verification"}
           </Button>
         </div>
 
         {/* Hidden file input */}
         <input
-          type="file"
           ref={fileInputRef}
+          type="file"
           className="hidden"
           onChange={handleFileChange}
           accept={showUploadDialog === "selfie" ? "image/*" : "image/*,.pdf"}
         />
 
-        {/* Upload Dialog */}
+        {/* Upload modal */}
         {showUploadDialog && (
-          <div
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-            onClick={() => setShowUploadDialog(null)}
-          >
-            <div className="max-w-md w-full rounded-lg border bg-white shadow-sm" onClick={(e) => e.stopPropagation()}>
-              <div className="p-6">
-                <h3 className="text-xl font-semibold text-[#6b2fa5] mb-4">
-                  Upload {getDocumentName(showUploadDialog)}
-                </h3>
-                <div className="space-y-4">
-                  <div
-                    className="border-2 border-dashed border-[#6b2fa5]/30 rounded-lg p-12 text-center cursor-pointer hover:bg-[#6b2fa5]/5 transition-colors"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Upload className="h-12 w-12 mx-auto text-[#6b2fa5] mb-4" />
-                    <p className="text-[#6b2fa5] font-medium">Click to Upload</p>
-                    <p className="text-xs text-gray-500 mt-2">Secured by Spotix. All uploads are safe and secure</p>
-                  </div>
-                  {uploadProgress[showUploadDialog] > 0 && (
-                    <div className="space-y-2">
-                      <div className="w-full bg-gray-200 rounded-full h-2.5">
-                        <div
-                          className="bg-[#6b2fa5] h-2.5 rounded-full transition-all duration-300"
-                          style={{ width: `${uploadProgress[showUploadDialog]}%` }}
-                        ></div>
-                      </div>
-                      <p className="text-sm text-center text-[#6b2fa5]">{uploadProgress[showUploadDialog]}%</p>
-                    </div>
-                  )}
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowUploadDialog(null)}
-                    className="w-full border-[#6b2fa5]/20"
-                  >
-                    Cancel
-                  </Button>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowUploadDialog(null)}>
+            <div className="max-w-sm w-full bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[#6b2fa5]/8 flex items-center justify-center text-[#6b2fa5]">
+                  {DOC_META[showUploadDialog]?.icon}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Upload {DOC_META[showUploadDialog]?.label}</p>
+                  <p className="text-xs text-slate-400">{DOC_META[showUploadDialog]?.hint}</p>
                 </div>
               </div>
+              <div
+                className="border-2 border-dashed border-[#6b2fa5]/25 rounded-xl p-10 text-center cursor-pointer hover:bg-[#6b2fa5]/4 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload size={24} className="mx-auto text-[#6b2fa5] mb-3" />
+                <p className="text-sm font-semibold text-[#6b2fa5]">Click to select file</p>
+                <p className="text-xs text-slate-400 mt-1">Secured by Spotix</p>
+              </div>
+              {uploadProgress[showUploadDialog] > 0 && (
+                <div className="space-y-1.5">
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="bg-[#6b2fa5] h-1.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress[showUploadDialog]}%` }} />
+                  </div>
+                  <p className="text-xs text-center text-slate-500">{uploadProgress[showUploadDialog]}%</p>
+                </div>
+              )}
+              <Button variant="outline" onClick={() => setShowUploadDialog(null)} className="w-full border-slate-200 text-sm">
+                Cancel
+              </Button>
             </div>
           </div>
         )}
+
       </div>
     </div>
   )
 }
-
-function calculateAge(dateOfBirth: string): string {
-  try {
-    const dob = new Date(dateOfBirth)
-    const today = new Date()
-    let age = today.getFullYear() - dob.getFullYear()
-    const monthDiff = today.getMonth() - dob.getMonth()
-
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-      age--
-    }
-
-    return age.toString()
-  } catch (error) {
-    return "Unknown"
-  }
-}
-// End of file: app/verification/page.tsx

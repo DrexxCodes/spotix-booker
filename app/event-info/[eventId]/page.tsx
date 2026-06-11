@@ -533,9 +533,37 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     )
   }
 
+  // ── Tab icons ──────────────────────────────────────────────────────────────
+  // (imported inline to avoid touching the import block above)
+  const TAB_ICONS: Record<TabId, React.ReactNode> = {
+    overview:  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>,
+    eventlink: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
+    payouts:   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>,
+    attendees: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    discounts: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5"/><path d="m15 10 5 5-5 5"/><line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="19" y2="19"/></svg>,
+    merch:     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" x2="21" y1="6" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>,
+    referrals: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" x2="21" y1="20" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" x2="21" y1="15" y2="21"/></svg>,
+    form:      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
+    responses: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+    weather:   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>,
+    transfer:  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>,
+    edit:      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    teams:     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  }
+
+  const eventDate = new Date(eventData.eventDate)
+  const isPast    = eventDate < new Date()
+  const statusColor = {
+    active:    "bg-emerald-100 text-emerald-700 border-emerald-200",
+    inactive:  "bg-amber-100 text-amber-700 border-amber-200",
+    cancelled: "bg-rose-100 text-rose-700 border-rose-200",
+    completed: "bg-blue-100 text-blue-700 border-blue-200",
+    past:      "bg-slate-100 text-slate-600 border-slate-200",
+  }[eventData.status ?? (isPast ? "past" : "active")] ?? "bg-slate-100 text-slate-600 border-slate-200"
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
+    <div className="min-h-screen bg-slate-50">
       {exitDialog && (
         <ExitTeamDialog
           eventName={eventData.eventName}
@@ -545,70 +573,146 @@ function EventInfoInner({ eventId }: { eventId: string }) {
         />
       )}
 
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <Link href="/events">
-              <button className="flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">
-                <ArrowLeft size={18} /> Back to Events
-              </button>
+      {/* ── Scrollable page header (back bar + event name/meta) ─────────── */}
+      <div className="bg-white border-b border-slate-100">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+
+          {/* Top row: back + actions */}
+          <div className="flex items-center justify-between h-12">
+            <Link
+              href="/events"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              <ArrowLeft size={15} strokeWidth={2} />
+              Events
             </Link>
-            <div className="flex items-center gap-3">
+
+            <div className="flex items-center gap-2">
               {collabInfo && (
                 <>
                   <RoleBadge role={collabInfo.role} />
-                  <button onClick={() => setExitDialog(true)}
-                    className="flex items-center gap-2 px-4 py-2 border border-red-200 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium">
-                    <LogOut size={15} /> Exit Team
+                  <button
+                    onClick={() => setExitDialog(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-white text-red-600 text-xs font-semibold hover:bg-red-50 transition-colors"
+                  >
+                    <LogOut size={13} /> Exit Team
                   </button>
                 </>
               )}
               {isOwner && (
                 <>
                   {cacheInfo.isCached && cacheInfo.remainingTime !== null && (
-                    <span className="text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
-                      Cached for {Math.ceil(cacheInfo.remainingTime / 1000)}s
+                    <span className="hidden sm:inline text-xs text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                      Cached · {Math.ceil(cacheInfo.remainingTime / 1000)}s
                     </span>
                   )}
-                  <button onClick={handleRefreshData} disabled={refreshing}
-                    className="flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50">
-                    <RefreshCw size={18} className={refreshing ? "animate-spin" : ""} />
-                    {refreshing ? "Refreshing..." : "Refresh"}
+                  <button
+                    onClick={handleRefreshData}
+                    disabled={refreshing}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                  >
+                    <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+                    {refreshing ? "Refreshing…" : "Refresh"}
                   </button>
                 </>
               )}
             </div>
           </div>
-          <div className="flex flex-col gap-2">
-            <h1 className="text-4xl font-bold text-slate-900">{eventData.eventName}</h1>
-            <p className="text-slate-600">{eventData.eventVenue}</p>
-            {collabInfo && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm text-slate-500">Team member ·</span>
-                <RoleBadge role={collabInfo.role} />
-              </div>
-            )}
-          </div>
-        </div>
 
-        <div className="space-y-6">
-          {/* Tabs */}
-          <div className="border-b border-slate-200 bg-white rounded-t-lg">
-            <div className="flex overflow-x-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-[#6b2fa5] [&::-webkit-scrollbar-thumb]:rounded-full">
-              {visibleTabs.map((tab) => (
-                <button key={tab} onClick={() => handleTabSwitch(tab)}
-                  className={`px-6 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                    activeTab === tab ? "border-b-purple-600 text-purple-600" : "border-b-transparent text-slate-600 hover:text-slate-900"
-                  }`}>
-                  {TAB_LABELS[tab]}
-                </button>
-              ))}
+          {/* Event name + meta row — scrolls away with the page */}
+          <div className="pb-4 pt-1">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2.5 flex-wrap mb-1">
+                  <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight truncate max-w-[600px]">
+                    {eventData.eventName}
+                  </h1>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${statusColor}`}>
+                    {(eventData.status ?? (isPast ? "past" : "active")).charAt(0).toUpperCase() +
+                      (eventData.status ?? (isPast ? "past" : "active")).slice(1)}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="inline-flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                    {eventData.eventVenue}
+                  </span>
+                  <span className="text-slate-300">·</span>
+                  <span className="inline-flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                    {eventDate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                  </span>
+                  {eventData.eventType && (
+                    <>
+                      <span className="text-slate-300">·</span>
+                      <span>{eventData.eventType}</span>
+                    </>
+                  )}
+                </p>
+              </div>
+
+              {/* Key stats pill row */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2">
+                  <div className="text-center">
+                    <p className="text-xs text-slate-400 leading-none mb-0.5">Sold</p>
+                    <p className="text-sm font-bold text-slate-900 leading-none">{eventData.ticketsSold.toLocaleString()}</p>
+                  </div>
+                  {eventData.enableMaxSize && eventData.totalCapacity > 0 && (
+                    <>
+                      <div className="w-px h-6 bg-slate-200" />
+                      <div className="text-center">
+                        <p className="text-xs text-slate-400 leading-none mb-0.5">Capacity</p>
+                        <p className="text-sm font-bold text-slate-900 leading-none">{eventData.totalCapacity.toLocaleString()}</p>
+                      </div>
+                    </>
+                  )}
+                  <div className="w-px h-6 bg-slate-200" />
+                  <div className="text-center">
+                    <p className="text-xs text-slate-400 leading-none mb-0.5">Revenue</p>
+                    <p className="text-sm font-bold text-[#6b2fa5] leading-none">
+                      ₦{eventData.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Content */}
-          <div className="bg-white rounded-b-lg border border-slate-200 p-6">
+      {/* ── Sticky tab strip — sticks right under the nav (top-14) ─────── */}
+      <div className="sticky top-14 z-20 bg-white border-b border-slate-200 shadow-sm">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex overflow-x-auto gap-0 -mb-px scrollbar-none [&::-webkit-scrollbar]:hidden">
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => handleTabSwitch(tab)}
+                className={`
+                  inline-flex items-center gap-1.5 px-3.5 py-2.5
+                  text-xs font-semibold whitespace-nowrap border-b-2
+                  transition-all duration-150 flex-shrink-0
+                  ${activeTab === tab
+                    ? "border-[#6b2fa5] text-[#6b2fa5] bg-[#6b2fa5]/[0.04]"
+                    : "border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                  }
+                `}
+              >
+                <span className={activeTab === tab ? "text-[#6b2fa5]" : "text-slate-400"}>
+                  {TAB_ICONS[tab]}
+                </span>
+                {TAB_LABELS[tab]}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tab content ─────────────────────────────────────────────────── */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6">
 
             {activeTab === "overview" && visibleTabs.includes("overview") && (
               loadedTabs.has("overview") && eventData
@@ -675,17 +779,17 @@ function EventInfoInner({ eventId }: { eventId: string }) {
             )}
 
             {activeTab === "teams" && visibleTabs.includes("teams") && (
-              <div className="text-center py-16 space-y-4">
-                <div className="w-16 h-16 rounded-full bg-purple-50 border border-purple-200 flex items-center justify-center mx-auto">
-                  <Shield size={28} className="text-purple-500" />
+              <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#6b2fa5]/8 flex items-center justify-center">
+                  <Shield size={26} className="text-[#6b2fa5]" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-700 mb-1">Team Management</h3>
-                  <p className="text-sm text-slate-500 max-w-sm mx-auto">Add collaborators, assign roles, and manage who can access this event.</p>
+                  <h3 className="text-base font-semibold text-slate-800 mb-1">Team Management</h3>
+                  <p className="text-sm text-slate-500 max-w-xs">Add collaborators, assign roles, and manage who can access this event.</p>
                 </div>
                 <Link href={`/teams?eventId=${eventId}`}>
-                  <button className="px-6 py-2.5 bg-[#6b2fa5] text-white rounded-xl font-semibold hover:bg-[#5a2589] transition-colors">
-                    Open Teams Page
+                  <button className="px-5 py-2.5 bg-[#6b2fa5] text-white text-sm rounded-xl font-semibold hover:bg-[#5a2589] transition-colors shadow-sm shadow-[#6b2fa5]/20">
+                    Manage Team
                   </button>
                 </Link>
               </div>
@@ -707,7 +811,7 @@ export default function EventInfoPage({
   const { eventId } = use(params)
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+      <div className="min-h-screen bg-slate-50 p-6">
         <div className="max-w-6xl mx-auto animate-pulse">
           <div className="h-10 w-40 bg-slate-200 rounded mb-8" />
           <div className="h-64 w-full bg-slate-200 rounded-lg mb-6" />

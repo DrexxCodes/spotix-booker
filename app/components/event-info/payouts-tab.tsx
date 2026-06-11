@@ -8,6 +8,7 @@ import {
 import { useState, useEffect, useCallback } from "react"
 import CreatePayoutMethod from "./helper/CreatePayoutMethod"
 import ViewPayoutMethods from "./helper/ViewPayoutMethods"
+import { MaskedAmount } from "@/components/ui/masked-amount"
 import PayoutConfirmation from "./helper/payout-confirmation"
 import PayoutLog from "./helper/payout-log"
 
@@ -532,7 +533,7 @@ export default function PayoutsTab({
                 Total Revenue
               </p>
               <p className="text-2xl font-bold text-gray-900">
-                ₦{totalRevenue.toLocaleString()}
+                <MaskedAmount value={`₦${totalRevenue.toLocaleString()}`} size="lg" className="text-gray-900" />
               </p>
             </div>
           </div>
@@ -548,7 +549,7 @@ export default function PayoutsTab({
                 Available
               </p>
               <p className="text-2xl font-bold text-[#6b2fa5]">
-                ₦{availableRevenue.toLocaleString()}
+                <MaskedAmount value={`₦${availableRevenue.toLocaleString()}`} size="lg" className="text-[#6b2fa5]" />
               </p>
             </div>
           </div>

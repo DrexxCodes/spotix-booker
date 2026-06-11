@@ -2,11 +2,26 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { Timestamp } from "firebase-admin/firestore"
+
+/** Safely convert any Firestore Timestamp / plain value to an ISO string. */
+function toIso(value: unknown): string {
+  if (!value) return new Date().toISOString()
+  // Firestore Admin SDK Timestamp
+  if (value instanceof Timestamp) return value.toDate().toISOString()
+  // Serialised Timestamp shape: { _seconds, _nanoseconds }
+  if (typeof value === "object" && "_seconds" in (value as any)) {
+    return new Date((value as any)._seconds * 1000).toISOString()
+  }
+  // Already a string or number
+  if (typeof value === "string" || typeof value === "number") {
+    return new Date(value).toISOString()
+  }
+  return new Date().toISOString()
+}
 
 export async function GET(request: NextRequest) {
   try {
-    // Prefer middleware-injected header (when called server-side)
-    // Fall back to cookie verification (when called from client)
     let userId = request.headers.get("x-user-id")
 
     if (!userId) {
@@ -47,8 +62,10 @@ export async function GET(request: NextRequest) {
       profilePicture: userData.profilePicture || "",
       isBooker: userData.isBooker || userData.role === "booker",
       isVerified: userData.isVerified || false,
-      createdAt: userData.createdAt || new Date().toISOString(),
+      createdAt: toIso(userData.createdAt),
       enabledCollaboration: userData.enabledCollaboration || false,
+      bookerName: userData.bookerName || userData.fullName || "",
+      dateOfBirth: userData.dateOfBirth || "",
     })
   } catch (error) {
     console.error("Error fetching user:", error)

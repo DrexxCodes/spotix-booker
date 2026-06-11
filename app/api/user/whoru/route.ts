@@ -1,26 +1,52 @@
 import { adminDb } from "@/lib/firebase-admin"
+import { verifyAccessToken } from "@/lib/auth-tokens"
 
 type LookupType = "email" | "name" | "phone" | "uid"
 
 /**
  * GET /api/user/whoru?type={type}&value={value}&limit={limit}
- * Looks up a user by email, name, phone, or uid.
- * Requires Authorization: Bearer <ACCESS_TOKEN_SECRET>
+ * Looks up a Spotix user by email, name, phone, or uid.
+ * Requires a valid booker access token (spotix_at cookie or Authorization header).
  *
- * Response fields: createdAt, email, fullName, phoneNumber, username
+ * Response fields: userId, createdAt, email, fullName, phoneNumber, username
  */
 export async function GET(req: Request) {
-  // ─── Auth ───────────────────────────────────────────────────────────────
-  const authHeader = req.headers.get("authorization")
-  if (!authHeader?.startsWith("Bearer ")) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 })
+  // ─── Auth ─────────────────────────────────────────────────────────────────
+  // Accept either the httpOnly cookie (browser) or an Authorization Bearer header
+  // (server-to-server / transfer-tab client fetch with stored token).
+  let authenticated = false
+
+  // 1. Try cookie first
+  const cookieHeader = req.headers.get("cookie") ?? ""
+  const cookieMatch = cookieHeader.match(/spotix_at=([^;]+)/)
+  if (cookieMatch) {
+    try {
+      await verifyAccessToken(cookieMatch[1], "spotix-booker")
+      authenticated = true
+    } catch {
+      // fall through to Bearer check
+    }
   }
-  const token = authHeader.slice(7)
-  if (token !== process.env.ACCESS_TOKEN_SECRET) {
+
+  // 2. Try Authorization: Bearer <token>
+  if (!authenticated) {
+    const authHeader = req.headers.get("authorization")
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice(7)
+      try {
+        await verifyAccessToken(token, "spotix-booker")
+        authenticated = true
+      } catch {
+        // fall through
+      }
+    }
+  }
+
+  if (!authenticated) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  // ─── Params ─────────────────────────────────────────────────────────────
+  // ─── Params ───────────────────────────────────────────────────────────────
   const { searchParams } = new URL(req.url)
   const type = searchParams.get("type") as LookupType | null
   const value = searchParams.get("value")
@@ -49,7 +75,7 @@ export async function GET(req: Request) {
   try {
     let docs: FirebaseFirestore.DocumentSnapshot[] = []
 
-    // ─── uid: direct doc fetch ─────────────────────────────────────────────
+    // ─── uid: direct doc fetch ───────────────────────────────────────────────
     if (type === "uid") {
       const doc = await adminDb.collection("users").doc(value).get()
       if (doc.exists) docs = [doc]

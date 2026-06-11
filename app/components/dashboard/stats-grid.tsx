@@ -1,97 +1,151 @@
 "use client"
 
-import { Calendar, Clock, DollarSign, Tag, User } from "lucide-react"
+import { Calendar, TrendingUp, Tag, Users } from "lucide-react"
+import { MaskedAmount, BalanceToggleButton } from "@/components/ui/masked-amount"
+import { useBalanceVisibilityRoot, BalanceVisibilityCtx } from "@/hooks/use-balance-visibility"
 
 interface DashboardStats {
   totalEvents: number
   activeEvents: number
-  inactiveEvents: number   // renamed from pastEvents
+  inactiveEvents: number
   totalRevenue: number
   availableBalance: number
   totalPaidOut: number
   totalTicketsSold: number
 }
 
-interface StatsGridProps {
-  stats: DashboardStats
+function fmt(n: number) {
+  return n.toLocaleString()
+}
+function fmtCurrency(n: number) {
+  return `₦${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
-function formatNumber(num: number): string {
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-}
+export function StatsGrid({ stats }: { stats: DashboardStats }) {
+  const balanceCtx = useBalanceVisibilityRoot()
 
-function formatCurrency(amount: number): string {
-  return `₦${formatNumber(Number.parseFloat(amount.toFixed(2)))}`
-}
+  return (
+    <BalanceVisibilityCtx.Provider value={balanceCtx}>
+    <div className="space-y-3">
 
-const StatCard = ({ icon: Icon, label, value, highlight = false }: any) => (
-  <div
-    className={`rounded-xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl group cursor-pointer relative overflow-hidden ${
-      highlight
-        ? "bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/30 hover:shadow-green-500/50"
-        : "bg-gradient-to-br from-white to-gray-50 border border-gray-200 hover:border-[#6b2fa5] hover:from-[#6b2fa5]/5 hover:to-[#8b4fc5]/5"
-    }`}
-  >
-    {highlight && (
-      <div className="absolute inset-0 animate-[spin_3s_linear_infinite]">
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent blur-sm" />
+      {/* Section label + global toggle */}
+      <div className="flex items-center justify-between px-0.5">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Overview</p>
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <span>Balances</span>
+          <BalanceToggleButton />
+        </div>
       </div>
-    )}
-    <div className="flex items-start gap-4 relative z-10">
-      <div
-        className={`p-3 rounded-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-6 ${
-          highlight
-            ? "bg-white/20 animate-[pulse_2s_ease-in-out_infinite]"
-            : "bg-gradient-to-br from-[#6b2fa5]/10 to-[#8b4fc5]/10 group-hover:from-[#6b2fa5]/20 group-hover:to-[#8b4fc5]/20"
-        }`}
-      >
-        <Icon
-          size={24}
-          className={
-            highlight
-              ? "text-white animate-[bounce_1s_ease-in-out_infinite]"
-              : "text-[#6b2fa5] group-hover:text-[#8b4fc5]"
-          }
+
+      {/* Row 1: counts */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard
+          label="Total Events"
+          value={fmt(stats.totalEvents)}
+          icon={<Calendar size={15} className="text-[#6b2fa5]" />}
+          iconBg="bg-[#6b2fa5]/10"
+          valueColor="text-slate-900"
+          delay="delay-[0ms]"
+        />
+        <StatCard
+          label="Active"
+          value={fmt(stats.activeEvents)}
+          icon={<TrendingUp size={15} className="text-emerald-600" />}
+          iconBg="bg-emerald-50"
+          valueColor="text-emerald-700"
+          delay="delay-[50ms]"
+        />
+        <StatCard
+          label="Inactive"
+          value={fmt(stats.inactiveEvents)}
+          icon={<Calendar size={15} className="text-slate-400" />}
+          iconBg="bg-slate-100"
+          valueColor="text-slate-600"
+          delay="delay-[100ms]"
+        />
+        <StatCard
+          label="Tickets Sold"
+          value={fmt(stats.totalTicketsSold)}
+          icon={<Tag size={15} className="text-blue-600" />}
+          iconBg="bg-blue-50"
+          valueColor="text-blue-700"
+          delay="delay-[150ms]"
         />
       </div>
-      <div className="flex-1">
-        <p
-          className={`text-sm font-medium transition-colors duration-300 ${
-            highlight ? "text-white/90" : "text-gray-600 group-hover:text-[#6b2fa5]"
-          }`}
-        >
-          {label}
-        </p>
-        <p
-          className={`text-2xl font-bold mt-1 transition-all duration-300 ${
-            highlight
-              ? "text-white animate-[pulse_1.5s_ease-in-out_infinite]"
-              : "text-gray-900 group-hover:text-[#6b2fa5]"
-          }`}
-        >
-          {value}
-        </p>
+
+      {/* Row 2: financials */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <FinancialCard
+          label="Total Revenue"
+          amount={fmtCurrency(stats.totalRevenue)}
+          sub="All ticket sales"
+          accent="text-slate-900"
+          delay="delay-[200ms]"
+        />
+        <FinancialCard
+          label="Available Balance"
+          amount={fmtCurrency(stats.availableBalance)}
+          sub="Ready to withdraw"
+          accent="text-[#6b2fa5]"
+          highlight
+          delay="delay-[250ms]"
+        />
+        <FinancialCard
+          label="Total Paid Out"
+          amount={fmtCurrency(stats.totalPaidOut)}
+          sub="Withdrawn to date"
+          accent="text-emerald-700"
+          delay="delay-[300ms]"
+        />
       </div>
     </div>
-  </div>
-)
+    </BalanceVisibilityCtx.Provider>
+  )
+}
 
-export function StatsGrid({ stats }: StatsGridProps) {
+function StatCard({
+  label, value, icon, iconBg, valueColor, delay,
+}: {
+  label: string; value: string; icon: React.ReactNode
+  iconBg: string; valueColor: string; delay: string
+}) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-      <StatCard icon={Calendar} label="Total Events"       value={formatNumber(stats.totalEvents)} />
-      <StatCard icon={Clock}    label="Active Events"      value={formatNumber(stats.activeEvents)} />
-      <StatCard icon={Calendar} label="Inactive Events"    value={formatNumber(stats.inactiveEvents)} />
-      <StatCard icon={Tag}      label="Tickets Sold"       value={formatNumber(stats.totalTicketsSold)} />
-      <StatCard icon={DollarSign} label="Total Revenue"    value={formatCurrency(stats.totalRevenue)} />
-      <StatCard
-        icon={DollarSign}
-        label="Available Balance"
-        value={formatCurrency(stats.availableBalance)}
-        // highlight={true}
+    <div className={`bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ${delay}`}>
+      <div className={`w-8 h-8 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs text-slate-400 font-medium leading-none mb-1">{label}</p>
+        <p className={`text-lg font-bold leading-none ${valueColor}`}>{value}</p>
+      </div>
+    </div>
+  )
+}
+
+function FinancialCard({
+  label, amount, sub, accent, highlight, delay,
+}: {
+  label: string; amount: string; sub: string
+  accent: string; highlight?: boolean; delay: string
+}) {
+  return (
+    <div
+      className={`rounded-xl border shadow-sm p-5 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ${delay} ${
+        highlight
+          ? "bg-gradient-to-br from-[#6b2fa5] to-[#7c3aed] border-[#6b2fa5]/30 text-white"
+          : "bg-white border-slate-200"
+      }`}
+    >
+      <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${highlight ? "text-white/70" : "text-slate-400"}`}>
+        {label}
+      </p>
+      <MaskedAmount
+        value={amount}
+        size="xl"
+        className={highlight ? "text-white" : accent}
+        iconClassName={highlight ? "text-white/50 hover:text-white" : ""}
       />
-      <StatCard icon={DollarSign} label="Total Paid Out"   value={formatCurrency(stats.totalPaidOut)} />
-      <StatCard icon={User}     label="Account State"      value="Active" />
+      <p className={`text-xs mt-1.5 ${highlight ? "text-white/60" : "text-slate-400"}`}>{sub}</p>
     </div>
   )
 }

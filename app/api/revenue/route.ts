@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     const userName = userData.username || userData.fullName || "Booker"
 
     const totalEvents: number = userData.totalEvents ?? 0
-    const ticketsSold: number = userData.ticketsSold ?? 0
+    const ticketsSold: number = userData.totalTicketsSold ?? 0
     const totalRevenue: number = userData.totalRevenue ?? 0
     const totalPaidOut: number = userData.totalPaidOut ?? 0
     const availableBalance: number = totalRevenue - totalPaidOut

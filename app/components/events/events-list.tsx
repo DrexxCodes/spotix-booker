@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { EventCard } from "./event-card"
 import { StatusBadge, TicketCell } from "./event-ui"
+import { MaskedAmount } from "@/components/ui/masked-amount"
 import { Eye, Calendar, PauseCircle, PlayCircle } from "lucide-react"
 import type { EventData } from "@/types/event"
 
@@ -14,8 +15,7 @@ interface EventsListProps {
   onEventsChange?: (updater: (prev: EventData[]) => EventData[]) => void
 }
 
-// ─── Animated action button ───────────────────────────────────────────────────
-// Shows icon only; smoothly expands to reveal label on hover.
+// ─── Plain action button (always shows icon + full label) ────────────────────
 function ActionButton({
   icon,
   label,
@@ -37,25 +37,16 @@ function ActionButton({
       disabled={disabled}
       title={title}
       className={`
-        group/action inline-flex items-center gap-0 overflow-hidden
-        rounded-full px-2 py-1.5
-        transition-all duration-300 ease-in-out
-        hover:gap-1.5 hover:px-3
+        inline-flex items-center gap-1.5
+        rounded-full px-3 py-1.5
+        text-xs font-semibold whitespace-nowrap
+        transition-colors duration-150
         disabled:opacity-40 disabled:cursor-not-allowed
         ${colorClass}
       `}
     >
       <span className="flex-shrink-0">{icon}</span>
-      <span
-        className="
-          text-xs font-semibold whitespace-nowrap
-          max-w-0 overflow-hidden opacity-0
-          transition-all duration-300 ease-in-out
-          group-hover/action:max-w-[80px] group-hover/action:opacity-100
-        "
-      >
-        {label}
-      </span>
+      <span>{label}</span>
     </button>
   )
 }
@@ -63,6 +54,7 @@ function ActionButton({
 export function EventsList({ events, searchQuery, statusFilter, onEventsChange }: EventsListProps) {
   const router = useRouter()
   const [pendingId, setPendingId] = useState<string | null>(null)
+  const [viewingId, setViewingId] = useState<string | null>(null)
 
   const filteredEvents = useMemo(() => {
     return events.filter((event) => {
@@ -148,7 +140,7 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
                   {["Event Name", "Date", "Venue", "Type", "Tickets", "Revenue", "Status"].map((h) => (
                     <th key={h} className="px-6 py-4 text-left text-sm font-bold text-white">{h}</th>
                   ))}
-                  <th className="px-6 py-4 text-left text-sm font-bold text-white w-[120px] min-w-[120px]">
+                  <th className="px-6 py-4 text-left text-sm font-bold text-white w-[180px] min-w-[180px]">
                     Actions
                   </th>
                 </tr>
@@ -158,7 +150,8 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
                   const isFuture = new Date(event.eventDate) > new Date()
                   const canPause  = event.status === "active"   && isFuture
                   const canResume = event.status === "inactive" && isFuture
-                  const isLoading = pendingId === event.id
+                  const isLoading  = pendingId === event.id
+                  const isViewing  = viewingId === event.id
 
                   return (
                     <tr
@@ -188,9 +181,12 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
                         <TicketCell event={event} />
                       </td>
                       <td className="px-6 py-4">
-                        <div className="font-bold text-[#6b2fa5]">
-                          ₦{event.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
+                        <MaskedAmount
+                          value={`₦${event.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          size="md"
+                          className="font-bold text-[#6b2fa5]"
+                          showToggle={false}
+                        />
                       </td>
                       <td className="px-6 py-4">
                         <StatusBadge status={event.status} />
@@ -198,7 +194,7 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
 
                       {/* ── Actions ── */}
                       <td
-                        className="px-6 py-4 w-[120px] min-w-[120px]"
+                        className="px-6 py-4 w-[180px] min-w-[180px]"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex items-center gap-1 w-full overflow-hidden">
@@ -206,10 +202,12 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
                           {/* View */}
                           <ActionButton
                             icon={<Eye className="w-4 h-4" />}
-                            label="View"
+                            label={isViewing ? "Viewing…" : "View"}
                             colorClass="text-[#6b2fa5] hover:bg-[#6b2fa5]/10"
+                            disabled={isViewing}
                             onClick={(e) => {
                               e.stopPropagation()
+                              setViewingId(event.id)
                               router.push(`/event-info/${event.id}`)
                             }}
                           />
@@ -222,7 +220,7 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
                                   ? <span className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin inline-block" />
                                   : <PauseCircle className="w-4 h-4" />
                               }
-                              label="Pause"
+                              label={isLoading ? "Pausing…" : "Pause"}
                               colorClass="text-amber-600 hover:bg-amber-50"
                               disabled={isLoading}
                               title="Pause this event"
@@ -238,7 +236,7 @@ export function EventsList({ events, searchQuery, statusFilter, onEventsChange }
                                   ? <span className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin inline-block" />
                                   : <PlayCircle className="w-4 h-4" />
                               }
-                              label="Resume"
+                              label={isLoading ? "Resuming…" : "Resume"}
                               colorClass="text-emerald-600 hover:bg-emerald-50"
                               disabled={isLoading}
                               title="Resume this event"

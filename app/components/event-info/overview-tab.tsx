@@ -1,6 +1,7 @@
 "use client"
 import { Copy, Check, TrendingUp, Wallet, Users, DollarSign } from "lucide-react"
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
+import { MaskedAmount } from "@/components/ui/masked-amount"
 
 interface OverviewTabProps {
   eventData: any
@@ -87,7 +88,9 @@ export default function OverviewTab({
               <TrendingUp className="w-5 h-5 text-emerald-600" />
             </div>
           </div>
-          <p className="text-3xl font-bold text-slate-900">₦{eventData.totalRevenue.toLocaleString()}</p>
+          <p className="text-3xl font-bold text-slate-900">
+            <MaskedAmount value={`₦${eventData.totalRevenue.toLocaleString()}`} size="xl" className="text-slate-900" />
+          </p>
           <p className="text-xs text-slate-500 mt-2">All ticket sales</p>
         </div>
 
@@ -99,7 +102,9 @@ export default function OverviewTab({
               <Wallet className="w-5 h-5 text-white" />
             </div>
           </div>
-          <p className="text-3xl font-bold text-white">₦{availableBalance.toLocaleString()}</p>
+          <p className="text-3xl font-bold text-white">
+            <MaskedAmount value={`₦${availableBalance.toLocaleString()}`} size="xl" className="text-white" iconClassName="text-white/50 hover:text-white" />
+          </p>
           <p className="text-xs text-white/80 mt-2">Ready to withdraw</p>
         </div>
 
@@ -111,7 +116,9 @@ export default function OverviewTab({
               <DollarSign className="w-5 h-5 text-blue-600" />
             </div>
           </div>
-          <p className="text-3xl font-bold text-slate-900">₦{totalPaidOut.toLocaleString()}</p>
+          <p className="text-3xl font-bold text-slate-900">
+            <MaskedAmount value={`₦${totalPaidOut.toLocaleString()}`} size="xl" className="text-slate-900" />
+          </p>
           <p className="text-xs text-slate-500 mt-2">Withdrawn to date</p>
         </div>
       </div>

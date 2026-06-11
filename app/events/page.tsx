@@ -4,14 +4,14 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
 import { Preloader } from "@/components/preloader"
-import { ParticlesBackground } from "@/components/particles-background"
 import { EventsList } from "@/components/events/events-list"
 import { CollaboratedEventsList } from "@/components/events/collaborated-events-list"
 import EventTransferDialog, { type IncomingTransfer } from "@/components/events/event-transfer-dialog"
-import { Search, Plus, Calendar, TrendingUp, Users, RefreshCw, ArrowRightLeft } from "lucide-react"
+import { Search, Plus, Calendar, TrendingUp, Users, RefreshCw, ArrowRightLeft, Eye, EyeOff } from "lucide-react"
+import { useBalanceVisibility, useBalanceVisibilityRoot, BalanceVisibilityCtx } from "@/hooks/use-balance-visibility"
 import type { EventData, CollaboratedEventData } from "@/types/event"
 
-// ─── Cache helpers ────────────────────────────────────────────────────────────
+// ─── Cache helpers ─────────────────────────────────────────────────────────────
 const CACHE_TTL_MS = 20 * 60 * 1000
 
 function cacheKey(userId: string, action: string) {
@@ -44,7 +44,7 @@ function bustCache(userId: string) {
   localStorage.removeItem(cacheKey(userId, "collaborated"))
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Page ──────────────────────────────────────────────────────────────────────
 export default function EventsPage() {
   const router = useRouter()
 
@@ -57,6 +57,10 @@ export default function EventsPage() {
   const [cachedAt, setCachedAt]               = useState<number | null>(null)
   const [searchQuery, setSearchQuery]         = useState("")
   const [statusFilter, setStatusFilter]       = useState("all")
+  const [ready, setReady]                     = useState(false)
+
+  const balanceCtx = useBalanceVisibilityRoot()
+  const { visible: balanceVisible, toggle: toggleBalance } = balanceCtx
 
   // ─── Transfer state ────────────────────────────────────────────────────────
   const [showTransferDialog, setShowTransferDialog] = useState(false)
@@ -67,34 +71,19 @@ export default function EventsPage() {
     const initializeAuth = async () => {
       try {
         let token = getAccessToken()
-
         if (!token) {
           const refreshed = await tryRefreshTokens()
-          if (!refreshed) {
-            router.push("/login")
-            return
-          }
+          if (!refreshed) { router.push("/login"); return }
           token = getAccessToken()
         }
-
-        if (!token) {
-          router.push("/login")
-          return
-        }
+        if (!token) { router.push("/login"); return }
 
         const userResponse = await authFetch("/api/user/me")
-        if (!userResponse.ok) {
-          router.push("/login")
-          return
-        }
+        if (!userResponse.ok) { router.push("/login"); return }
 
         const userData = await userResponse.json()
         const uid = userData?.uid || userData?.id
-
-        if (!uid) {
-          router.push("/login")
-          return
-        }
+        if (!uid) { router.push("/login"); return }
 
         setUserId(uid)
         setAuthChecked(true)
@@ -103,14 +92,12 @@ export default function EventsPage() {
         router.push("/login")
       }
     }
-
     initializeAuth()
   }, [router])
 
-  // ── Fetch incoming transfers (runs once after auth) ───────────────────────
+  // ── Fetch incoming transfers ───────────────────────────────────────────────
   useEffect(() => {
     if (!authChecked) return
-
     fetch("/api/event/transfer/incoming")
       .then((r) => (r.ok ? r.json() : { transfers: [] }))
       .then((d) => setIncomingTransfers(d.transfers ?? []))
@@ -130,12 +117,12 @@ export default function EventsPage() {
       if (!bust) {
         const ownedCache  = readCache<EventData[]>(cacheKey(userId, "owned"))
         const collabCache = readCache<CollaboratedEventData[]>(cacheKey(userId, "collaborated"))
-
         if (ownedCache && collabCache) {
           setEvents(ownedCache.data)
           setCollaborated(collabCache.data)
           setCachedAt(Math.min(ownedCache.cachedAt, collabCache.cachedAt))
           setLoading(false)
+          setTimeout(() => setReady(true), 50)
           return
         }
       }
@@ -164,6 +151,7 @@ export default function EventsPage() {
       } finally {
         setLoading(false)
         setRefreshing(false)
+        setTimeout(() => setReady(true), 50)
       }
     },
     [userId]
@@ -178,12 +166,10 @@ export default function EventsPage() {
   useEffect(() => {
     if (!userId) return
     timerRef.current = setInterval(() => fetchEvents(true), CACHE_TTL_MS)
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [userId, fetchEvents])
 
-  // ── Optimistic event updater ──────────────────────────────────────────────
+  // ── Optimistic event updater ───────────────────────────────────────────────
   const handleEventsChange = useCallback(
     (updater: (prev: EventData[]) => EventData[]) => {
       setEvents((prev) => {
@@ -195,13 +181,10 @@ export default function EventsPage() {
     [userId]
   )
 
-  // ── Transfer dialog action handler ────────────────────────────────────────
+  // ── Transfer dialog handler ────────────────────────────────────────────────
   const handleTransferActioned = useCallback(
     (transferId: string, newStatus: "accepted" | "rejected") => {
-      // Remove from the banner immediately
       setIncomingTransfers((prev) => prev.filter((t) => t.id !== transferId))
-
-      // If accepted, bust cache so the new event appears on refresh
       if (newStatus === "accepted" && userId) {
         bustCache(userId)
         fetchEvents(true)
@@ -223,167 +206,177 @@ export default function EventsPage() {
   if (!authChecked) return <Preloader isLoading={true} />
 
   return (
+    <BalanceVisibilityCtx.Provider value={balanceCtx}>
     <>
-      <Preloader isLoading={loading} />
-      <ParticlesBackground />
+      {/* Loading skeleton overlay only on first load, not refresh */}
+      <Preloader isLoading={loading && !refreshing} />
 
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-purple-50/20 to-gray-100">
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+      <div className="min-h-screen bg-slate-50">
 
-          {/* Header */}
-          <div className="mb-8 sm:mb-12 animate-in fade-in slide-in-from-top-4 duration-700">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
-              <div className="space-y-2">
-                <h1 className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-[#6b2fa5] via-[#8b3fc5] to-[#6b2fa5] bg-clip-text text-transparent">
-                  My Events
-                </h1>
-                <p className="text-gray-600 text-base sm:text-lg">
-                  Manage and track all your events in one place
-                </p>
+        {/* ── Page header ──────────────────────────────────────────────────── */}
+        <div className="bg-white border-b border-slate-100 shadow-sm">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+
+            {/* Top row */}
+            <div className="flex items-center justify-between h-14">
+              <div>
+                <h1 className="text-lg font-bold text-slate-900 leading-tight">My Events</h1>
+                <p className="text-xs text-slate-400 hidden sm:block">Manage and track all your events</p>
               </div>
-              <button
-                onClick={() => router.push("/create-event")}
-                className="bg-gradient-to-r from-[#6b2fa5] to-[#8b3fc5] hover:from-[#5a2789] hover:to-[#6b2fa5] text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all duration-200 shadow-lg shadow-[#6b2fa5]/30 hover:shadow-xl hover:shadow-[#6b2fa5]/40 hover:-translate-y-0.5 active:translate-y-0"
-              >
-                <Plus size={22} strokeWidth={2.5} />
-                <span>Create Event</span>
-              </button>
+
+              <div className="flex items-center gap-2">
+                {/* Cache label */}
+                {cachedTimeLabel && !refreshing && (
+                  <span className="hidden lg:inline text-xs text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                    Updated {cachedTimeLabel}
+                  </span>
+                )}
+
+                {/* Refresh */}
+                <button
+                  onClick={() => fetchEvents(true)}
+                  disabled={refreshing}
+                  title="Refresh events"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                >
+                  <RefreshCw size={13} className={refreshing ? "animate-spin text-[#6b2fa5]" : ""} />
+                  <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh"}</span>
+                </button>
+
+                {/* Create event */}
+                <button
+                  onClick={() => router.push("/create-event")}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#6b2fa5] hover:bg-[#5a2589] text-white text-xs font-semibold transition-colors shadow-sm"
+                >
+                  <Plus size={14} strokeWidth={2.5} />
+                  <span>Create Event</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-100 border-t border-slate-100 -mx-4 sm:-mx-6 lg:-mx-8">
+              {[
+                {
+                  label: "Total Events",
+                  value: totalEvents,
+                  icon: <Calendar size={14} className="text-slate-400" />,
+                  valueClass: "text-slate-900",
+                },
+                {
+                  label: "Active",
+                  value: activeEvents,
+                  icon: <TrendingUp size={14} className="text-emerald-500" />,
+                  valueClass: "text-emerald-600",
+                },
+                {
+                  label: "Tickets Sold",
+                  value: totalTicketsSold.toLocaleString(),
+                  icon: <Users size={14} className="text-blue-400" />,
+                  valueClass: "text-blue-600",
+                },
+                {
+                  label: "Revenue",
+                  value: balanceVisible
+                    ? `₦${totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                    : "₦••••••",
+                  icon: (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); toggleBalance() }}
+                      aria-label={balanceVisible ? "Hide revenue" : "Show revenue"}
+                      className="text-[#6b2fa5] opacity-70 hover:opacity-100 transition-opacity"
+                    >
+                      {balanceVisible
+                        ? <EyeOff className="w-3.5 h-3.5" />
+                        : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  ),
+                  valueClass: "text-[#6b2fa5]",
+                },
+              ].map(({ label, value, icon, valueClass }) => (
+                <div key={label} className="bg-white px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-3">
+                  <div className="hidden sm:flex items-center justify-center w-7 h-7 rounded-lg bg-slate-50 border border-slate-100 flex-shrink-0">
+                    {icon}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-slate-400 font-medium leading-none mb-0.5">{label}</p>
+                    <p className={`text-base font-bold leading-none ${valueClass}`}>{value}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
+        </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8 animate-in fade-in slide-in-from-top-6 duration-700">
-            <StatCard
-              label="Total Events"
-              value={totalEvents}
-              icon={<Calendar className="w-6 h-6 text-[#6b2fa5]" />}
-              iconBg="bg-[#6b2fa5]/10"
-              valueColor="text-gray-900"
-            />
-            <StatCard
-              label="Active Events"
-              value={activeEvents}
-              icon={<TrendingUp className="w-6 h-6 text-green-600" />}
-              iconBg="bg-green-100"
-              valueColor="text-green-600"
-            />
-            <StatCard
-              label="Tickets Sold"
-              value={totalTicketsSold.toLocaleString()}
-              icon={<Users className="w-6 h-6 text-blue-600" />}
-              iconBg="bg-blue-100"
-              valueColor="text-blue-600"
-            />
-            <StatCard
-              label="Total Revenue"
-              value={`₦${totalRevenue.toLocaleString()}`}
-              icon={
-                <svg className="w-6 h-6 text-[#6b2fa5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              }
-              iconBg="bg-[#6b2fa5]/10"
-              valueColor="text-[#6b2fa5]"
-            />
-          </div>
+        {/* ── Content ──────────────────────────────────────────────────────── */}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
-          {/* Incoming Transfer Banner — only shown when there are pending requests */}
+          {/* Incoming transfer banner */}
           {incomingTransfers.length > 0 && (
-            <div className="mb-8 animate-in fade-in slide-in-from-top-2 duration-500">
-              <button
-                onClick={() => setShowTransferDialog(true)}
-                className="w-full bg-gradient-to-r from-[#6b2fa5]/5 via-[#6b2fa5]/10 to-[#6b2fa5]/5 border border-[#6b2fa5]/25 rounded-xl p-4 flex items-center justify-between hover:border-[#6b2fa5]/50 hover:from-[#6b2fa5]/10 hover:to-[#6b2fa5]/10 transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="bg-[#6b2fa5] p-2.5 rounded-lg shadow-sm shadow-[#6b2fa5]/30 group-hover:shadow-md group-hover:shadow-[#6b2fa5]/40 transition-shadow">
-                    <ArrowRightLeft size={18} className="text-white" />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-semibold text-[#6b2fa5]">
-                      You've been invited to own{" "}
-                      {incomingTransfers.length === 1
-                        ? "an event"
-                        : `${incomingTransfers.length} events`}
-                    </p>
-                    <p className="text-sm text-[#6b2fa5]/70 mt-0.5">
-                      {incomingTransfers.length === 1
-                        ? `"${incomingTransfers[0].eventName}" from @${incomingTransfers[0].organizerUsername}`
-                        : "Tap to review all pending transfer requests"}
-                    </p>
-                  </div>
+            <div className={`transition-all duration-500 delay-[50ms] ${ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3"}`}>
+            <button
+              onClick={() => setShowTransferDialog(true)}
+              className="w-full flex items-center justify-between gap-3 p-4 bg-white border border-[#6b2fa5]/20 rounded-xl hover:border-[#6b2fa5]/40 hover:bg-[#6b2fa5]/[0.02] transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#6b2fa5] flex items-center justify-center flex-shrink-0 shadow-sm shadow-[#6b2fa5]/30">
+                  <ArrowRightLeft size={15} className="text-white" />
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="hidden sm:inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#6b2fa5] text-white text-xs font-bold">
-                    {incomingTransfers.length}
-                  </span>
-                  <span className="text-sm font-semibold text-[#6b2fa5] group-hover:translate-x-0.5 transition-transform">
-                    Review →
-                  </span>
+                <div className="text-left">
+                  <p className="text-sm font-semibold text-slate-800">
+                    {incomingTransfers.length === 1
+                      ? `Event transfer request — "${incomingTransfers[0].eventName}"`
+                      : `${incomingTransfers.length} pending event transfer requests`}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {incomingTransfers.length === 1
+                      ? `From @${incomingTransfers[0].organizerUsername} · 3 days to respond`
+                      : "Tap to review all pending requests"}
+                  </p>
                 </div>
-              </button>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#6b2fa5] text-white text-[10px] font-bold">
+                  {incomingTransfers.length}
+                </span>
+                <span className="text-xs font-semibold text-[#6b2fa5] group-hover:translate-x-0.5 transition-transform">
+                  Review →
+                </span>
+              </div>
+            </button>
             </div>
           )}
 
-          {/* Search + Filter + Refresh */}
-          <div className="mb-8 flex flex-col sm:flex-row gap-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          {/* Search + filter toolbar */}
+          <div className={`flex flex-col sm:flex-row gap-3 transition-all duration-500 delay-[100ms] ${ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3"}`}>
             <div className="flex-1 relative">
-              <Search
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                size={20}
-              />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={15} />
               <input
                 type="text"
-                placeholder="Search events by name or venue..."
+                placeholder="Search by name or venue…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 shadow-sm hover:shadow-md"
+                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]/30 focus:border-[#6b2fa5] transition-all duration-200 shadow-sm"
               />
             </div>
 
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-5 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#6b2fa5] focus:border-[#6b2fa5] transition-all duration-200 shadow-sm font-medium text-gray-700 cursor-pointer"
+              className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]/30 focus:border-[#6b2fa5] transition-all duration-200 shadow-sm cursor-pointer"
             >
-              <option value="all">All Events</option>
+              <option value="all">All Status</option>
               <option value="active">Active</option>
               <option value="past">Past</option>
               <option value="inactive">Inactive</option>
               <option value="cancelled">Cancelled</option>
               <option value="completed">Completed</option>
             </select>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => fetchEvents(true)}
-                disabled={refreshing}
-                title="Refresh events"
-                className="flex items-center gap-2 px-4 py-3 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:border-[#6b2fa5] hover:text-[#6b2fa5] transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <RefreshCw
-                  size={16}
-                  className={refreshing ? "animate-spin text-[#6b2fa5]" : ""}
-                />
-                <span className="hidden sm:inline">
-                  {refreshing ? "Refreshing…" : "Refresh"}
-                </span>
-              </button>
-
-              {cachedTimeLabel && !refreshing && (
-                <p className="hidden lg:block text-xs text-gray-400 whitespace-nowrap">
-                  Last refreshed at {cachedTimeLabel}
-                </p>
-              )}
-            </div>
           </div>
 
-          {/* My Events */}
-          <div className="animate-in fade-in slide-in-from-bottom-6 duration-700">
+          {/* My Events list */}
+          <div className={`transition-all duration-500 delay-[150ms] ${ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3"}`}>
             <EventsList
               events={events}
               searchQuery={searchQuery}
@@ -394,7 +387,7 @@ export default function EventsPage() {
 
           {/* Collaborated Events */}
           {collaboratedEvents.length > 0 && (
-            <div className="mt-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <div className={`pt-2 transition-all duration-500 delay-200 ${ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3"}`}>
               <CollaboratedEventsList
                 events={collaboratedEvents}
                 searchQuery={searchQuery}
@@ -402,7 +395,7 @@ export default function EventsPage() {
               />
             </div>
           )}
-        </main>
+        </div>
       </div>
 
       {/* Transfer Dialog */}
@@ -413,34 +406,6 @@ export default function EventsPage() {
         onTransferActioned={handleTransferActioned}
       />
     </>
-  )
-}
-
-// ─── StatCard ─────────────────────────────────────────────────────────────────
-function StatCard({
-  label,
-  value,
-  icon,
-  iconBg,
-  valueColor,
-}: {
-  label: string
-  value: string | number
-  icon: React.ReactNode
-  iconBg: string
-  valueColor: string
-}) {
-  return (
-    <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-shadow duration-200 border border-gray-100">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-gray-600 text-sm font-medium mb-1">{label}</p>
-          <p className={`text-3xl font-bold ${valueColor}`}>{value}</p>
-        </div>
-        <div className={`w-12 h-12 ${iconBg} rounded-lg flex items-center justify-center`}>
-          {icon}
-        </div>
-      </div>
-    </div>
+    </BalanceVisibilityCtx.Provider>
   )
 }

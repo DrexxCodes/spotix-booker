@@ -4,19 +4,15 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
 import { Preloader } from "@/components/preloader"
-import { ParticlesBackground } from "@/components/particles-background"
-// import { Nav } from "@/components/nav"
 import { DashboardHeader } from "@/components/dashboard/dashboard-header"
 import { StatsGrid } from "@/components/dashboard/stats-grid"
 import { EventsSection } from "@/components/dashboard/events-section"
 import { QuickActions } from "@/components/dashboard/quick-actions"
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
 interface DashboardStats {
   totalEvents: number
   activeEvents: number
-  inactiveEvents: number  // renamed from pastEvents
+  inactiveEvents: number
   totalRevenue: number
   availableBalance: number
   totalPaidOut: number
@@ -37,101 +33,64 @@ interface CachedDashboard {
   stats: DashboardStats
   events: Event[]
   userName: string
-  cachedAt: number   // Date.now() ms timestamp
+  cachedAt: number
 }
 
-// ── Cache helpers ──────────────────────────────────────────────────────────
+const CACHE_TTL_MS = 10 * 60 * 1000
 
-const CACHE_TTL_MS = 10 * 60 * 1000  // 10 minutes
-
-function getCacheKey(userId: string) {
-  return `spotix_dashboard_${userId}`
-}
+function getCacheKey(userId: string) { return `spotix_dashboard_${userId}` }
 
 function readCache(userId: string): CachedDashboard | null {
   try {
     const raw = localStorage.getItem(getCacheKey(userId))
     if (!raw) return null
     const cached: CachedDashboard = JSON.parse(raw)
-    const age = Date.now() - cached.cachedAt
-    if (age > CACHE_TTL_MS) {
+    if (Date.now() - cached.cachedAt > CACHE_TTL_MS) {
       localStorage.removeItem(getCacheKey(userId))
       return null
     }
     return cached
-  } catch {
-    return null
-  }
+  } catch { return null }
 }
 
 function writeCache(userId: string, data: CachedDashboard) {
-  try {
-    localStorage.setItem(getCacheKey(userId), JSON.stringify(data))
-  } catch {
-    // localStorage quota exceeded or unavailable — silently ignore
-  }
+  try { localStorage.setItem(getCacheKey(userId), JSON.stringify(data)) } catch {}
 }
 
 function bustCache(userId: string) {
-  try {
-    localStorage.removeItem(getCacheKey(userId))
-  } catch {
-    // ignore
-  }
+  try { localStorage.removeItem(getCacheKey(userId)) } catch {}
 }
-
-// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [events, setEvents] = useState<Event[]>([])
-  const [userName, setUserName] = useState("Booker")
-  const [error, setError] = useState<string | null>(null)
-  const [userId, setUserId] = useState<string | null>(null)
+  const [loading, setLoading]             = useState(true)
+  const [isRefreshing, setIsRefreshing]   = useState(false)
+  const [stats, setStats]                 = useState<DashboardStats | null>(null)
+  const [events, setEvents]               = useState<Event[]>([])
+  const [userName, setUserName]           = useState("Booker")
+  const [error, setError]                 = useState<string | null>(null)
+  const [userId, setUserId]               = useState<string | null>(null)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [servedFromCache, setServedFromCache] = useState(false)
-
-  // ── Auth check ───────────────────────────────────────────────────────────────
+  const [ready, setReady]                 = useState(false)
 
   useEffect(() => {
-    // Initialize auth — attempt token refresh if not in memory
     const initializeAuth = async () => {
       try {
         let token = getAccessToken()
-        
-        // If not in memory, try to refresh from the httpOnly cookie
         if (!token) {
           const refreshed = await tryRefreshTokens()
-          if (!refreshed) {
-            // No valid session
-            router.push("/login")
-            return
-          }
+          if (!refreshed) { router.push("/login"); return }
           token = getAccessToken()
         }
+        if (!token) { router.push("/login"); return }
 
-        if (!token) {
-          router.push("/login")
-          return
-        }
-
-        // Fetch user ID from the API
         const userResponse = await authFetch("/api/user/me")
-        if (!userResponse.ok) {
-          router.push("/login")
-          return
-        }
+        if (!userResponse.ok) { router.push("/login"); return }
 
         const userData = await userResponse.json()
         const uid = userData?.uid || userData?.id
-
-        if (!uid) {
-          router.push("/login")
-          return
-        }
+        if (!uid) { router.push("/login"); return }
 
         setUserId(uid)
       } catch (err) {
@@ -139,17 +98,13 @@ export default function DashboardPage() {
         router.push("/login")
       }
     }
-
     initializeAuth()
   }, [router])
-
-  // ── Fetch / cache logic ───────────────────────────────────────────────────────
 
   const fetchDashboardData = useCallback(
     async (forceRefresh = false) => {
       if (!userId) return
 
-      // Serve from cache if fresh and not a forced refresh
       if (!forceRefresh) {
         const cached = readCache(userId)
         if (cached) {
@@ -160,11 +115,12 @@ export default function DashboardPage() {
           setServedFromCache(true)
           setLoading(false)
           setError(null)
+          // Stagger animation trigger
+          setTimeout(() => setReady(true), 50)
           return
         }
       }
 
-      // Cache miss or forced refresh — hit the API
       try {
         setIsRefreshing(forceRefresh)
         setServedFromCache(false)
@@ -172,28 +128,20 @@ export default function DashboardPage() {
         const response = await authFetch(`/api/revenue?userId=${userId}`)
         const data = await response.json()
 
-        if (!response.ok) {
-          throw new Error(data.error || "Failed to fetch dashboard data")
-        }
+        if (!response.ok) throw new Error(data.error || "Failed to fetch dashboard data")
 
-        const freshStats: DashboardStats = data.stats
-        const freshEvents: Event[] = data.recentEvents
-        const freshName: string = data.bookerName
-
-        setStats(freshStats)
-        setEvents(freshEvents)
-        setUserName(freshName)
+        setStats(data.stats)
+        setEvents(data.recentEvents)
+        setUserName(data.bookerName)
         setError(null)
 
         const now = Date.now()
         setLastRefreshed(new Date(now))
-
-        // Persist to cache
         if (forceRefresh) bustCache(userId)
         writeCache(userId, {
-          stats: freshStats,
-          events: freshEvents,
-          userName: freshName,
+          stats: data.stats,
+          events: data.recentEvents,
+          userName: data.bookerName,
           cachedAt: now,
         })
       } catch (err: any) {
@@ -202,86 +150,111 @@ export default function DashboardPage() {
       } finally {
         setLoading(false)
         setIsRefreshing(false)
+        setTimeout(() => setReady(true), 50)
       }
     },
     [userId]
   )
 
-  // ── Initial load + auto-refresh every 10 min ──────────────────────────────────
-
   useEffect(() => {
     if (!userId) return
-
     fetchDashboardData()
-
-    // Auto-refresh aligned with the 10-min TTL. If cache is still fresh when
-    // the interval fires, fetchDashboardData will just re-serve from cache.
-    const interval = setInterval(() => {
-      fetchDashboardData(true)
-    }, CACHE_TTL_MS)
-
+    const interval = setInterval(() => fetchDashboardData(true), CACHE_TTL_MS)
     return () => clearInterval(interval)
   }, [userId, fetchDashboardData])
 
-  // ── Manual refresh (busts cache) ──────────────────────────────────────────────
-
   const handleRefresh = useCallback(() => {
     if (userId) bustCache(userId)
+    setReady(false)
     fetchDashboardData(true)
   }, [userId, fetchDashboardData])
-
-  // ── Render ────────────────────────────────────────────────────────────────────
 
   if (loading) return <Preloader isLoading={true} />
 
   return (
-    <>
-      <Preloader isLoading={loading} />
-      <ParticlesBackground />
+    <div className="min-h-screen bg-slate-50">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
 
-      <div className="min-h-screen bg-background">
-        {/* <Nav /> */}
+        {/* Error banner */}
+        {error && (
+          <div
+            className={`p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 transition-all duration-500 ${
+              ready ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
+            }`}
+          >
+            <p className="font-semibold text-sm">{error}</p>
+            <button onClick={handleRefresh} className="mt-1.5 text-xs underline hover:no-underline">
+              Try again
+            </button>
+          </div>
+        )}
 
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Cache notice */}
+        {servedFromCache && lastRefreshed && (
+          <div
+            className={`flex items-center justify-between text-xs text-slate-400 px-1 transition-all duration-500 delay-75 ${
+              ready ? "opacity-100" : "opacity-0"
+            }`}
+          >
+            <span>
+              Showing saved data from{" "}
+              {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="underline hover:no-underline hover:text-slate-600 transition-colors disabled:opacity-50"
+            >
+              {isRefreshing ? "Refreshing…" : "Refresh now"}
+            </button>
+          </div>
+        )}
 
-          {/* Error banner */}
-          {error && (
-            <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive">
-              <p className="font-medium">{error}</p>
-              <button onClick={handleRefresh} className="mt-2 text-sm underline hover:no-underline">
-                Try Again
-              </button>
-            </div>
-          )}
+        {/* Header — delay 0 */}
+        <div
+          className={`transition-all duration-500 ${
+            ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+          }`}
+        >
+          <DashboardHeader
+            userName={userName}
+            onRefresh={handleRefresh}
+            isRefreshing={isRefreshing}
+            lastRefreshed={lastRefreshed}
+          />
+        </div>
 
-          {/* Cache notice — subtle, doesn't interrupt the layout */}
-          {servedFromCache && lastRefreshed && (
-            <div className="mb-4 flex items-center justify-between text-xs text-slate-400 px-1">
-              <span>
-                Showing saved data from {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.
-                Auto-refreshes every 10 min.
-              </span>
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="underline hover:no-underline hover:text-slate-600 transition-colors disabled:opacity-50"
-              >
-                {isRefreshing ? "Refreshing…" : "Refresh now"}
-              </button>
-            </div>
-          )}
-
-          <DashboardHeader userName={userName} onRefresh={handleRefresh} isRefreshing={isRefreshing} />
-
-          {stats && (
-            <>
+        {stats && (
+          <>
+            {/* Stats — delay 100ms */}
+            <div
+              className={`transition-all duration-500 delay-100 ${
+                ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+              }`}
+            >
               <StatsGrid stats={stats} />
+            </div>
+
+            {/* Events — delay 200ms */}
+            <div
+              className={`transition-all duration-500 delay-200 ${
+                ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+              }`}
+            >
               <EventsSection events={events} userId={userId} />
+            </div>
+
+            {/* Quick Actions — delay 300ms */}
+            <div
+              className={`transition-all duration-500 delay-300 ${
+                ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+              }`}
+            >
               <QuickActions />
-            </>
-          )}
-        </main>
-      </div>
-    </>
+            </div>
+          </>
+        )}
+      </main>
+    </div>
   )
 }

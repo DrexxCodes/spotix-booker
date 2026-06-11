@@ -3,6 +3,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { MaskedAmount } from "@/components/ui/masked-amount"
 import { BarChart3, MapPin, Calendar, Eye, PauseCircle, PlayCircle } from "lucide-react"
 import { StatusBadge } from "./event-ui"
 import type { EventData } from "@/types/event"
@@ -14,7 +15,7 @@ interface EventCardProps {
   onEventsChange?: (updater: (prev: EventData[]) => EventData[]) => void
 }
 
-// ─── Animated action button (same pattern as desktop) ─────────────────────────
+// ─── Plain action button (always shows icon + full label) ─────────────────────
 function ActionButton({
   icon,
   label,
@@ -33,25 +34,16 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       className={`
-        group/action inline-flex items-center gap-0 overflow-hidden
-        rounded-full px-2 py-1.5
-        transition-all duration-300 ease-in-out
-        hover:gap-1.5 hover:px-3
+        inline-flex items-center gap-1.5
+        rounded-full px-3 py-1.5
+        text-xs font-semibold whitespace-nowrap
+        transition-colors duration-150
         disabled:opacity-40 disabled:cursor-not-allowed
         ${colorClass}
       `}
     >
       <span className="flex-shrink-0">{icon}</span>
-      <span
-        className="
-          text-xs font-semibold whitespace-nowrap
-          max-w-0 overflow-hidden opacity-0
-          transition-all duration-300 ease-in-out
-          group-hover/action:max-w-[80px] group-hover/action:opacity-100
-        "
-      >
-        {label}
-      </span>
+      <span>{label}</span>
     </button>
   )
 }
@@ -59,6 +51,7 @@ function ActionButton({
 export function EventCard({ event, isCollaborated, role, onEventsChange }: EventCardProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
+  const [isViewing, setIsViewing] = useState(false)
 
   const ticketPct =
     event.hasMaxSize && event.totalCapacity
@@ -166,7 +159,11 @@ export function EventCard({ event, isCollaborated, role, onEventsChange }: Event
           <span className="text-sm font-medium text-slate-700">Total Revenue</span>
         </div>
         <span className="font-bold text-[#6b2fa5] text-xl">
-          ₦{event.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <MaskedAmount
+            value={`₦${event.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            size="lg"
+            className="text-[#6b2fa5]"
+          />
         </span>
       </div>
 
@@ -186,10 +183,12 @@ export function EventCard({ event, isCollaborated, role, onEventsChange }: Event
           {/* View */}
           <ActionButton
             icon={<Eye className="w-4 h-4" />}
-            label="View"
+            label={isViewing ? "Viewing…" : "View"}
             colorClass="text-[#6b2fa5] hover:bg-[#6b2fa5]/10"
+            disabled={isViewing}
             onClick={(e) => {
               e.stopPropagation()
+              setIsViewing(true)
               router.push(`/event-info/${event.id}`)
             }}
           />
@@ -202,7 +201,7 @@ export function EventCard({ event, isCollaborated, role, onEventsChange }: Event
                   ? <span className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin inline-block" />
                   : <PauseCircle className="w-4 h-4" />
               }
-              label="Pause"
+              label={isLoading ? "Pausing…" : "Pause"}
               colorClass="text-amber-600 hover:bg-amber-50"
               disabled={isLoading}
               onClick={(e) => handlePauseResume(e, "pause")}
@@ -217,7 +216,7 @@ export function EventCard({ event, isCollaborated, role, onEventsChange }: Event
                   ? <span className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin inline-block" />
                   : <PlayCircle className="w-4 h-4" />
               }
-              label="Resume"
+              label={isLoading ? "Resuming…" : "Resume"}
               colorClass="text-emerald-600 hover:bg-emerald-50"
               disabled={isLoading}
               onClick={(e) => handlePauseResume(e, "resume")}
