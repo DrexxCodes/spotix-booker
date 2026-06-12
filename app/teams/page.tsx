@@ -7,11 +7,9 @@ import Link from "next/link"
 import {
   Users, Shield, UserCheck, Calculator, ArrowLeft, Plus, Search,
   Loader2, X, Check, ChevronRight, Trash2, Crown, AlertCircle,
-  RefreshCw, UserPlus, Edit2, Info, Settings,
+  RefreshCw, UserPlus, Edit2, Info, Settings, ShieldOff,
 } from "lucide-react"
-import { tryRefreshTokens, getAccessToken } from "@/lib/auth-client"
-import { auth } from "@/lib/firebase"
-import { onAuthStateChanged } from "firebase/auth"
+import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface OwnedEvent {
@@ -187,8 +185,6 @@ function RoleSelector({
   const [customMode, setCustomMode] = useState(!isBuiltIn(value))
   const [customVal, setCustomVal]   = useState(isBuiltIn(value) ? "" : value)
 
-  const isCustom = !isBuiltIn(value)
-
   return (
     <div className="space-y-3">
       {/* Built-in options */}
@@ -320,7 +316,7 @@ function AddCollaboratorPanel({
     setLookedUp(null)
     setLookupError("")
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `/api/whoru?type=email&value=${encodeURIComponent(email.trim().toLowerCase())}&limit=1`
       )
       if (!res.ok) {
@@ -345,7 +341,7 @@ function AddCollaboratorPanel({
     setSaving(true)
     setSaveError("")
     try {
-      const res = await fetch("/api/teams", {
+      const res = await authFetch("/api/teams", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -487,7 +483,7 @@ function EditRolePanel({
     setSaving(true)
     setError("")
     try {
-      const res = await fetch("/api/teams", {
+      const res = await authFetch("/api/teams", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -511,11 +507,23 @@ function EditRolePanel({
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-slate-900 flex items-center gap-2">
           <Edit2 size={16} className="text-[#6b2fa5]" />
-          Edit role — {collab.displayName}
+          Change access — {collab.displayName}
         </h3>
         <button onClick={onCancel} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 transition-colors">
           <X size={16} />
         </button>
+      </div>
+      <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#6b2fa5] to-purple-400 flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+          {(collab.displayName || collab.collaboratorEmail).charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-800 truncate">{collab.displayName}</p>
+          <p className="text-xs text-slate-500 truncate">{collab.collaboratorEmail}</p>
+        </div>
+        <div className="ml-auto flex-shrink-0">
+          <RoleBadge role={collab.role} />
+        </div>
       </div>
       <RoleSelector
         value={selectedRole}
@@ -524,7 +532,7 @@ function EditRolePanel({
         onPermissionsChange={setCustomPermissions}
       />
       {isBuiltIn(selectedRole) && <BuiltInPermissionsCard role={selectedRole} />}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600 flex items-center gap-1.5"><AlertCircle size={13} />{error}</p>}
       <div className="flex gap-3">
         <button onClick={onCancel}
           className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
@@ -533,7 +541,7 @@ function EditRolePanel({
         <button onClick={handleSave} disabled={saving}
           className="flex-1 py-2.5 rounded-xl bg-[#6b2fa5] text-white text-sm font-semibold hover:bg-[#5a2589] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-          Save Role
+          Save Changes
         </button>
       </div>
     </div>
@@ -551,12 +559,12 @@ function CollaboratorCard({
   onRemove: (collaborationId: string) => void
 }) {
   const [removing, setRemoving] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
 
   async function handleRemove() {
-    if (!confirm(`Remove ${collab.displayName} from this event?`)) return
     setRemoving(true)
     try {
-      const res = await fetch("/api/teams", {
+      const res = await authFetch("/api/teams", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collaborationId: collab.collaborationId }),
@@ -565,6 +573,7 @@ function CollaboratorCard({
       else {
         const d = await res.json().catch(() => ({}))
         alert(d.error ?? "Failed to remove collaborator.")
+        setShowConfirm(false)
       }
     } catch { alert("Network error.") }
     finally { setRemoving(false) }
@@ -572,8 +581,41 @@ function CollaboratorCard({
 
   const permCount = collab.permissions ? collab.permissions.length : null
 
+  if (showConfirm) {
+    return (
+      <div className="flex flex-col gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-bold text-sm flex-shrink-0">
+            {(collab.displayName || collab.collaboratorEmail).charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-slate-900 text-sm truncate">{collab.displayName}</p>
+            <p className="text-xs text-red-600">Remove from this event's team?</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowConfirm(false)}
+            disabled={removing}
+            className="flex-1 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 transition-colors"
+          >
+            Keep
+          </button>
+          <button
+            onClick={handleRemove}
+            disabled={removing}
+            className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {removing ? <Loader2 size={13} className="animate-spin" /> : <ShieldOff size={13} />}
+            {removing ? "Revoking..." : "Revoke Access"}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl hover:border-slate-300 transition-colors group">
+    <div className="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-xl hover:border-slate-300 transition-colors">
       <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#6b2fa5] to-purple-400 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
         {(collab.displayName || collab.collaboratorEmail).charAt(0).toUpperCase()}
       </div>
@@ -590,13 +632,20 @@ function CollaboratorCard({
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         <RoleBadge role={collab.role} />
-        <button onClick={() => onEdit(collab)}
-          className="p-1.5 text-slate-400 hover:text-[#6b2fa5] hover:bg-purple-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all" title="Change role">
+        <button
+          onClick={() => onEdit(collab)}
+          className="p-1.5 text-slate-400 hover:text-[#6b2fa5] hover:bg-purple-50 rounded-lg transition-all"
+          title="Change access level"
+        >
           <Edit2 size={14} />
         </button>
-        <button onClick={handleRemove} disabled={removing}
-          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50" title="Remove">
-          {removing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+        <button
+          onClick={() => setShowConfirm(true)}
+          disabled={removing}
+          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50"
+          title="Revoke access"
+        >
+          <ShieldOff size={14} />
         </button>
       </div>
     </div>
@@ -614,7 +663,7 @@ function EventTeamPanel({ event, onClose }: { event: OwnedEvent; onClose: () => 
   const fetchCollaborators = useCallback(async () => {
     setLoading(true); setError("")
     try {
-      const res  = await fetch(`/api/teams?eventId=${event.id}&action=list`)
+      const res  = await authFetch(`/api/teams?eventId=${event.id}&action=list`)
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Failed to load team."); return }
       setCollaborators(data.collaborators ?? [])
@@ -777,33 +826,28 @@ function TeamsPageInner() {
           const refreshed = await tryRefreshTokens()
           if (!refreshed) { router.push("/login"); return }
         }
-      } catch { router.push("/login"); return }
 
-      const unsub = onAuthStateChanged(auth, async (user) => {
-        if (!user) { router.push("/login"); return }
+        // Use /api/user/me pattern (consistent with rest of app)
+        const res = await authFetch("/api/user/me")
+        if (!res.ok) { router.push("/login"); return }
+
+        const data = await res.json()
+        setCollabEnabled(data.enabledCollaboration ?? false)
         setAuthLoading(false)
-        await fetchUserProfile()
+
         await fetchOwnedEvents()
-      })
-      return () => unsub()
+      } catch {
+        router.push("/login")
+      }
     }
     init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function fetchUserProfile() {
-    try {
-      const res  = await fetch("/api/user/me")
-      if (!res.ok) return
-      const data = await res.json()
-      setCollabEnabled(data.enabledCollaboration ?? false)
-    } catch { setCollabEnabled(false) }
-  }
-
   async function fetchOwnedEvents() {
     setEventsLoading(true)
     try {
-      const res  = await fetch("/api/event/list?action=owned")
+      const res  = await authFetch("/api/event/list?action=owned")
       if (!res.ok) return
       const data = await res.json()
       const events: OwnedEvent[] = (data.events ?? []).map((e: any) => ({
@@ -930,7 +974,7 @@ function TeamsPageInner() {
             </div>
             <div className="mt-3 flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
               <Crown size={13} className="flex-shrink-0 mt-0.5" />
-              <span>Only event owners can add team members. Collaborators can exit teams from within the event page.</span>
+              <span>Only event owners can manage the team. Members can exit teams from within the event page.</span>
             </div>
           </div>
 

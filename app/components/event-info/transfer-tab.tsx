@@ -1,7 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { Send, AlertCircle, CheckCircle, Clock, Search, Loader2, X, ArrowRightLeft } from "lucide-react"
+import { useState, useEffect, useCallback } from "react"
+import {
+  Send, AlertCircle, CheckCircle, Clock, Search, Loader2, X,
+  ArrowRightLeft, History, Ban, CircleCheck, CircleX, Timer,
+} from "lucide-react"
 
 interface TransferTabProps {
   eventId: string
@@ -17,7 +20,45 @@ interface RecipientInfo {
   username: string
 }
 
+interface TransferRecord {
+  id: string
+  status: "pending" | "accepted" | "rejected" | "cancelled" | "expired"
+  recipientEmail: string
+  recipientUsername: string
+  recipientId: string
+  createdAt: any
+}
+
 type Step = "input" | "confirm" | "success"
+
+// ── Status pill for history ───────────────────────────────────────────────────
+function StatusPill({ status }: { status: TransferRecord["status"] }) {
+  const map: Record<TransferRecord["status"], { label: string; cls: string; icon: React.ReactNode }> = {
+    pending:   { label: "Pending",   cls: "bg-amber-50 text-amber-700 border-amber-200",   icon: <Timer size={11} /> },
+    accepted:  { label: "Accepted",  cls: "bg-green-50 text-green-700 border-green-200",   icon: <CircleCheck size={11} /> },
+    rejected:  { label: "Rejected",  cls: "bg-red-50 text-red-700 border-red-200",         icon: <CircleX size={11} /> },
+    cancelled: { label: "Cancelled", cls: "bg-slate-50 text-slate-600 border-slate-200",   icon: <X size={11} /> },
+    expired:   { label: "Expired",   cls: "bg-slate-50 text-slate-500 border-slate-200",   icon: <Clock size={11} /> },
+  }
+  const cfg = map[status] ?? map.expired
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold ${cfg.cls}`}>
+      {cfg.icon} {cfg.label}
+    </span>
+  )
+}
+
+function formatTs(ts: any): string {
+  if (!ts) return "—"
+  try {
+    const date = ts?.seconds
+      ? new Date(ts.seconds * 1000)
+      : new Date(ts)
+    return date.toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" })
+  } catch {
+    return "—"
+  }
+}
 
 export default function TransferTab({
   eventId,
@@ -27,22 +68,70 @@ export default function TransferTab({
 }: TransferTabProps) {
   const isOwner = organizerId === currentUserId
 
-  // ─── Form state ────────────────────────────────────────────────────────────
+  // ─── Pending transfer state ─────────────────────────────────────────────
+  const [pendingTransfer, setPendingTransfer] = useState<TransferRecord | null | undefined>(undefined)
+  const [pendingLoading, setPendingLoading] = useState(true)
+
+  // ─── Transfer history ───────────────────────────────────────────────────
+  const [history, setHistory] = useState<TransferRecord[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+
+  // ─── Form state ─────────────────────────────────────────────────────────
   const [email, setEmail] = useState("")
   const [recipient, setRecipient] = useState<RecipientInfo | null>(null)
   const [step, setStep] = useState<Step>("input")
 
-  // ─── Async state ───────────────────────────────────────────────────────────
+  // ─── Async state ────────────────────────────────────────────────────────
   const [lookupLoading, setLookupLoading] = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // ─── Pending transfer (for cancel) ────────────────────────────────────────
-  const [pendingTransferId, setPendingTransferId] = useState<string | null>(null)
+  // ─── On mount: check for pending transfer + load history ────────────────
+  const fetchPendingAndHistory = useCallback(async () => {
+    setPendingLoading(true)
+    setHistoryLoading(true)
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 1: look up recipient via /api/user/whoru
+    try {
+      const [pendingRes, historyRes] = await Promise.all([
+        fetch(`/api/event/transfer?eventId=${eventId}`),
+        fetch(`/api/event/transfer?eventId=${eventId}&history=true`),
+      ])
+
+      if (pendingRes.ok) {
+        const data = await pendingRes.json()
+        const t = data.transfer ?? null
+        setPendingTransfer(t)
+        // If there's a pending transfer, jump to success step pre-filled
+        if (t && t.status === "pending") {
+          setRecipient({
+            userId: t.recipientId,
+            email: t.recipientEmail,
+            fullName: t.recipientUsername ?? "",
+            username: t.recipientUsername ?? "",
+          })
+          setStep("success")
+        }
+      } else {
+        setPendingTransfer(null)
+      }
+
+      if (historyRes.ok) {
+        const data = await historyRes.json()
+        setHistory(data.history ?? [])
+      }
+    } catch {
+      setPendingTransfer(null)
+    } finally {
+      setPendingLoading(false)
+      setHistoryLoading(false)
+    }
+  }, [eventId])
+
+  useEffect(() => {
+    fetchPendingAndHistory()
+  }, [fetchPendingAndHistory])
+
   // ─────────────────────────────────────────────────────────────────────────
   const handleLookup = async () => {
     setError(null)
@@ -59,21 +148,17 @@ export default function TransferTab({
       const res = await fetch(
         `/api/user/whoru?type=email&value=${encodeURIComponent(trimmed)}&limit=1`
       )
-
       const data = await res.json()
-
       if (!res.ok) {
         setError(data.error === "User not found"
           ? "No Spotix account found for that email."
           : data.error || "Failed to look up user.")
         return
       }
-
       if (data.userId === currentUserId) {
         setError("You cannot transfer an event to yourself.")
         return
       }
-
       setRecipient({
         userId: data.userId,
         email: data.email,
@@ -88,9 +173,6 @@ export default function TransferTab({
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 2: submit the transfer request
-  // ─────────────────────────────────────────────────────────────────────────
   const handleConfirm = async () => {
     if (!recipient) return
     setError(null)
@@ -108,17 +190,16 @@ export default function TransferTab({
           recipientUsername: recipient.username,
         }),
       })
-
       const data = await res.json()
-
       if (!res.ok) {
         setError(data.error || "Failed to send transfer request.")
         setStep("confirm")
         return
       }
-
-      setPendingTransferId(data.transferId)
+      setPendingTransfer({ id: data.transferId, status: "pending", recipientEmail: recipient.email, recipientUsername: recipient.username, recipientId: recipient.userId, createdAt: new Date() })
       setStep("success")
+      // Refresh history
+      fetchPendingAndHistory()
     } catch {
       setError("Something went wrong. Please try again.")
     } finally {
@@ -126,11 +207,8 @@ export default function TransferTab({
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Cancel: delete the pending transfer
-  // ─────────────────────────────────────────────────────────────────────────
   const handleCancel = async () => {
-    if (!pendingTransferId) return
+    if (!pendingTransfer) return
     setError(null)
     setCancelLoading(true)
 
@@ -138,21 +216,18 @@ export default function TransferTab({
       const res = await fetch("/api/event/transfer", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ eventId, transferId: pendingTransferId }),
+        body: JSON.stringify({ eventId, transferId: pendingTransfer.id }),
       })
-
       const data = await res.json()
-
       if (!res.ok) {
         setError(data.error || "Failed to cancel the transfer.")
         return
       }
-
-      // Reset everything
       setStep("input")
       setEmail("")
       setRecipient(null)
-      setPendingTransferId(null)
+      setPendingTransfer(null)
+      fetchPendingAndHistory()
     } catch {
       setError("Something went wrong. Please try again.")
     } finally {
@@ -160,9 +235,7 @@ export default function TransferTab({
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Not owner guard
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Not owner guard ─────────────────────────────────────────────────────
   if (!isOwner) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -177,22 +250,51 @@ export default function TransferTab({
     )
   }
 
+  // ─── Loading state ───────────────────────────────────────────────────────
+  if (pendingLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 size={28} className="animate-spin text-[#6b2fa5]" />
+      </div>
+    )
+  }
+
+  const hasPending = pendingTransfer?.status === "pending"
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      {/* Info banner */}
-      <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex items-start gap-3">
-        <Clock size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
-        <div className="text-sm text-blue-900">
-          <p className="font-semibold">Transfer Event Ownership</p>
-          <p className="text-blue-800 mt-1">
-            The recipient will have 3 days to accept. Once accepted, they become the organizer
-            and gain full control over this event.
-          </p>
-        </div>
-      </div>
 
-      {/* ── STEP: input ───────────────────────────────────────────────────── */}
-      {step === "input" && (
+      {/* ── Pending-transfer block — shown at top when a transfer exists ── */}
+      {hasPending && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-start gap-3">
+          <Ban size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm text-amber-900 space-y-1">
+            <p className="font-semibold">Transfer already in progress</p>
+            <p className="text-amber-800">
+              A transfer request to{" "}
+              <span className="font-semibold">@{pendingTransfer?.recipientUsername}</span> is
+              pending. Cancel it below before initiating a new one.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Info banner */}
+      {!hasPending && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex items-start gap-3">
+          <Clock size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-900">
+            <p className="font-semibold">Transfer Event Ownership</p>
+            <p className="text-blue-800 mt-1">
+              The recipient will have 3 days to accept. Once accepted, they become the organizer
+              and gain full control over this event.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP: input ────────────────────────────────────────────────── */}
+      {step === "input" && !hasPending && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
           <div>
             <label htmlFor="recipientEmail" className="block text-sm font-semibold text-slate-700 mb-2">
@@ -203,10 +305,7 @@ export default function TransferTab({
                 id="recipientEmail"
                 type="email"
                 value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value)
-                  setError(null)
-                }}
+                onChange={(e) => { setEmail(e.target.value); setError(null) }}
                 onKeyDown={(e) => e.key === "Enter" && handleLookup()}
                 placeholder="user@example.com"
                 disabled={lookupLoading}
@@ -217,11 +316,7 @@ export default function TransferTab({
                 disabled={lookupLoading || !email.trim()}
                 className="px-4 py-2.5 rounded-lg font-semibold flex items-center gap-2 bg-[#6b2fa5] text-white hover:bg-[#5a2589] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors text-sm"
               >
-                {lookupLoading ? (
-                  <Loader2 size={15} className="animate-spin" />
-                ) : (
-                  <Search size={15} />
-                )}
+                {lookupLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
                 {lookupLoading ? "Looking up..." : "Find User"}
               </button>
             </div>
@@ -239,10 +334,9 @@ export default function TransferTab({
         </div>
       )}
 
-      {/* ── STEP: confirm ─────────────────────────────────────────────────── */}
-      {step === "confirm" && recipient && (
+      {/* ── STEP: confirm ──────────────────────────────────────────────── */}
+      {step === "confirm" && recipient && !hasPending && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
-          {/* Recipient card */}
           <div>
             <p className="text-sm font-semibold text-slate-600 mb-3">Transferring to</p>
             <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
@@ -261,7 +355,6 @@ export default function TransferTab({
             </div>
           </div>
 
-          {/* Confirmation message */}
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
             <ArrowRightLeft size={17} className="text-amber-600 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-amber-900">
@@ -280,11 +373,7 @@ export default function TransferTab({
 
           <div className="flex gap-3">
             <button
-              onClick={() => {
-                setStep("input")
-                setRecipient(null)
-                setError(null)
-              }}
+              onClick={() => { setStep("input"); setRecipient(null); setError(null) }}
               disabled={submitLoading}
               className="flex-1 px-4 py-2.5 rounded-lg font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors text-sm"
             >
@@ -295,25 +384,21 @@ export default function TransferTab({
               disabled={submitLoading}
               className="flex-1 px-4 py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2 bg-[#6b2fa5] text-white hover:bg-[#5a2589] disabled:opacity-60 disabled:cursor-not-allowed transition-colors text-sm"
             >
-              {submitLoading ? (
-                <Loader2 size={15} className="animate-spin" />
-              ) : (
-                <Send size={15} />
-              )}
+              {submitLoading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
               {submitLoading ? "Sending..." : "Send Transfer Request"}
             </button>
           </div>
         </div>
       )}
 
-      {/* ── STEP: success ─────────────────────────────────────────────────── */}
-      {step === "success" && recipient && (
+      {/* ── STEP: success / pending exists ────────────────────────────── */}
+      {(step === "success" || hasPending) && recipient && (
         <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
           <div className="flex flex-col items-center text-center py-4">
-            <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-3">
-              <CheckCircle size={28} className="text-green-600" />
+            <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mb-3">
+              <Clock size={28} className="text-amber-600" />
             </div>
-            <h3 className="text-lg font-semibold text-slate-800 mb-1">Request Sent</h3>
+            <h3 className="text-lg font-semibold text-slate-800 mb-1">Awaiting Acceptance</h3>
             <p className="text-sm text-slate-500">
               Transfer request sent to{" "}
               <span className="font-semibold text-slate-700">@{recipient.username}</span>.
@@ -333,17 +418,58 @@ export default function TransferTab({
             disabled={cancelLoading}
             className="w-full px-4 py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2 border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
           >
-            {cancelLoading ? (
-              <Loader2 size={15} className="animate-spin" />
-            ) : (
-              <X size={15} />
-            )}
+            {cancelLoading ? <Loader2 size={15} className="animate-spin" /> : <X size={15} />}
             {cancelLoading ? "Cancelling..." : "Cancel Transfer Request"}
           </button>
         </div>
       )}
 
-      {/* ── FAQ ───────────────────────────────────────────────────────────── */}
+      {/* ── Transfer History ───────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <History size={15} className="text-slate-400" />
+          <h3 className="text-sm font-semibold text-slate-700">Transfer History</h3>
+        </div>
+
+        {historyLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 size={20} className="animate-spin text-slate-400" />
+          </div>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-slate-400 py-4 text-center">No transfer history yet.</p>
+        ) : (
+          /* Horizontal scrollable row of cards */
+          <div className="overflow-x-auto pb-2">
+            <div className="flex gap-3" style={{ width: "max-content" }}>
+              {history.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex-shrink-0 w-56 bg-white border border-slate-200 rounded-xl p-4 space-y-2.5 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="w-8 h-8 rounded-full bg-[#6b2fa5]/10 flex items-center justify-center text-[#6b2fa5] font-bold text-sm flex-shrink-0">
+                      {(t.recipientUsername?.[0] ?? "?").toUpperCase()}
+                    </div>
+                    <StatusPill status={t.status} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800 truncate">
+                      @{t.recipientUsername ?? "Unknown"}
+                    </p>
+                    <p className="text-xs text-slate-500 truncate">{t.recipientEmail}</p>
+                  </div>
+                  <p className="text-xs text-slate-400 flex items-center gap-1">
+                    <Clock size={10} />
+                    {formatTs(t.createdAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── FAQ ────────────────────────────────────────────────────────── */}
       <div className="space-y-3 pt-4 border-t border-slate-200">
         <h3 className="font-semibold text-slate-800">Frequently Asked Questions</h3>
 

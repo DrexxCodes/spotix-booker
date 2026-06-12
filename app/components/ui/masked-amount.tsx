@@ -3,11 +3,15 @@
 import { Eye, EyeOff } from "lucide-react"
 import { useBalanceVisibility } from "@/hooks/use-balance-visibility"
 
+type BlockKey = "revenue" | "balance" | "paidOut"
+
 interface MaskedAmountProps {
-  value: string          // pre-formatted string e.g. "₦1,234,567"
-  className?: string     // applied to the amount text
+  value: string
+  className?: string
   size?: "sm" | "md" | "lg" | "xl"
-  showToggle?: boolean   // whether to render the eye icon inline (default true)
+  /** If provided, this block has its own toggle. Falls back to global visible. */
+  blockKey?: BlockKey
+  showToggle?: boolean
   iconClassName?: string
 }
 
@@ -29,24 +33,33 @@ export function MaskedAmount({
   value,
   className = "",
   size = "lg",
+  blockKey,
   showToggle = true,
   iconClassName = "",
 }: MaskedAmountProps) {
-  const { visible, toggle } = useBalanceVisibility()
+  const { visible, blocks, toggle, toggleBlock } = useBalanceVisibility()
+
+  // If a blockKey is given, use that block's visibility; otherwise use global
+  const isVisible = blockKey ? blocks[blockKey] : visible
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (blockKey) toggleBlock(blockKey)
+    else toggle()
+  }
 
   return (
     <span className="inline-flex items-center gap-1.5 select-none">
       <span className={`${SIZE_CLASSES[size]} font-bold tabular-nums ${className}`}>
-        {visible ? value : "₦••••••"}
+        {isVisible ? value : "₦••••••"}
       </span>
       {showToggle && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); toggle() }}
-          aria-label={visible ? "Hide balance" : "Show balance"}
+          onClick={handleToggle}
+          aria-label={isVisible ? "Hide amount" : "Show amount"}
           className={`opacity-50 hover:opacity-100 transition-opacity flex-shrink-0 ${iconClassName}`}
         >
-          {visible
+          {isVisible
             ? <EyeOff size={ICON_SIZE[size]} />
             : <Eye size={ICON_SIZE[size]} />
           }
@@ -57,7 +70,8 @@ export function MaskedAmount({
 }
 
 /**
- * Convenience: just the eye toggle button (for placing next to a heading/label).
+ * Global toggle button — controls all three blocks at once.
+ * Eye is closed only when ALL blocks are hidden.
  */
 export function BalanceToggleButton({ className = "" }: { className?: string }) {
   const { visible, toggle } = useBalanceVisibility()
@@ -65,7 +79,7 @@ export function BalanceToggleButton({ className = "" }: { className?: string }) 
     <button
       type="button"
       onClick={toggle}
-      aria-label={visible ? "Hide balances" : "Show balances"}
+      aria-label={visible ? "Hide all balances" : "Show all balances"}
       className={`p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all ${className}`}
     >
       {visible ? <EyeOff size={14} /> : <Eye size={14} />}

@@ -1,6 +1,6 @@
 "use client"
 
-import { Calendar, TrendingUp, Tag, Users } from "lucide-react"
+import { Calendar, TrendingUp, Tag } from "lucide-react"
 import { MaskedAmount, BalanceToggleButton } from "@/components/ui/masked-amount"
 import { useBalanceVisibilityRoot, BalanceVisibilityCtx } from "@/hooks/use-balance-visibility"
 
@@ -26,79 +26,82 @@ export function StatsGrid({ stats }: { stats: DashboardStats }) {
 
   return (
     <BalanceVisibilityCtx.Provider value={balanceCtx}>
-    <div className="space-y-3">
+      <div className="space-y-3">
 
-      {/* Section label + global toggle */}
-      <div className="flex items-center justify-between px-0.5">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Overview</p>
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <span>Balances</span>
-          <BalanceToggleButton />
+        {/* Section label + global toggle */}
+        <div className="flex items-center justify-between px-0.5">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Overview</p>
+          <div className="flex items-center gap-1.5 text-xs text-slate-400">
+            <span>Balances</span>
+            <BalanceToggleButton />
+          </div>
+        </div>
+
+        {/* Row 1: counts */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard
+            label="Total Events"
+            value={fmt(stats.totalEvents)}
+            icon={<Calendar size={15} className="text-[#6b2fa5]" />}
+            iconBg="bg-[#6b2fa5]/10"
+            valueColor="text-slate-900"
+            delay="delay-[0ms]"
+          />
+          <StatCard
+            label="Active"
+            value={fmt(stats.activeEvents)}
+            icon={<TrendingUp size={15} className="text-emerald-600" />}
+            iconBg="bg-emerald-50"
+            valueColor="text-emerald-700"
+            delay="delay-[50ms]"
+          />
+          <StatCard
+            label="Inactive"
+            value={fmt(stats.inactiveEvents)}
+            icon={<Calendar size={15} className="text-slate-400" />}
+            iconBg="bg-slate-100"
+            valueColor="text-slate-600"
+            delay="delay-[100ms]"
+          />
+          <StatCard
+            label="Tickets Sold"
+            value={fmt(stats.totalTicketsSold)}
+            icon={<Tag size={15} className="text-blue-600" />}
+            iconBg="bg-blue-50"
+            valueColor="text-blue-700"
+            delay="delay-[150ms]"
+          />
+        </div>
+
+        {/* Row 2: financials — each has its own blockKey for independent toggle */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <FinancialCard
+            label="Total Revenue"
+            amount={fmtCurrency(stats.totalRevenue)}
+            sub="All ticket sales"
+            accent="text-slate-900"
+            blockKey="revenue"
+            delay="delay-[200ms]"
+          />
+          <FinancialCard
+            label="Available Balance"
+            amount={fmtCurrency(stats.availableBalance)}
+            sub="Ready to withdraw"
+            accent="text-[#6b2fa5]"
+            blockKey="balance"
+            highlight
+            delay="delay-[250ms]"
+          />
+          <FinancialCard
+            label="Total Paid Out"
+            amount={fmtCurrency(stats.totalPaidOut)}
+            sub="Withdrawn to date"
+            accent="text-emerald-700"
+            blockKey="paidOut"
+            delay="delay-[300ms]"
+          />
         </div>
       </div>
-
-      {/* Row 1: counts */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard
-          label="Total Events"
-          value={fmt(stats.totalEvents)}
-          icon={<Calendar size={15} className="text-[#6b2fa5]" />}
-          iconBg="bg-[#6b2fa5]/10"
-          valueColor="text-slate-900"
-          delay="delay-[0ms]"
-        />
-        <StatCard
-          label="Active"
-          value={fmt(stats.activeEvents)}
-          icon={<TrendingUp size={15} className="text-emerald-600" />}
-          iconBg="bg-emerald-50"
-          valueColor="text-emerald-700"
-          delay="delay-[50ms]"
-        />
-        <StatCard
-          label="Inactive"
-          value={fmt(stats.inactiveEvents)}
-          icon={<Calendar size={15} className="text-slate-400" />}
-          iconBg="bg-slate-100"
-          valueColor="text-slate-600"
-          delay="delay-[100ms]"
-        />
-        <StatCard
-          label="Tickets Sold"
-          value={fmt(stats.totalTicketsSold)}
-          icon={<Tag size={15} className="text-blue-600" />}
-          iconBg="bg-blue-50"
-          valueColor="text-blue-700"
-          delay="delay-[150ms]"
-        />
-      </div>
-
-      {/* Row 2: financials */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <FinancialCard
-          label="Total Revenue"
-          amount={fmtCurrency(stats.totalRevenue)}
-          sub="All ticket sales"
-          accent="text-slate-900"
-          delay="delay-[200ms]"
-        />
-        <FinancialCard
-          label="Available Balance"
-          amount={fmtCurrency(stats.availableBalance)}
-          sub="Ready to withdraw"
-          accent="text-[#6b2fa5]"
-          highlight
-          delay="delay-[250ms]"
-        />
-        <FinancialCard
-          label="Total Paid Out"
-          amount={fmtCurrency(stats.totalPaidOut)}
-          sub="Withdrawn to date"
-          accent="text-emerald-700"
-          delay="delay-[300ms]"
-        />
-      </div>
-    </div>
     </BalanceVisibilityCtx.Provider>
   )
 }
@@ -123,10 +126,12 @@ function StatCard({
 }
 
 function FinancialCard({
-  label, amount, sub, accent, highlight, delay,
+  label, amount, sub, accent, highlight, blockKey, delay,
 }: {
   label: string; amount: string; sub: string
-  accent: string; highlight?: boolean; delay: string
+  accent: string; highlight?: boolean
+  blockKey: "revenue" | "balance" | "paidOut"
+  delay: string
 }) {
   return (
     <div
@@ -142,6 +147,7 @@ function FinancialCard({
       <MaskedAmount
         value={amount}
         size="xl"
+        blockKey={blockKey}
         className={highlight ? "text-white" : accent}
         iconClassName={highlight ? "text-white/50 hover:text-white" : ""}
       />

@@ -31,12 +31,40 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url)
   const eventId = searchParams.get("eventId")
+  const wantHistory = searchParams.get("history") === "true"
 
   if (!eventId) {
     return Response.json({ error: "Missing eventId" }, { status: 400 })
   }
 
   try {
+    // ── History mode: return all transfers for this event ──────────────────
+    if (wantHistory) {
+      const historySnap = await adminDb
+        .collection("transferRequests")
+        .doc(eventId)
+        .collection("requests")
+        .orderBy("createdAt", "desc")
+        .limit(20)
+        .get()
+
+      if (historySnap.empty) {
+        return Response.json({ history: [] })
+      }
+
+      // Verify caller is organizer or recipient of at least one entry
+      const docs = historySnap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[]
+      const isAuthorized = docs.some(
+        (d) => d.organizerId === currentUserId || d.recipientId === currentUserId
+      )
+      if (!isAuthorized) {
+        return Response.json({ error: "Forbidden" }, { status: 403 })
+      }
+
+      return Response.json({ history: docs })
+    }
+
+    // ── Default mode: pending transfer only ────────────────────────────────
     const snapshot = await adminDb
       .collection("transferRequests")
       .doc(eventId)

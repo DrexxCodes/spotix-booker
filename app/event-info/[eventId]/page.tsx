@@ -726,7 +726,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
 
             {activeTab === "attendees" && visibleTabs.includes("attendees") && (
               loadedTabs.has("attendees")
-                ? <AttendeesTab attendees={attendees} formatFirestoreTimestamp={(ts: any) => ts} eventId={eventId} />
+                ? <AttendeesTab attendees={attendees} formatFirestoreTimestamp={(ts: any) => ts} eventId={eventId} eventName={eventData.eventName} />
                 : <TabSkeleton />
             )}
 
