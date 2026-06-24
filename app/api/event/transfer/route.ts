@@ -1,7 +1,6 @@
 import { adminDb, FieldValue } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
-
-const TRANSFER_TTL_MS = 3 * 24 * 60 * 60 * 1000 // 3 days
+import { TRANSFER_TTL_MS, isTransferExpired, expireTransfer } from "@/lib/transfer-utils"
 
 // ─── Shared auth helper ────────────────────────────────────────────────────
 async function authenticate(req: Request): Promise<{ userId: string } | Response> {
@@ -61,6 +60,15 @@ export async function GET(req: Request) {
         return Response.json({ error: "Forbidden" }, { status: 403 })
       }
 
+      // Opening the transfer page is the trigger point for lazily expiring
+      // any pending entry that's past the 3-day TTL.
+      for (const d of docs) {
+        if (d.status === "pending" && isTransferExpired(d.createdAt)) {
+          await expireTransfer(eventId, d.id, d.recipientId)
+          d.status = "expired"
+        }
+      }
+
       return Response.json({ history: docs })
     }
 
@@ -84,6 +92,13 @@ export async function GET(req: Request) {
     // Only organizer or recipient may see it
     if (data.organizerId !== currentUserId && data.recipientId !== currentUserId) {
       return Response.json({ error: "Forbidden" }, { status: 403 })
+    }
+
+    // Opening the transfer page is the trigger point for lazily expiring
+    // a pending request that's past the 3-day TTL.
+    if (isTransferExpired(data.createdAt)) {
+      await expireTransfer(eventId, doc.id, data.recipientId)
+      data.status = "expired"
     }
 
     return Response.json({ transfer: { id: doc.id, ...data } })
@@ -231,6 +246,7 @@ export async function POST(req: Request) {
 
     const expiresAt = t.expiresAt?.toDate?.() ?? new Date(t.expiresAt)
     if (expiresAt < new Date()) {
+      await expireTransfer(eventId, transferId, t.recipientId)
       return Response.json({ error: "Transfer request has expired" }, { status: 410 })
     }
 

@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { isTransferExpired, expireTransfer } from "@/lib/transfer-utils"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/event/transfer/incoming
@@ -26,9 +27,20 @@ export async function GET(req: Request) {
 
     if (snap.empty) return Response.json({ transfers: [] })
 
-    const transfers = snap.docs.map((doc) => {
+    const active: any[] = []
+    const expirations: Promise<void>[] = []
+
+    for (const doc of snap.docs) {
       const d = doc.data()
-      return {
+
+      // Opening the incoming-transfers page is the trigger point for lazily
+      // expiring a request that's past the 3-day TTL.
+      if (isTransferExpired(d.createdAt)) {
+        expirations.push(expireTransfer(d.eventId, d.transferId ?? doc.id, userId))
+        continue
+      }
+
+      active.push({
         id: doc.id,
         transferId: d.transferId ?? doc.id,
         eventId: d.eventId ?? "",
@@ -43,10 +55,12 @@ export async function GET(req: Request) {
           : d.expiresAt instanceof Date
           ? d.expiresAt.toISOString()
           : d.expiresAt ?? null,
-      }
-    })
+      })
+    }
 
-    return Response.json({ transfers })
+    if (expirations.length) await Promise.all(expirations)
+
+    return Response.json({ transfers: active })
   } catch (err: any) {
     console.error("[GET /api/event/transfer/incoming]", err)
     return Response.json({ error: "Unauthorized" }, { status: 401 })

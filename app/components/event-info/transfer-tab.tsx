@@ -49,15 +49,40 @@ function StatusPill({ status }: { status: TransferRecord["status"] }) {
 }
 
 function formatTs(ts: any): string {
-  if (!ts) return "—"
+  const date = toDateSafe(ts)
+  if (!date) return "—"
+  return date.toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" })
+}
+
+// Normalizes a Firestore Timestamp (or its serialized { _seconds, _nanoseconds }
+// shape returned over JSON), an ISO string, or a millis number into a Date.
+function toDateSafe(ts: any): Date | null {
+  if (!ts) return null
   try {
-    const date = ts?.seconds
-      ? new Date(ts.seconds * 1000)
-      : new Date(ts)
-    return date.toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" })
+    let date: Date
+    if (typeof ts?.toDate === "function") {
+      date = ts.toDate()
+    } else if (typeof ts?._seconds === "number") {
+      date = new Date(ts._seconds * 1000 + Math.floor((ts._nanoseconds ?? 0) / 1e6))
+    } else if (typeof ts?.seconds === "number") {
+      date = new Date(ts.seconds * 1000 + Math.floor((ts.nanoseconds ?? 0) / 1e6))
+    } else {
+      date = new Date(ts)
+    }
+    return isNaN(date.getTime()) ? null : date
   } catch {
-    return "—"
+    return null
   }
+}
+
+const TRANSFER_TTL_MS = 3 * 24 * 60 * 60 * 1000 // 3 days
+
+// Whole days left before a pending transfer expires (never negative, rounds up).
+function daysLeft(createdAt: any): number {
+  const created = toDateSafe(createdAt)
+  if (!created) return 0
+  const remainingMs = created.getTime() + TRANSFER_TTL_MS - Date.now()
+  return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
 }
 
 export default function TransferTab({
@@ -402,7 +427,13 @@ export default function TransferTab({
             <p className="text-sm text-slate-500">
               Transfer request sent to{" "}
               <span className="font-semibold text-slate-700">@{recipient.username}</span>.
-              They have 3 days to accept.
+              {" "}
+              {(() => {
+                const left = daysLeft(pendingTransfer?.createdAt)
+                return left > 0
+                  ? `Transfer expires in ${left} day${left !== 1 ? "s" : ""}.`
+                  : "Transfer expires soon."
+              })()}
             </p>
           </div>
 
