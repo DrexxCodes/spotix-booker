@@ -12,6 +12,7 @@ import {
   BarChart2,
   ShoppingBag,
   BadgeCheck,
+  Vote,
   LogIn,
   LogOut,
   ChevronRight,
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/dashboard",    label: "Dashboard",    icon: LayoutDashboard },
   { href: "/create-event", label: "Create Event", icon: PlusCircle      },
   { href: "/events",       label: "Events",       icon: CalendarDays    },
+  { href: "/polls",        label: "Polls",        icon: Vote            },
   { href: "/profile",      label: "Profile",      icon: User            },
   { href: "/reports",      label: "Reports",      icon: BarChart2       },
   { href: "/listings",     label: "My Store",     icon: ShoppingBag     },
@@ -87,9 +89,14 @@ export function Nav() {
             </span>
           </Link>
 
-          {/* Desktop icon rail — icons only, label expands on hover */}
+          {/* Desktop icon rail — hidden when sidebar is expanded */}
           {!loading && user && (
-            <nav className="hidden md:flex items-center gap-0.5" aria-label="Primary navigation">
+            <nav
+              className={`hidden md:flex items-center gap-0.5 transition-all duration-300 ${
+                sidebarExpanded ? "opacity-0 pointer-events-none" : "opacity-100"
+              }`}
+              aria-label="Primary navigation"
+            >
               {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
                 const active = isActive(href)
                 return (

@@ -222,6 +222,8 @@ export async function GET(
     totalPaidOut,
     status: ev.status ?? "active",
     enabledCollaboration: ev.enabledCollaboration ?? false,
+    votingId:       ev.votingId       ?? null,
+    votingPollName: ev.votingPollName ?? null,
   }
 
   // ── Chart data ─────────────────────────────────────────────────────────────

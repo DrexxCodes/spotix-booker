@@ -1,0 +1,616 @@
+"use client"
+
+import { useEffect, useState, useCallback } from "react"
+import { useRouter, useParams } from "next/navigation"
+import Link from "next/link"
+import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
+import {
+  Loader,
+  ArrowLeft,
+  Users,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Crown,
+  Pencil,
+  Banknote,
+  Share2,
+  Check,
+  Settings2,
+  Link2,
+  ExternalLink,
+  Link2Off,
+  ChevronDown,
+  ChevronUp,
+  FolderOpen,
+  Tag,
+  Eye,
+  EyeOff,
+  Receipt,
+  LayoutGrid,
+  RefreshCw,
+  AlertTriangle,
+} from "lucide-react"
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Contestant {
+  contestantId: string
+  name: string
+  image: string
+  votes: number
+}
+
+interface CategoryNode {
+  categoryId: string
+  name: string
+  pollPrice: number
+  contestants: Contestant[]
+  subcategories: CategoryNode[]
+}
+
+interface Poll {
+  id: string
+  pollName: string
+  pollImage: string
+  pollDescription: string
+  pollStartDate: string
+  pollStartTime: string
+  pollEndDate: string
+  pollEndTime: string
+  pollPrice: number
+  pollAmount: number
+  pollCount: number
+  pollType: "single" | "group"
+  categories: CategoryNode[]
+  statsVisible: boolean
+  contestants: Contestant[]
+  updatedAt: string | null
+  linkedEventId: string | null
+  linkedEventName: string | null
+}
+
+interface EntryRow {
+  reference: string
+  uid: string | null
+  payerName: string | null
+  payerEmail: string | null
+  payerPhone: string | null
+  voteCount: number
+  price: number
+  contestantId: string
+  contestantName: string
+  categoryId: string | null
+  isGuest: boolean
+  totalAmount: number
+  netAmount: number
+  date: string | null
+}
+
+type PollStatus = "active" | "ended" | "upcoming"
+
+function getPollStatus(p: Poll): PollStatus {
+  const now   = new Date()
+  const start = new Date(`${p.pollStartDate}T${p.pollStartTime}`)
+  const end   = new Date(`${p.pollEndDate}T${p.pollEndTime}`)
+  if (now < start) return "upcoming"
+  if (now > end)   return "ended"
+  return "active"
+}
+
+const STATUS_PILL: Record<PollStatus, { cls: string; icon: typeof CheckCircle; label: string }> = {
+  active:   { cls: "bg-green-100 text-green-700",   icon: CheckCircle, label: "Live"     },
+  ended:    { cls: "bg-gray-100 text-gray-600",     icon: XCircle,     label: "Ended"    },
+  upcoming: { cls: "bg-yellow-100 text-yellow-700", icon: Clock,       label: "Upcoming" },
+}
+
+// ─── Standings row (shared leaf renderer) ──────────────────────────────────────
+
+function StandingsList({ contestants, status }: { contestants: Contestant[]; status: PollStatus }) {
+  const sorted     = [...contestants].sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0))
+  const totalVotes = sorted.reduce((s, c) => s + (c.votes ?? 0), 0)
+  const winner     = sorted[0]
+
+  if (sorted.length === 0) {
+    return <p className="text-sm text-gray-400 text-center py-6">No contestants yet</p>
+  }
+
+  return (
+    <div className="space-y-3">
+      {sorted.map((c, idx) => {
+        const pct      = totalVotes > 0 ? Math.round(((c.votes ?? 0) / totalVotes) * 100) : 0
+        const isWinner = status === "ended" && c.contestantId === winner?.contestantId
+        return (
+          <div
+            key={c.contestantId}
+            className={`flex items-center gap-3 p-3 rounded-xl ${isWinner ? "bg-yellow-50 border border-yellow-200" : "bg-gray-50"}`}
+          >
+            <span className="w-5 text-xs font-bold text-gray-400 text-center">{idx + 1}</span>
+            <img
+              src={c.image || "/placeholder.svg"}
+              alt={c.name}
+              className="w-9 h-9 rounded-full object-cover flex-shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <p className="text-sm font-semibold text-gray-900 truncate">{c.name}</p>
+                {isWinner && <Crown className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0" />}
+              </div>
+              <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#6b2fa5] rounded-full transition-all"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-sm font-bold text-gray-900">{(c.votes ?? 0).toLocaleString()}</p>
+              <p className="text-xs text-gray-400">{pct}%</p>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Category panel (recursive) — group-poll standings ─────────────────────────
+
+function CategoryStandingsPanel({
+  category, depth, status,
+}: {
+  category: CategoryNode
+  depth: number
+  status: PollStatus
+}) {
+  const [open, setOpen] = useState(depth === 0)
+  const hasSubcategories = (category.subcategories ?? []).length > 0
+  const isLeaf = !hasSubcategories
+  const totalVotes = isLeaf
+    ? (category.contestants ?? []).reduce((s, c) => s + (c.votes ?? 0), 0)
+    : 0
+
+  const bgClass = depth === 0
+    ? "bg-white border-gray-200"
+    : depth === 1
+    ? "bg-purple-50/40 border-purple-100"
+    : "bg-blue-50/30 border-blue-100"
+
+  return (
+    <div className={`rounded-2xl border overflow-hidden ${bgClass}`} style={depth > 0 ? { marginLeft: Math.min(depth * 12, 32) } : undefined}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 hover:bg-black/[0.02] transition-colors text-left"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-[#6b2fa5]/10 flex items-center justify-center flex-shrink-0">
+            {hasSubcategories ? <FolderOpen className="w-4 h-4 text-[#6b2fa5]" /> : <Tag className="w-4 h-4 text-[#6b2fa5]" />}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{category.name}</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {hasSubcategories
+                ? `${category.subcategories.length} sub-categor${category.subcategories.length === 1 ? "y" : "ies"}`
+                : `${category.contestants.length} contestant${category.contestants.length !== 1 ? "s" : ""} · ${category.pollPrice > 0 ? `₦${category.pollPrice.toLocaleString()}/vote` : "Free"} · ${totalVotes.toLocaleString()} votes`}
+            </p>
+          </div>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 border-t border-inherit pt-4 space-y-3">
+          {hasSubcategories
+            ? category.subcategories.map((sub) => (
+                <CategoryStandingsPanel key={sub.categoryId} category={sub} depth={depth + 1} status={status} />
+              ))
+            : <StandingsList contestants={category.contestants} status={status} />}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Entries tab ────────────────────────────────────────────────────────────────
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—"
+  try {
+    return new Date(iso).toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short" })
+  } catch {
+    return iso
+  }
+}
+
+function EntriesTab({ pollId, pollType }: { pollId: string; pollType: "single" | "group" }) {
+  const [entries,   setEntries]   = useState<EntryRow[]>([])
+  const [loading,   setLoading]   = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [cursor,    setCursor]    = useState<string | null>(null)
+  const [hasMore,   setHasMore]   = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+
+  const load = useCallback(async (nextCursor: string | null, append: boolean) => {
+    if (append) setLoadingMore(true); else setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ pollId, limit: "25" })
+      if (nextCursor) params.set("cursor", nextCursor)
+      const res  = await authFetch(`/api/polls/entries?${params.toString()}`)
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || "Failed to load entries"); return }
+      setEntries((prev) => append ? [...prev, ...data.entries] : data.entries)
+      setCursor(data.nextCursor)
+      setHasMore(!!data.hasMore)
+    } catch {
+      setError("Failed to load entries")
+    } finally {
+      setLoading(false); setLoadingMore(false)
+    }
+  }, [pollId])
+
+  useEffect(() => { load(null, false) }, [load])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader className="w-6 h-6 animate-spin text-[#6b2fa5]" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="p-5 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+        <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-semibold text-red-800">{error}</p>
+          <button onClick={() => load(null, false)} className="text-xs text-red-600 underline mt-1">Try again</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="text-center py-16 bg-white/50 rounded-2xl border-2 border-dashed border-gray-200">
+        <Receipt className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+        <p className="text-gray-400 text-sm font-medium">No vote entries yet</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+          <Receipt className="w-4 h-4 text-[#6b2fa5]" /> Vote Entries
+        </h3>
+        <button onClick={() => load(null, false)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
+          <RefreshCw className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="divide-y divide-gray-100">
+        {entries.map((e) => (
+          <div key={e.reference} className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-[#6b2fa5]/10 flex items-center justify-center flex-shrink-0 text-xs font-bold text-[#6b2fa5]">
+              {(e.payerName || "G").slice(0, 1).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-gray-900 truncate">{e.payerName || "Guest voter"}</p>
+                {e.isGuest && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">Guest</span>}
+              </div>
+              <p className="text-xs text-gray-400 truncate">
+                Voted for <span className="text-gray-600 font-medium">{e.contestantName}</span>
+                {pollType === "group" && e.categoryId ? " · in a category" : ""} · {fmtDate(e.date)}
+              </p>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-sm font-bold text-gray-900">{e.voteCount.toLocaleString()} vote{e.voteCount !== 1 ? "s" : ""}</p>
+              <p className="text-xs text-gray-400">₦{e.totalAmount.toLocaleString()}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {hasMore && (
+        <div className="p-4 border-t border-gray-100">
+          <button
+            onClick={() => load(cursor, true)}
+            disabled={loadingMore}
+            className="w-full py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {loadingMore ? <><Loader className="w-4 h-4 animate-spin" /> Loading…</> : "Load more"}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function PollManagePage() {
+  const router = useRouter()
+  const params = useParams()
+  const pollId = params.pollId as string
+
+  const [poll,    setPoll]    = useState<Poll | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<"overview" | "entries">("overview")
+  const [copied,        setCopied]        = useState(false)
+  const [showEventMenu, setShowEventMenu] = useState(false)
+
+  const handleShare = async () => {
+    const url = `https://spotix.com.ng/polls/${encodeURIComponent(poll?.pollName ?? "")}`
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: poll?.pollName, text: `Vote on: ${poll?.pollName}`, url })
+      } else {
+        await navigator.clipboard.writeText(url)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }
+    } catch {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  // ── Auth + data load ───────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const init = async () => {
+      let token = getAccessToken()
+      if (!token) {
+        const refreshed = await tryRefreshTokens()
+        if (!refreshed) { router.push("/login"); return }
+        token = getAccessToken()
+      }
+      if (!token) { router.push("/login"); return }
+
+      const res = await authFetch("/api/polls/list")
+      if (res.ok) {
+        const data = await res.json()
+        const found = (data.polls ?? []).find((p: Poll) => p.id === pollId)
+        if (!found) { router.push("/polls"); return }
+        setPoll(found)
+      }
+      setLoading(false)
+    }
+    init()
+  }, [pollId, router])
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (loading || !poll) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Loader className="w-7 h-7 animate-spin text-[#6b2fa5]" />
+      </div>
+    )
+  }
+
+  const status = getPollStatus(poll)
+  const { cls: statusCls, icon: StatusIcon, label: statusLabel } = STATUS_PILL[status]
+  const isGroup = poll.pollType === "group"
+
+  // Total votes across the whole poll — for group polls, sum every leaf category.
+  function sumCategoryVotes(cats: CategoryNode[]): number {
+    return cats.reduce((sum, cat) => {
+      if ((cat.subcategories ?? []).length > 0) return sum + sumCategoryVotes(cat.subcategories)
+      return sum + (cat.contestants ?? []).reduce((s, c) => s + (c.votes ?? 0), 0)
+    }, 0)
+  }
+  function countContestants(cats: CategoryNode[]): number {
+    return cats.reduce((sum, cat) => {
+      if ((cat.subcategories ?? []).length > 0) return sum + countContestants(cat.subcategories)
+      return sum + (cat.contestants ?? []).length
+    }, 0)
+  }
+
+  const totalVotes = isGroup ? (poll.pollCount ?? sumCategoryVotes(poll.categories ?? [])) : (poll.pollCount ?? 0)
+  const contestantCount = isGroup ? countContestants(poll.categories ?? []) : (poll.contestants?.length ?? 0)
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-3xl mx-auto px-4 py-8">
+
+        {/* Back */}
+        <Link
+          href="/polls"
+          className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-6 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to Polls
+        </Link>
+
+        {/* Poll header card */}
+        <div className="bg-white rounded-2xl border border-gray-200 mb-6">
+          <div className="h-44 bg-gray-100">
+            {poll.pollImage && (
+              <img src={poll.pollImage} alt={poll.pollName} className="w-full h-full object-cover" />
+            )}
+          </div>
+          <div className="p-5">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <h1 className="text-xl font-bold text-gray-900">{poll.pollName}</h1>
+              <span className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${statusCls}`}>
+                <StatusIcon className="w-3 h-3" /> {statusLabel}
+              </span>
+            </div>
+            <p className="text-sm text-gray-500 mb-3">{poll.pollDescription}</p>
+
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              {isGroup && (
+                <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold flex items-center gap-1.5">
+                  <LayoutGrid className="w-3 h-3" /> Group Poll
+                </span>
+              )}
+              <span className={`px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 ${poll.statsVisible ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>
+                {poll.statsVisible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                {poll.statsVisible ? "Stats visible to voters" : "Stats hidden from voters"}
+              </span>
+            </div>
+
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="p-3 bg-gray-50 rounded-xl text-center">
+                <p className="text-lg font-bold text-gray-900">{totalVotes.toLocaleString()}</p>
+                <p className="text-xs text-gray-400">Total Votes</p>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl text-center">
+                <p className="text-lg font-bold text-gray-900">{contestantCount}</p>
+                <p className="text-xs text-gray-400">Contestants</p>
+              </div>
+              <div className="p-3 bg-[#6b2fa5]/5 rounded-xl text-center">
+                <p className="text-lg font-bold text-[#6b2fa5]">₦{(poll.pollAmount ?? 0).toLocaleString()}</p>
+                <p className="text-xs text-gray-400">Revenue</p>
+              </div>
+            </div>
+
+            {/* Linked event row */}
+            {poll.linkedEventId && (
+              <div className="relative mt-4 mb-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Linked Event</p>
+                <button
+                  onClick={() => setShowEventMenu((v) => !v)}
+                  className="w-full flex items-center gap-2 px-4 py-3 bg-[#6b2fa5]/5 border border-[#6b2fa5]/20 rounded-xl text-sm text-[#6b2fa5] font-medium hover:bg-[#6b2fa5]/10 transition-colors"
+                >
+                  <Link2 className="w-4 h-4 flex-shrink-0" />
+                  <span className="truncate flex-1 text-left">{poll.linkedEventName}</span>
+                </button>
+                {showEventMenu && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-[200] overflow-hidden">
+                    <Link
+                      href={`/event-info/${poll.linkedEventId}`}
+                      className="flex items-center gap-2 px-4 py-3.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                      onClick={() => setShowEventMenu(false)}
+                    >
+                      <ExternalLink className="w-4 h-4 text-slate-400" />
+                      Visit event info
+                    </Link>
+                    <Link
+                      href={`/polls/${poll.id}/settings`}
+                      className="flex items-center gap-2 px-4 py-3.5 text-sm text-red-600 hover:bg-red-50 transition-colors border-t border-slate-100"
+                      onClick={() => setShowEventMenu(false)}
+                    >
+                      <Link2Off className="w-4 h-4" />
+                      Unlink event
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2 flex-wrap">
+              <Link
+                href={`/polls/${pollId}/edit`}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-200 transition-colors min-w-[100px]"
+              >
+                <Pencil className="w-4 h-4" /> Edit Poll
+              </Link>
+              <Link
+                href={`/polls/${pollId}/settings`}
+                className="flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-100 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-200 transition-colors"
+                title="Poll Settings"
+              >
+                <Settings2 className="w-4 h-4" />
+              </Link>
+              <button
+                onClick={handleShare}
+                className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors ${
+                  copied
+                    ? "bg-green-100 text-green-700"
+                    : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                }`}
+                title="Share poll link"
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                {copied ? "Copied!" : "Share"}
+              </button>
+              <Link
+                href={`/polls/${pollId}/payout`}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#6b2fa5] text-white rounded-xl text-sm font-semibold hover:bg-[#5a1f8a] transition-colors min-w-[100px]"
+              >
+                <Banknote className="w-4 h-4" /> Payout
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex items-center gap-2 mb-4 bg-white border border-gray-200 rounded-xl p-1.5 w-fit">
+          {([
+            { key: "overview", label: "Overview", icon: LayoutGrid },
+            { key: "entries",  label: "Entries",  icon: Receipt },
+          ] as const).map((tab) => {
+            const Icon = tab.icon
+            const active = activeTab === tab.key
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors
+                  ${active ? "bg-[#6b2fa5] text-white" : "text-gray-500 hover:bg-gray-50"}`}
+              >
+                <Icon className="w-3.5 h-3.5" /> {tab.label}
+              </button>
+            )
+          })}
+        </div>
+
+        {activeTab === "overview" && (
+          <>
+            {/* Schedule */}
+            <div className="bg-white rounded-2xl border border-gray-200 p-5 mb-4">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[#6b2fa5]" /> Schedule
+              </h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-gray-400 mb-0.5">Starts</p>
+                  <p className="font-medium text-gray-900">{poll.pollStartDate} · {poll.pollStartTime}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-0.5">Ends</p>
+                  <p className="font-medium text-gray-900">{poll.pollEndDate} · {poll.pollEndTime}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Standings — single poll: flat list. Group poll: category tree. */}
+            {isGroup ? (
+              <div className="space-y-3">
+                {(poll.categories ?? []).length === 0 ? (
+                  <div className="text-center py-16 bg-white/50 rounded-2xl border-2 border-dashed border-gray-200">
+                    <p className="text-gray-400 text-sm font-medium">No categories added yet</p>
+                  </div>
+                ) : (
+                  poll.categories.map((cat) => (
+                    <CategoryStandingsPanel key={cat.categoryId} category={cat} depth={0} status={status} />
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-200 p-5">
+                <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#6b2fa5]" /> Contestant Standings
+                </h3>
+                <StandingsList contestants={poll.contestants ?? []} status={status} />
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === "entries" && (
+          <EntriesTab pollId={pollId} pollType={poll.pollType} />
+        )}
+
+      </div>
+    </div>
+  )
+}

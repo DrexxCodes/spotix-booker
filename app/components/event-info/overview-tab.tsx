@@ -1,5 +1,5 @@
 "use client"
-import { Copy, Check, TrendingUp, Wallet, Users, DollarSign } from "lucide-react"
+import { Copy, Check, TrendingUp, Wallet, Users, DollarSign, Vote, Link2, ExternalLink } from "lucide-react"
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { MaskedAmount } from "@/components/ui/masked-amount"
 
@@ -318,6 +318,32 @@ export default function OverviewTab({
                 <p className="text-slate-500 text-center">No ticket type data available</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* Linked Poll section */}
+      {eventData.votingId && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">Linked Poll</h3>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#6b2fa5]/10 flex items-center justify-center flex-shrink-0">
+                <Vote className="w-5 h-5 text-[#6b2fa5]" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">{eventData.votingPollName || "Linked Poll"}</p>
+                <p className="text-xs text-slate-400 font-mono">{eventData.votingId}</p>
+              </div>
+            </div>
+            <a
+              href={`https://spotix.com.ng/polls/${encodeURIComponent(eventData.votingPollName || eventData.votingId)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-2 bg-[#6b2fa5]/10 text-[#6b2fa5] hover:bg-[#6b2fa5]/20 rounded-xl text-xs font-semibold transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              View Poll
+            </a>
           </div>
         </div>
       )}

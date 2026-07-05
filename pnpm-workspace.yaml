@@ -1,4 +1,5 @@
 allowBuilds:
   '@firebase/util': true
+  msgpackr-extract: true
   protobufjs: true
   sharp: true

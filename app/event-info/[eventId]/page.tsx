@@ -50,6 +50,8 @@ interface EventData {
   availableRevenue?: number
   totalPaidOut?: number
   status?: string
+  votingId?:       string | null
+  votingPollName?: string | null
 }
 
 interface AttendeeData {
