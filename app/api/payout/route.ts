@@ -34,6 +34,55 @@ async function resolveOwnedEvent(eventId: string, userId: string) {
   return { snap, ref }
 }
 
+// ── Role-aware access for initiating payouts (spec §4 "Role Permissions") ──────
+//   Event Creator                → own payout methods
+//   Admin collaborator           → own payout methods
+//   Accountant / custom role     → Creator's payout methods only (never their own)
+//   (custom role must carry the "payout" permission to initiate at all)
+type PayoutInitiator = {
+  snap: FirebaseFirestore.DocumentSnapshot
+  ref: FirebaseFirestore.DocumentReference
+  /** Whose payoutMethods collection to draw from */
+  methodsOwnerId: string
+}
+
+async function resolvePayoutInitiator(eventId: string, userId: string): Promise<PayoutInitiator | NextResponse> {
+  const ref = adminDb.collection("events").doc(eventId)
+  const snap = await ref.get()
+  if (!snap.exists) return fail("Event not found", 404)
+
+  const organizerId = snap.data()!.organizerId as string
+  if (organizerId === userId) {
+    return { snap, ref, methodsOwnerId: userId }
+  }
+
+  const collabSnap = await adminDb
+    .collection("collaborations")
+    .where("eventId", "==", eventId)
+    .where("collaboratorId", "==", userId)
+    .where("isActive", "==", true)
+    .get()
+
+  if (collabSnap.empty) return fail("Forbidden: you do not have payout access on this event", 403)
+
+  const collab = collabSnap.docs[0].data()
+
+  if (collab.role === "admin") {
+    return { snap, ref, methodsOwnerId: userId }
+  }
+
+  if (collab.role === "accountant") {
+    return { snap, ref, methodsOwnerId: organizerId }
+  }
+
+  // Custom role — requires explicit "payout" permission, pays out to Creator only.
+  if (Array.isArray(collab.permissions) && collab.permissions.includes("payout")) {
+    return { snap, ref, methodsOwnerId: organizerId }
+  }
+
+  return fail("Forbidden: your role does not have payout permissions on this event", 403)
+}
+
 // ─── GET ──────────────────────────────────────────────────────────────────────
 // ?eventId=xxx&action=list   → list daily transaction records
 // ?eventId=xxx&action=status → list payouts matched per transaction date
@@ -125,10 +174,10 @@ export async function POST(req: NextRequest) {
   if (typeof amount !== "number" || amount <= 0)
     return fail("amount must be a positive number", 400)
 
-  // ── 1. Ownership ───────────────────────────────────────────────────────────
-  const owned = await resolveOwnedEvent(eventId, userId)
-  if (owned instanceof NextResponse) return owned
-  const { snap: eventSnap, ref: eventRef } = owned
+  // ── 1. Role-aware access (spec §4 Role Permissions) ─────────────────────────
+  const initiator = await resolvePayoutInitiator(eventId, userId)
+  if (initiator instanceof NextResponse) return initiator
+  const { snap: eventSnap, ref: eventRef, methodsOwnerId } = initiator
 
   // ── 2. Flagged event check ─────────────────────────────────────────────────
   if (eventSnap.data()!.flagged === true) {
@@ -223,10 +272,12 @@ if (txnDayOfWeek === todayDayOfWeek) {
   let methodDoc: FirebaseFirestore.DocumentSnapshot | null = null
 
   if (requestedMethodId?.trim()) {
-    // User explicitly selected a method — verify it belongs to them
+    // User explicitly selected a method — verify it belongs to methodsOwnerId
+    // (their own methods for Creator/Admin, the Creator's methods for
+    // Accountant/custom roles, per spec §4 Role Permissions).
     const specificSnap = await adminDb
       .collection("payoutMethods")
-      .doc(userId)
+      .doc(methodsOwnerId)
       .collection("methods")
       .doc(requestedMethodId.trim())
       .get()
@@ -239,7 +290,7 @@ if (txnDayOfWeek === todayDayOfWeek) {
     // Fall back to primary method
     const primarySnap = await adminDb
       .collection("payoutMethods")
-      .doc(userId)
+      .doc(methodsOwnerId)
       .collection("methods")
       .where("primary", "==", true)
       .limit(1)
@@ -288,28 +339,57 @@ if (txnDayOfWeek === todayDayOfWeek) {
     // Non-critical — proceed without eventName
   }
 
-  try {
-    const payoutRef = await adminDb.collection("payouts").add({
-  eventId,
-  userId,
-  date,
-  amount,
-  eventName,
-  methodId,                              
-  bankName: primaryMethod.bankName ?? "",
-  bankCode: primaryMethod.bankCode ?? "",
-  accountNumber: primaryMethod.accountNumber ?? "",
-  accountName: primaryMethod.accountName ?? "",
-  recipientCode: primaryMethod.recipientCode ?? null, 
-  status: "pending",
-  createdAt: FieldValue.serverTimestamp(),
-  pendingAt: FieldValue.serverTimestamp(),
-})
+  // ── 10.5. The Vault — multi-signature hold ──────────────────────────────────
+  // See app/api/payout/vault/route.ts. If enabled, the request is created as a
+  // held payout that only clears once every assigned participant submits their
+  // Vault Key (PATCH /api/payout/vault).
+  const vaultSnap = await adminDb.collection("vaults").doc(eventId).get()
+  const vaultEnabled = vaultSnap.exists && vaultSnap.data()!.enabled === true
+  const vaultParticipants: string[] = vaultEnabled
+    ? (vaultSnap.data()!.participants ?? []).map((p: any) => p.uid)
+    : []
 
+  if (vaultEnabled && vaultParticipants.length === 0) {
+    return fail("The Vault is enabled but has no participants assigned yet. Ask the Event Creator to add at least one Admin.", 409)
+  }
+
+  try {
+    const basePayout = {
+      eventId,
+      userId,
+      date,
+      amount,
+      eventName,
+      methodId,
+      bankName: primaryMethod.bankName ?? "",
+      bankCode: primaryMethod.bankCode ?? "",
+      accountNumber: primaryMethod.accountNumber ?? "",
+      accountName: primaryMethod.accountName ?? "",
+      recipientCode: primaryMethod.recipientCode ?? null,
+      createdAt: FieldValue.serverTimestamp(),
+    }
+
+    const payoutRef = await adminDb.collection("payouts").add(
+      vaultEnabled
+        ? {
+            ...basePayout,
+            status: "vault_pending",
+            vaultParticipants,
+            vaultSubmissions: {},
+          }
+        : {
+            ...basePayout,
+            status: "pending",
+            pendingAt: FieldValue.serverTimestamp(),
+          }
+    )
 
     return ok({
-      message: "Payout request submitted successfully",
+      message: vaultEnabled
+        ? `Payout request submitted and is awaiting sign-off from ${vaultParticipants.length} Vault participant(s).`
+        : "Payout request submitted successfully",
       payoutId: payoutRef.id,
+      vaultLocked: vaultEnabled,
     })
   } catch (err: any) {
     console.error("[POST /api/payout] write error:", err)

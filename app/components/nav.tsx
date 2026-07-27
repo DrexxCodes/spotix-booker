@@ -13,6 +13,7 @@ import {
   ShoppingBag,
   BadgeCheck,
   Vote,
+  KeyRound,
   LogIn,
   LogOut,
   ChevronRight,
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { href: "/reports",      label: "Reports",      icon: BarChart2       },
   { href: "/listings",     label: "My Store",     icon: ShoppingBag     },
   { href: "/verification", label: "Get Verified", icon: BadgeCheck      },
+  { href: "/sdk/key/manage", label: "API Keys",   icon: KeyRound        },
 ]
 
 export function Nav() {

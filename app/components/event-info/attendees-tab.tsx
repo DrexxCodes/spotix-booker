@@ -6,6 +6,7 @@ import {
   Search, Filter, Download, X, Ticket, Clock, Hash,
 } from "lucide-react"
 import RegistryDialog from "./helper/registry-dialog"
+import { dicebearAvatarUrl } from "@/lib/dicebear"
 
 interface AttendeeData {
   id: string
@@ -45,12 +46,6 @@ function AttendeeDialog({
   )
 
   const checkedInCount = emailTickets.filter((a) => a.verified).length
-  const initials = attendee.fullName
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
 
   return (
     <div
@@ -69,8 +64,13 @@ function AttendeeDialog({
             <X size={18} />
           </button>
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-xl flex-shrink-0">
-              {initials}
+            <div className="w-14 h-14 rounded-full bg-white/20 overflow-hidden flex-shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={dicebearAvatarUrl(attendee.email)}
+                alt={attendee.fullName}
+                className="w-full h-full object-cover"
+              />
             </div>
             <div className="min-w-0">
               <h3 className="text-lg font-bold truncate">{attendee.fullName}</h3>
@@ -319,8 +319,13 @@ export default function AttendeesTab({
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className="relative">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#6b2fa5] to-[#8b4fc5] flex items-center justify-center text-white font-semibold text-sm shadow-md">
-                              {attendee.fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                            <div className="w-10 h-10 rounded-full bg-[#6b2fa5]/10 overflow-hidden shadow-md">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={dicebearAvatarUrl(attendee.email)}
+                                alt={attendee.fullName}
+                                className="w-full h-full object-cover"
+                              />
                             </div>
                             {emailCount > 1 && (
                               <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-400 text-white text-[9px] font-bold flex items-center justify-center border border-white">

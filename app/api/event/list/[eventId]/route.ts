@@ -222,8 +222,14 @@ export async function GET(
     totalPaidOut,
     status: ev.status ?? "active",
     enabledCollaboration: ev.enabledCollaboration ?? false,
+    allowAgents: ev.allowAgents ?? false,
+    agentIncentive: ev.agentIncentive ?? null,
     votingId:       ev.votingId       ?? null,
     votingPollName: ev.votingPollName ?? null,
+    allowAPIAccess: ev.allowAPIAccess ?? false,
+    widgetLength: ev.widgetLength ?? 320,
+    widgetHeight: ev.widgetHeight ?? 420,
+    widgetColour: ev.widgetColour ?? "#6b2fa5",
   }
 
   // ── Chart data ─────────────────────────────────────────────────────────────
@@ -366,6 +372,118 @@ export async function PATCH(
   }
 
   // ── action: toggleDiscount ──���──────────────────────────────────────���──────
+  // -- action: apiAccess ---------------------------------------------------
+  // Toggles allowAPIAccess and sets widget display options for this event.
+  // Consumed by app/components/event-info/apiAccess.tsx. Location and event
+  // dates remain read-only regardless of this setting -- this only gates
+  // /v1/event, /v1/event/stats, /v1/widget, /v1/lookup in spotix-api.
+  if (action === "apiAccess") {
+    const { allowAPIAccess, widgetLength, widgetHeight, widgetColour } = body
+
+    const update: Record<string, any> = { updatedAt: FieldValue.serverTimestamp() }
+
+    if (allowAPIAccess !== undefined) update.allowAPIAccess = Boolean(allowAPIAccess)
+
+    if (widgetLength !== undefined) {
+      const n = Number(widgetLength)
+      if (!Number.isFinite(n) || n < 120 || n > 800) return fail("widgetLength must be between 120 and 800", 400)
+      update.widgetLength = n
+    }
+    if (widgetHeight !== undefined) {
+      const n = Number(widgetHeight)
+      if (!Number.isFinite(n) || n < 120 || n > 800) return fail("widgetHeight must be between 120 and 800", 400)
+      update.widgetHeight = n
+    }
+    if (widgetColour !== undefined) {
+      if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(widgetColour)) return fail("widgetColour must be a valid hex colour", 400)
+      update.widgetColour = widgetColour
+    }
+
+    try {
+      await eventRef.update(update)
+      return ok({ message: "API & widget settings updated" })
+    } catch (e: any) {
+      console.error("[PATCH apiAccess] failed", e)
+      return fail("Failed to update API access settings", 500)
+    }
+  }
+
+  // -- action: toggleAgentActivity --------------------------------------------
+  // Instruction 5: bookers toggle this live from the event-info Teams tab,
+  // independent of the create-event-time enabledCollaboration/allowAgents
+  // pairing. Events with agent activity disabled block all agent-side
+  // actions -- the agent app re-checks `allowAgents` on the event doc
+  // before letting an agent affiliate or sell.
+  //
+  // Incentives are event-wide, not per-agent (every agent selling for this
+  // event earns the same rate) — so turning agent activity ON requires one
+  // to already be set. Body: { agentIncentive: { type, value } } is required
+  // only on the ON transition; turning OFF doesn't touch it, so re-enabling
+  // later remembers the last value as a convenience.
+  if (action === "toggleAgentActivity") {
+    const currentValue = owned.snap.data()!.allowAgents === true
+    const turningOn = !currentValue
+
+    if (turningOn) {
+      const { agentIncentive } = body
+      const invalid =
+        !agentIncentive ||
+        (agentIncentive.type !== "percentage" && agentIncentive.type !== "flat") ||
+        !Number.isFinite(Number(agentIncentive.value)) ||
+        Number(agentIncentive.value) < 0 ||
+        (agentIncentive.type === "percentage" && Number(agentIncentive.value) > 100)
+      if (invalid) {
+        return fail("Set a valid incentive before enabling agent activity — agents can't apply without one", 400)
+      }
+      try {
+        await eventRef.update({
+          allowAgents: true,
+          agentIncentive: { type: agentIncentive.type, value: Number(agentIncentive.value) },
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+        return ok({
+          message: "Agent activity enabled",
+          allowAgents: true,
+          agentIncentive: { type: agentIncentive.type, value: Number(agentIncentive.value) },
+        })
+      } catch (e: any) {
+        console.error("[PATCH toggleAgentActivity] failed", e)
+        return fail("Failed to update agent activity", 500)
+      }
+    }
+
+    try {
+      await eventRef.update({ allowAgents: false, updatedAt: FieldValue.serverTimestamp() })
+      return ok({ message: "Agent activity disabled", allowAgents: false })
+    } catch (e: any) {
+      console.error("[PATCH toggleAgentActivity] failed", e)
+      return fail("Failed to update agent activity", 500)
+    }
+  }
+
+  // -- action: setAgentIncentive ------------------------------------------------
+  // Lets the booker adjust the event-wide incentive rate without re-toggling
+  // agent activity off and back on. Applies to every agent on this event.
+  if (action === "setAgentIncentive") {
+    const { agentIncentive } = body
+    const invalid =
+      !agentIncentive ||
+      (agentIncentive.type !== "percentage" && agentIncentive.type !== "flat") ||
+      !Number.isFinite(Number(agentIncentive.value)) ||
+      Number(agentIncentive.value) < 0 ||
+      (agentIncentive.type === "percentage" && Number(agentIncentive.value) > 100)
+    if (invalid) return fail("Provide a valid incentive: { type: 'percentage' | 'flat', value }", 400)
+
+    try {
+      const value = { type: agentIncentive.type, value: Number(agentIncentive.value) }
+      await eventRef.update({ agentIncentive: value, updatedAt: FieldValue.serverTimestamp() })
+      return ok({ message: "Incentive updated", agentIncentive: value })
+    } catch (e: any) {
+      console.error("[PATCH setAgentIncentive] failed", e)
+      return fail("Failed to update incentive", 500)
+    }
+  }
+
   if (action === "toggleDiscount") {
     const { discountId } = body
     if (!discountId) return fail("discountId is required", 400)

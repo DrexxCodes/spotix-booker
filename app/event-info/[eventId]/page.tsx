@@ -1,12 +1,12 @@
 // app/event-info/[eventId]/page.tsx
 "use client"
 
-import { useMemo, use, useState, useEffect } from "react"
+import { useMemo, use, useState, useEffect, useRef } from "react"
 import type React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { tryRefreshTokens, getAccessToken, authFetch } from "@/lib/auth-client"
-import { ArrowLeft, RefreshCw, LogOut, Shield, UserCheck, Calculator, AlertTriangle, Settings } from "lucide-react"
+import { ArrowLeft, RefreshCw, LogOut, Shield, UserCheck, Calculator, AlertTriangle, Settings, ChevronLeft, ChevronRight, Code2 } from "lucide-react"
 import { eventCacheManager } from "@/lib/cache-manger"
 import OverviewTab from "@/components/event-info/overview-tab"
 import AttendeesTab from "@/components/event-info/attendees-tab"
@@ -20,9 +20,12 @@ import FormTab from "@/components/event-info/form-tab"
 import ResponsesTab from "@/components/event-info/responses-tab"
 import WeatherTab from "@/components/event-info/weather-tab"
 import TransferTab from "@/components/event-info/transfer-tab"
+import AgentActivityToggle from "@/components/event-info/agent-activity-toggle"
+import AgentRequestsTab from "@/components/event-info/agent-requests-tab"
+import ApiAccessTab from "@/components/event-info/apiAccess"
 import { Suspense } from "react"
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// Types 
 interface EventData {
   id: string
   eventName: string
@@ -32,6 +35,8 @@ interface EventData {
   eventDescription: string
   isFree: boolean
   ticketPrices: { policy: string; price: number }[]
+  allowAgents?: boolean
+  agentIncentive?: { type: "percentage" | "flat"; value: number } | null
   createdBy: string
   eventVenue: string
   totalCapacity: number
@@ -52,6 +57,10 @@ interface EventData {
   status?: string
   votingId?:       string | null
   votingPollName?: string | null
+  allowAPIAccess?: boolean
+  widgetLength?: number
+  widgetHeight?: number
+  widgetColour?: string
 }
 
 interface AttendeeData {
@@ -77,7 +86,7 @@ interface CollabInfo {
 
 // ── Built-in role → allowed tab IDs ───────────────────────────────────────────
 const BUILT_IN_ROLE_TABS: Record<string, TabId[]> = {
-  admin:      ["overview", "eventlink", "payouts", "attendees", "discounts", "merch", "referrals", "form", "responses", "weather", "transfer"],
+  admin:      ["overview", "eventlink", "payouts", "attendees", "discounts", "merch", "referrals", "form", "responses", "weather", "transfer", "apiAccess"],
   checkin:    ["attendees", "eventlink", "weather", "form", "responses"],
   accountant: ["overview", "eventlink", "payouts", "discounts", "merch"],
 }
@@ -95,13 +104,14 @@ const PERMISSION_TO_TAB: Record<string, TabId> = {
   weather:   "weather",
   share:     "eventlink",
   transfer:  "transfer",
+  apiAccess: "apiAccess",
 }
 
 // ── All tabs ───────────────────────────────────────────────────────────────────
 const ALL_TABS = [
   "overview", "eventlink", "payouts", "attendees",
   "discounts", "merch", "referrals", "form", "responses",
-  "weather", "transfer", "edit", "teams",
+  "weather", "transfer", "edit", "teams", "agentRequests", "apiAccess",
 ] as const
 
 type TabId = typeof ALL_TABS[number]
@@ -111,7 +121,8 @@ const TAB_LABELS: Record<TabId, string> = {
   discounts: "Discounts",  merch:     "Merch",       referrals: "Referrals",
   form:      "Form",       payouts:   "Payouts",     responses: "Responses",
   weather:   "Weather",    transfer:  "Transfer Event", edit:   "Edit Event",
-  teams:     "Teams",
+  teams:     "Teams",      agentRequests: "Agent Requests",
+  apiAccess: "API Access",
 }
 
 // ── Resolve which tabs a user can see ─────────────────────────────────────────
@@ -243,6 +254,13 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     if (!visibleTabs.includes(tab)) return
     setActiveTab(tab)
     setLoadedTabs((prev) => new Set([...Array.from(prev), tab]))
+  }
+
+  const tabStripRef = useRef<HTMLDivElement>(null)
+  const scrollTabs = (direction: "left" | "right") => {
+    const el = tabStripRef.current
+    if (!el) return
+    el.scrollBy({ left: direction === "left" ? -160 : 160, behavior: "smooth" })
   }
 
   function populateEventData(data: any) {
@@ -538,19 +556,21 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   // ── Tab icons ──────────────────────────────────────────────────────────────
   // (imported inline to avoid touching the import block above)
   const TAB_ICONS: Record<TabId, React.ReactNode> = {
-    overview:  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>,
-    eventlink: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
-    payouts:   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>,
-    attendees: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-    discounts: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5"/><path d="m15 10 5 5-5 5"/><line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="19" y2="19"/></svg>,
-    merch:     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" x2="21" y1="6" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>,
-    referrals: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" x2="21" y1="20" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" x2="21" y1="15" y2="21"/></svg>,
-    form:      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
-    responses: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
-    weather:   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>,
-    transfer:  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>,
-    edit:      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
-    teams:     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    overview: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></svg>,
+    eventlink: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>,
+    payouts: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" /></svg>,
+    attendees: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>,
+    discounts: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5" /><path d="m15 10 5 5-5 5" /><line x1="4" x2="20" y1="9" y2="9" /><line x1="4" x2="20" y1="19" y2="19" /></svg>,
+    merch: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" x2="21" y1="6" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg>,
+    referrals: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8" /><line x1="4" x2="21" y1="20" y2="3" /><polyline points="21 16 21 21 16 21" /><line x1="15" x2="21" y1="15" y2="21" /></svg>,
+    form: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" x2="8" y1="13" y2="13" /><line x1="16" x2="8" y1="17" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>,
+    responses: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>,
+    weather: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg>,
+    transfer: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4" /><path d="M20 7H4" /><path d="m8 21-4-4 4-4" /><path d="M4 17h16" /></svg>,
+    edit: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>,
+    teams: <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>,
+    agentRequests: undefined,
+    apiAccess: <Code2 size={14} />,
   }
 
   const eventDate = new Date(eventData.eventDate)
@@ -686,27 +706,50 @@ function EventInfoInner({ eventId }: { eventId: string }) {
       {/* ── Sticky tab strip — sticks right under the nav (top-14) ─────── */}
       <div className="sticky top-14 z-20 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex overflow-x-auto gap-0 -mb-px scrollbar-none [&::-webkit-scrollbar]:hidden">
-            {visibleTabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => handleTabSwitch(tab)}
-                className={`
-                  inline-flex items-center gap-1.5 px-3.5 py-2.5
-                  text-xs font-semibold whitespace-nowrap border-b-2
-                  transition-all duration-150 flex-shrink-0
-                  ${activeTab === tab
-                    ? "border-[#6b2fa5] text-[#6b2fa5] bg-[#6b2fa5]/[0.04]"
-                    : "border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50"
-                  }
-                `}
-              >
-                <span className={activeTab === tab ? "text-[#6b2fa5]" : "text-slate-400"}>
-                  {TAB_ICONS[tab]}
-                </span>
-                {TAB_LABELS[tab]}
-              </button>
-            ))}
+          <div className="relative flex items-center">
+            <button
+              type="button"
+              onClick={() => scrollTabs("left")}
+              aria-label="Scroll tabs left"
+              className="shrink-0 z-10 flex items-center justify-center w-7 h-7 -ml-1 mr-1 rounded-full bg-white border border-slate-200 text-slate-500 shadow-sm hover:text-[#6b2fa5] hover:border-[#6b2fa5]/40 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <div
+              ref={tabStripRef}
+              className="flex overflow-x-auto gap-0 -mb-px scrollbar-none [&::-webkit-scrollbar]:hidden scroll-smooth"
+            >
+              {visibleTabs.map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => handleTabSwitch(tab)}
+                  className={`
+                    inline-flex items-center gap-1.5 px-3.5 py-2.5
+                    text-xs font-semibold whitespace-nowrap border-b-2
+                    transition-all duration-150 flex-shrink-0
+                    ${activeTab === tab
+                      ? "border-[#6b2fa5] text-[#6b2fa5] bg-[#6b2fa5]/[0.04]"
+                      : "border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                    }
+                  `}
+                >
+                  <span className={activeTab === tab ? "text-[#6b2fa5]" : "text-slate-400"}>
+                    {TAB_ICONS[tab]}
+                  </span>
+                  {TAB_LABELS[tab]}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => scrollTabs("right")}
+              aria-label="Scroll tabs right"
+              className="shrink-0 z-10 flex items-center justify-center w-7 h-7 -mr-1 ml-1 rounded-full bg-white border border-slate-200 text-slate-500 shadow-sm hover:text-[#6b2fa5] hover:border-[#6b2fa5]/40 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -781,20 +824,49 @@ function EventInfoInner({ eventId }: { eventId: string }) {
             )}
 
             {activeTab === "teams" && visibleTabs.includes("teams") && (
-              <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-[#6b2fa5]/8 flex items-center justify-center">
-                  <Shield size={26} className="text-[#6b2fa5]" />
+              <div className="space-y-5">
+                <AgentActivityToggle
+                  eventId={eventId}
+                  initialValue={eventData?.allowAgents ?? false}
+                  initialIncentive={eventData?.agentIncentive ?? null}
+                />
+
+                <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+                  <div className="w-14 h-14 rounded-2xl bg-[#6b2fa5]/8 flex items-center justify-center">
+                    <Shield size={26} className="text-[#6b2fa5]" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-800 mb-1">Team Management</h3>
+                    <p className="text-sm text-slate-500 max-w-xs">Add collaborators, assign roles, and manage who can access this event.</p>
+                  </div>
+                  <Link href={`/teams?eventId=${eventId}`}>
+                    <button className="px-5 py-2.5 bg-[#6b2fa5] text-white text-sm rounded-xl font-semibold hover:bg-[#5a2589] transition-colors shadow-sm shadow-[#6b2fa5]/20">
+                      Manage Team
+                    </button>
+                  </Link>
                 </div>
-                <div>
-                  <h3 className="text-base font-semibold text-slate-800 mb-1">Team Management</h3>
-                  <p className="text-sm text-slate-500 max-w-xs">Add collaborators, assign roles, and manage who can access this event.</p>
-                </div>
-                <Link href={`/teams?eventId=${eventId}`}>
-                  <button className="px-5 py-2.5 bg-[#6b2fa5] text-white text-sm rounded-xl font-semibold hover:bg-[#5a2589] transition-colors shadow-sm shadow-[#6b2fa5]/20">
-                    Manage Team
-                  </button>
-                </Link>
               </div>
+            )}
+
+            {activeTab === "agentRequests" && visibleTabs.includes("agentRequests") && (
+              <AgentRequestsTab
+                eventId={eventId}
+                isFree={eventData?.isFree ?? false}
+                ticketPrices={eventData?.ticketPrices ?? []}
+                agentIncentive={eventData?.agentIncentive ?? null}
+              />
+            )}
+
+            {activeTab === "apiAccess" && visibleTabs.includes("apiAccess") && (
+              loadedTabs.has("apiAccess") && eventData
+                ? <ApiAccessTab
+                    eventId={eventId}
+                    allowAPIAccess={eventData.allowAPIAccess ?? false}
+                    widgetLength={eventData.widgetLength}
+                    widgetHeight={eventData.widgetHeight}
+                    widgetColour={eventData.widgetColour}
+                  />
+                : <TabSkeleton />
             )}
 
           </div>
