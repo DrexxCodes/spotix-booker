@@ -74,6 +74,38 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Authenticated: verify a bank account via the backend 
+  if (resource === "verify") {
+    const auth = await authenticate()
+    if (auth instanceof NextResponse) return auth
+
+    const accountNumber = searchParams.get("accountNumber")
+    const bankCode = searchParams.get("bankCode")
+
+    if (!accountNumber || accountNumber.length !== 10) {
+      return fail("accountNumber must be 10 digits", 400)
+    }
+    if (!bankCode) return fail("bankCode is required", 400)
+
+    try {
+      const backendRes = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/v1/verify?accountNumber=${accountNumber}&bankCode=${encodeURIComponent(
+          bankCode
+        )}`,
+        { method: "GET" }
+      )
+      const data = await backendRes.json()
+
+      if (backendRes.ok && data.status === true) {
+        return ok({ status: true, account_name: data.account_name })
+      }
+      return fail(data.message || "Failed to verify account. Please check your details.", backendRes.status || 400)
+    } catch (err: any) {
+      console.error("[GET /api/payout/method verify] error:", err)
+      return fail("Failed to verify account. Please try again.", 502)
+    }
+  }
+
   // ── Authenticated: list user's payout methods ──────────────────────────────
   const auth = await authenticate()
   if (auth instanceof NextResponse) return auth

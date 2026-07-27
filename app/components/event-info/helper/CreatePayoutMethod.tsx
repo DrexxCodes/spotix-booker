@@ -4,7 +4,6 @@
 
 import { useState, useEffect, useRef } from "react"
 import { Loader2, CheckCircle, AlertCircle, Search, Plus } from "lucide-react"
-import { auth } from "@/lib/firebase"
 
 interface Bank {
   name: string
@@ -129,17 +128,11 @@ export default function CreatePayoutMethod({ userId, onCreated, onCancel }: Crea
     setVerifyStatus("idle")
 
     try {
-      const user = auth.currentUser
-      if (!user) throw new Error("Not authenticated")
-      const idToken = await user.getIdToken()
-
-      const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL
       const res = await fetch(
-        `${BACKEND_URL}/v1/verify?accountNumber=${accountNumber}&bankCode=${encodeURIComponent(selectedBank.code)}`,
-        {
-          method: "GET",
-          headers: { Authorization: `Bearer ${idToken}` },
-        }
+        `/api/payout/method?resource=verify&accountNumber=${accountNumber}&bankCode=${encodeURIComponent(
+          selectedBank.code
+        )}`,
+        { method: "GET" }
       )
       const data = await res.json()
 
