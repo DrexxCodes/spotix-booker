@@ -110,6 +110,8 @@ function sanitizeCategoryTree(cats: any[]): any[] {
         contestantId: c.contestantId,
         name:         c.name,
         image:        c.image,
+        imageType:    c.imageType === "generated" ? "generated" : "uploaded",
+        imageSeed:    c.imageType === "generated" ? (c.imageSeed || c.contestantId) : null,
         votes:        0,
       })),
       subcategories: hasSubs ? sanitizeCategoryTree(cat.subcategories) : [],
@@ -220,6 +222,8 @@ export async function POST(req: NextRequest) {
         contestantId: c.contestantId,
         name:         c.name,
         image:        c.image,
+        imageType:    c.imageType === "generated" ? "generated" : "uploaded",
+        imageSeed:    c.imageType === "generated" ? (c.imageSeed || c.contestantId) : null,
         votes:        0,
       }))
       doc.categories  = []

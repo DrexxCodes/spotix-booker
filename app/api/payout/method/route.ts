@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── Authenticated: verify a bank account via the backend 
+  // ── Authenticated: verify a bank account via the backend bre
   if (resource === "verify") {
     const auth = await authenticate()
     if (auth instanceof NextResponse) return auth
