@@ -7,9 +7,18 @@ import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
 import {
   Loader, Plus, Vote, TrendingUp, Clock, CheckCircle,
   XCircle, BarChart2, AlertTriangle, RefreshCw, Shuffle, Settings2,
+  ListChecks, Copy,
 } from "lucide-react"
 
-interface Contestant { contestantId: string; name: string; image: string; votes: number }
+interface Contestant { contestantId: string; name: string; image: string; votes: number; imageType?: string; imageSeed?: string | null }
+
+interface Category {
+  categoryId: string
+  name: string
+  pollPrice: number
+  contestants: Contestant[]
+  subcategories: Category[]
+}
 
 interface Poll {
   id: string
@@ -24,9 +33,41 @@ interface Poll {
   pollAmount: number
   pollCount: number
   contestants: Contestant[]
+  pollType: "single" | "group"
+  categories: Category[]
+  buyerBearsBurden: boolean
+  statsVisible: boolean
   createdAt: string | null
   needsNormalization: boolean
 }
+
+function genId(prefix: string): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  let id = prefix
+  for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length))
+  return id
+}
+
+/** Regenerate ids through a category tree so the duplicate doesn't collide with the source poll's ids. */
+function regenerateCategoryTree(cats: Category[]): any[] {
+  return (cats ?? []).map((cat) => ({
+    categoryId: genId("sp-cat-"),
+    name: cat.name,
+    pollPrice: cat.pollPrice,
+    contestants: (cat.contestants ?? []).map((c) => ({
+      contestantId: genId("sp-cont-"),
+      name: c.name,
+      image: c.image,
+      imageType: c.imageType,
+      imageSeed: c.imageSeed,
+    })),
+    subcategories: regenerateCategoryTree(cat.subcategories ?? []),
+  }))
+}
+
+function pad2(n: number): string { return String(n).padStart(2, "0") }
+function toDateStr(d: Date): string { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` }
+function toTimeStr(d: Date): string { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}` }
 
 type PollStatus = "active" | "ended" | "upcoming"
 
@@ -58,6 +99,8 @@ export default function PollsPage() {
   const [filter,  setFilter]  = useState<PollStatus | "all">("all")
   // Track which polls are currently being normalized
   const [normalizing, setNormalizing] = useState<Record<string, boolean>>({})
+  // Track which polls are currently being duplicated
+  const [duplicating, setDuplicating] = useState<Record<string, boolean>>({})
 
   const fetchPolls = useCallback(async () => {
     setLoading(true)
@@ -105,6 +148,64 @@ export default function PollsPage() {
     }
   }
 
+  const handleDuplicate = async (poll: Poll) => {
+    if (duplicating[poll.id]) return
+    setDuplicating((prev) => ({ ...prev, [poll.id]: true }))
+    try {
+      // Preserve original duration where possible, otherwise default to 7 days
+      const origStart = new Date(`${poll.pollStartDate}T${poll.pollStartTime}`)
+      const origEnd   = new Date(`${poll.pollEndDate}T${poll.pollEndTime}`)
+      const durationMs = (!isNaN(origStart.getTime()) && !isNaN(origEnd.getTime()) && origEnd > origStart)
+        ? origEnd.getTime() - origStart.getTime()
+        : 7 * 24 * 60 * 60 * 1000
+
+      const newStart = new Date(Date.now() + 60 * 60 * 1000) // starts 1 hour from now
+      const newEnd   = new Date(newStart.getTime() + durationMs)
+
+      const body: Record<string, any> = {
+        pollName: `${poll.pollName} (Copy)`,
+        pollImage: poll.pollImage,
+        pollDescription: poll.pollDescription,
+        pollStartDate: toDateStr(newStart),
+        pollStartTime: toTimeStr(newStart),
+        pollEndDate: toDateStr(newEnd),
+        pollEndTime: toTimeStr(newEnd),
+        pollType: poll.pollType,
+        buyerBearsBurden: poll.buyerBearsBurden,
+        statsVisible: poll.statsVisible,
+      }
+
+      if (poll.pollType === "group") {
+        body.categories = regenerateCategoryTree(poll.categories)
+      } else {
+        body.pollPrice = poll.pollPrice
+        body.contestants = (poll.contestants ?? []).map((c) => ({
+          contestantId: genId("sp-cont-"),
+          name: c.name,
+          image: c.image,
+          imageType: c.imageType,
+          imageSeed: c.imageSeed,
+        }))
+      }
+
+      const res = await authFetch("/api/polls/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        router.push(`/polls/${data.pollId}/edit`)
+      } else {
+        alert(data.error || "Failed to duplicate poll. Please try again.")
+      }
+    } catch {
+      alert("An unexpected error occurred while duplicating this poll.")
+    } finally {
+      setDuplicating((prev) => ({ ...prev, [poll.id]: false }))
+    }
+  }
+
   const filtered = filter === "all"
     ? polls
     : polls.filter((p) => getPollStatus(p) === filter)
@@ -128,12 +229,12 @@ export default function PollsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-5xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#6b2fa5] rounded-xl flex items-center justify-center">
+            <div className="w-10 h-10 bg-[#6b2fa5] rounded-xl flex items-center justify-center flex-shrink-0">
               <Vote className="w-5 h-5 text-white" />
             </div>
             <div>
@@ -141,7 +242,13 @@ export default function PollsPage() {
               <p className="text-sm text-gray-500">Manage your voting campaigns</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              href="/polls/nominations"
+              className="flex items-center gap-2 px-3.5 py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+            >
+              <ListChecks className="w-4 h-4" /> Nominations
+            </Link>
             <button
               onClick={fetchPolls}
               className="p-2.5 border border-gray-200 bg-white rounded-xl hover:bg-gray-50 transition-colors"
@@ -204,7 +311,7 @@ export default function PollsPage() {
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtered.map((poll) => {
               const status    = getPollStatus(poll)
               const StatusIcon = STATUS_ICONS[status]

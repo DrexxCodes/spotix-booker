@@ -170,8 +170,8 @@ export default function SdkDocsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 py-10">
-        <div className="flex items-center justify-between mb-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div className="flex items-center justify-between mb-8 gap-4">
           <div>
             <Link href="/sdk/key/manage" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-[#6b2fa5] mb-3">
               <ArrowLeft size={15} /> Back to keys
@@ -180,7 +180,7 @@ export default function SdkDocsPage() {
             <p className="text-sm text-gray-500 mt-1">Base URL: <code className="bg-gray-100 px-1.5 py-0.5 rounded">api.spotix.com.ng</code></p>
           </div>
 
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <select
               value={version}
               onChange={(e) => setVersion(e.target.value)}
@@ -192,65 +192,97 @@ export default function SdkDocsPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 mb-8 shadow-sm">
-          <h2 className="font-semibold text-gray-900 mb-2">Authentication</h2>
-          <p className="text-sm text-gray-600 mb-3">
-            Every request needs an API key, sent as either header. Get one from{" "}
-            <Link href="/sdk/setup" className="text-[#6b2fa5] hover:underline">
-              API key setup
-            </Link>
-            .
-          </p>
-          <CodeBlock code={`x-api-key: spk_live_...\n\n# or\nAuthorization: Bearer spk_live_...`} />
-          <p className="text-xs text-gray-400 mt-3">
-            Rate limits: 500 requests/minute, 1,000/day per key. Try requests risk-free first in the{" "}
-            <Link href="/sdk/v1/playground" className="text-[#6b2fa5] hover:underline">
-              playground
-            </Link>{" "}
-            (Mock Mode, 20 requests/day, no real data touched).
-          </p>
-        </div>
-
-        <div className="space-y-6">
-          {ENDPOINTS.map((ep) => (
-            <div key={ep.path + ep.method} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-              <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${METHOD_COLORS[ep.method] ?? "text-gray-600 bg-gray-100"}`}>
-                  {ep.method}
-                </span>
-                <code className="text-sm font-semibold text-gray-800">{ep.path}</code>
-              </div>
-              <p className="text-sm text-gray-600 mb-3">{ep.description}</p>
-              <div className="text-xs text-gray-500 mb-3 space-y-0.5">
-                <div>
-                  <span className="font-medium text-gray-700">Required:</span> {ep.required}
-                </div>
-                {ep.optional && (
-                  <div>
-                    <span className="font-medium text-gray-700">Optional:</span> {ep.optional}
-                  </div>
-                )}
-              </div>
-              <div className="grid md:grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs font-medium text-gray-400 mb-1">Request</p>
-                  <CodeBlock code={ep.request} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-gray-400 mb-1">Response</p>
-                  <CodeBlock code={ep.response} />
-                </div>
-              </div>
+        {/* Sticky endpoint nav on large screens + wider main content column,
+            so the extra desktop width is used for real navigation instead
+            of empty margin. Collapses to a single column below lg. */}
+        <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-8 lg:items-start">
+          <nav className="hidden lg:block lg:sticky lg:top-6">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 px-1">On this page</p>
+            <a href="#authentication" className="block text-sm text-gray-600 hover:text-[#6b2fa5] py-1.5 px-1 rounded-lg hover:bg-white transition-colors">
+              Authentication
+            </a>
+            <div className="mt-1 space-y-0.5">
+              {ENDPOINTS.map((ep) => (
+                <a
+                  key={ep.path + ep.method}
+                  href={`#${ep.method}-${ep.path}`.replace(/[^a-zA-Z0-9-]/g, "-")}
+                  className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-[#6b2fa5] py-1.5 px-1 rounded-lg hover:bg-white transition-colors"
+                >
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${METHOD_COLORS[ep.method] ?? "text-gray-600 bg-gray-100"}`}>
+                    {ep.method.split(" / ")[0]}
+                  </span>
+                  <code className="truncate">{ep.path}</code>
+                </a>
+              ))}
             </div>
-          ))}
-        </div>
+          </nav>
 
-        <p className="text-xs text-gray-400 mt-8 flex items-center gap-1">
-          Want to try these live?{" "}
-          <Link href="/sdk/v1/playground" className="text-[#6b2fa5] hover:underline inline-flex items-center gap-1">
-            Open the playground <ExternalLink size={11} />
-          </Link>
-        </p>
+          <div className="min-w-0">
+            <div id="authentication" className="bg-white rounded-2xl border border-gray-200 p-5 mb-8 shadow-sm scroll-mt-6">
+              <h2 className="font-semibold text-gray-900 mb-2">Authentication</h2>
+              <p className="text-sm text-gray-600 mb-3">
+                Every request needs an API key, sent as either header. Get one from{" "}
+                <Link href="/sdk/setup" className="text-[#6b2fa5] hover:underline">
+                  API key setup
+                </Link>
+                .
+              </p>
+              <CodeBlock code={`x-api-key: spk_live_...\n\n# or\nAuthorization: Bearer spk_live_...`} />
+              <p className="text-xs text-gray-400 mt-3">
+                Rate limits: 500 requests/minute, 1,000/day per key. Try requests risk-free first in the{" "}
+                <Link href="/sdk/v1/playground" className="text-[#6b2fa5] hover:underline">
+                  playground
+                </Link>{" "}
+                (Mock Mode, 20 requests/day, no real data touched).
+              </p>
+            </div>
+
+            <div className="space-y-6">
+              {ENDPOINTS.map((ep) => (
+                <div
+                  key={ep.path + ep.method}
+                  id={`${ep.method}-${ep.path}`.replace(/[^a-zA-Z0-9-]/g, "-")}
+                  className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm scroll-mt-6"
+                >
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${METHOD_COLORS[ep.method] ?? "text-gray-600 bg-gray-100"}`}>
+                      {ep.method}
+                    </span>
+                    <code className="text-sm font-semibold text-gray-800">{ep.path}</code>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-3">{ep.description}</p>
+                  <div className="text-xs text-gray-500 mb-3 space-y-0.5">
+                    <div>
+                      <span className="font-medium text-gray-700">Required:</span> {ep.required}
+                    </div>
+                    {ep.optional && (
+                      <div>
+                        <span className="font-medium text-gray-700">Optional:</span> {ep.optional}
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-gray-400 mb-1">Request</p>
+                      <CodeBlock code={ep.request} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-gray-400 mb-1">Response</p>
+                      <CodeBlock code={ep.response} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-gray-400 mt-8 flex items-center gap-1">
+              Want to try these live?{" "}
+              <Link href="/sdk/v1/playground" className="text-[#6b2fa5] hover:underline inline-flex items-center gap-1">
+                Open the playground <ExternalLink size={11} />
+              </Link>
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   )

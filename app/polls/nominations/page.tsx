@@ -2,21 +2,26 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Loader2, Plus, Tag, ChevronRight } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Loader2, Plus, Tag, ChevronRight, Copy } from "lucide-react"
 
 interface NominationPollSummary {
   pollId: string
   pollName: string
   pollImage: string
+  pollDescription: string
   categories: { categoryId: string; name: string }[]
   status: "active" | "closed"
   createdAt: string
 }
 
 export default function NominationPollsListPage() {
+  const router = useRouter()
   const [polls, setPolls] = useState<NominationPollSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
+  const [duplicateError, setDuplicateError] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async () => {
@@ -34,6 +39,33 @@ export default function NominationPollsListPage() {
     load()
   }, [])
 
+  const handleDuplicate = async (e: React.MouseEvent, p: NominationPollSummary) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (duplicatingId) return
+    setDuplicatingId(p.pollId)
+    setDuplicateError(null)
+    try {
+      const res = await fetch("/api/polls/nominations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pollName: `${p.pollName} (Copy)`,
+          pollImage: p.pollImage,
+          pollDescription: p.pollDescription,
+          categories: p.categories.map((c) => ({ name: c.name })),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setDuplicateError(data.error || "Failed to duplicate poll"); return }
+      router.push(`/polls/nominations/${data.pollId}`)
+    } catch {
+      setDuplicateError("An unexpected error occurred while duplicating.")
+    } finally {
+      setDuplicatingId(null)
+    }
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
@@ -49,6 +81,10 @@ export default function NominationPollsListPage() {
         </Link>
       </div>
 
+      {duplicateError && (
+        <p className="text-center text-red-600 text-xs mb-4">{duplicateError}</p>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-[#6b2fa5]" /></div>
       ) : error ? (
@@ -63,24 +99,37 @@ export default function NominationPollsListPage() {
       ) : (
         <div className="space-y-3">
           {polls.map((p) => (
-            <Link
+            <div
               key={p.pollId}
-              href={`/polls/nominations/${p.pollId}`}
-              className="flex items-center gap-4 bg-white rounded-2xl border border-slate-200 p-4 hover:border-[#6b2fa5] transition-colors"
+              className="flex items-center gap-3 sm:gap-4 bg-white rounded-2xl border border-slate-200 p-4 hover:border-[#6b2fa5] transition-colors"
             >
-              <img src={p.pollImage || "/placeholder.svg"} alt="" className="w-14 h-14 rounded-xl object-cover bg-slate-100 flex-shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-slate-900 truncate">{p.pollName}</p>
-                <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
-                  <Tag className="w-3 h-3" /> {p.categories.length} categor{p.categories.length === 1 ? "y" : "ies"}
-                </p>
+              <Link href={`/polls/nominations/${p.pollId}`} className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                <img src={p.pollImage || "/placeholder.svg"} alt="" className="w-14 h-14 rounded-xl object-cover bg-slate-100 flex-shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-900 truncate">{p.pollName}</p>
+                  <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                    <Tag className="w-3 h-3 flex-shrink-0" /> {p.categories.length} categor{p.categories.length === 1 ? "y" : "ies"}
+                  </p>
+                </div>
+              </Link>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0
+                  ${p.status === "active" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
+                  {p.status === "active" ? "Active" : "Closed"}
+                </span>
+                <button
+                  onClick={(e) => handleDuplicate(e, p)}
+                  disabled={duplicatingId === p.pollId}
+                  title="Duplicate"
+                  className="p-2 rounded-lg text-slate-400 hover:text-[#6b2fa5] hover:bg-[#6b2fa5]/5 transition-colors disabled:opacity-50 flex-shrink-0"
+                >
+                  {duplicatingId === p.pollId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                </button>
+                <Link href={`/polls/nominations/${p.pollId}`} className="flex-shrink-0">
+                  <ChevronRight className="w-4 h-4 text-slate-300" />
+                </Link>
               </div>
-              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0
-                ${p.status === "active" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
-                {p.status === "active" ? "Active" : "Closed"}
-              </span>
-              <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
-            </Link>
+            </div>
           ))}
         </div>
       )}

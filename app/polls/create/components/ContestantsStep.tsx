@@ -31,7 +31,7 @@ export function ContestantsStep({ pollType, contestants, setContestants, categor
 
     return (
       <div className="space-y-4">
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
           {contestants.map((c, i) => (
             <ContestantRow key={i} contestant={c} index={i} folder="spotix/polls/contestants" onChange={(u) => update(i, u)} onRemove={() => remove(i)} removable={contestants.length > 2} />
           ))}

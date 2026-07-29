@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   Loader2, ImagePlus, Plus, X, AlertCircle, CheckCircle,
-  ChevronLeft, Tag, Users, Trash2, Save,
+  ChevronLeft, Tag, Users, Trash2, Save, Copy, Link2, Check, Pencil,
 } from "lucide-react"
 import { doUpload } from "@/polls/create/lib/factories"
 import { MAX_NOMINATION_CATEGORIES } from "@/lib/nomination-config"
@@ -32,9 +33,14 @@ interface Nominee {
 }
 
 export default function NominationDetailClient({ pollId }: { pollId: string }) {
+  const router = useRouter()
   const [poll, setPoll] = useState<NominationPoll | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  const [duplicating, setDuplicating] = useState(false)
+  const [duplicateError, setDuplicateError] = useState<string | null>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
 
   // Edit form state (mirrors poll once loaded)
   const [pollName, setPollName] = useState("")
@@ -127,6 +133,54 @@ export default function NominationDetailClient({ pollId }: { pollId: string }) {
     }
   }
 
+  const handleDuplicate = async () => {
+    if (!poll || duplicating) return
+    setDuplicating(true)
+    setDuplicateError(null)
+    try {
+      const res = await fetch("/api/polls/nominations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pollName: `${poll.pollName} (Copy)`,
+          pollImage: poll.pollImage,
+          pollDescription: poll.pollDescription,
+          categories: poll.categories.map((c) => ({ name: c.name })),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setDuplicateError(data.error || "Failed to duplicate poll"); return }
+      router.push(`/polls/nominations/${data.pollId}`)
+    } catch {
+      setDuplicateError("An unexpected error occurred while duplicating.")
+    } finally {
+      setDuplicating(false)
+    }
+  }
+
+  const nominateUrl = `https://spotix.com.ng/polls/nominate/${pollId}`
+
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(nominateUrl)
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 2000)
+    } catch {
+      // Fallback for environments without clipboard API access
+      const el = document.createElement("textarea")
+      el.value = nominateUrl
+      el.style.position = "fixed"
+      el.style.opacity = "0"
+      document.body.appendChild(el)
+      el.focus()
+      el.select()
+      try { document.execCommand("copy") } catch {}
+      document.body.removeChild(el)
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 2000)
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setSaveError(null)
@@ -183,139 +237,195 @@ export default function NominationDetailClient({ pollId }: { pollId: string }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
       <Link href="/polls/nominations" className="inline-flex items-center gap-1 text-[#6b2fa5] hover:text-[#5a1f8a] text-sm font-medium mb-6">
-        <ChevronLeft className="w-4 h-4" /> Back to Nomination Polls
+        <ChevronLeft className="w-4 h-4 flex-shrink-0" /> Back to Nomination Polls
       </Link>
 
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Edit Nomination Poll</h1>
-        <button
-          onClick={toggleStatus}
-          className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors
-            ${poll.status === "active" ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-        >
-          {poll.status === "active" ? "Active — click to close" : "Closed — click to reopen"}
-        </button>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900 break-words min-w-0">Edit Nomination Poll</h1>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleDuplicate}
+            disabled={duplicating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors disabled:opacity-60 flex-shrink-0"
+          >
+            {duplicating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Copy className="w-3.5 h-3.5" />} Duplicate
+          </button>
+          <button
+            onClick={toggleStatus}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors flex-shrink-0
+              ${poll.status === "active" ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+          >
+            {poll.status === "active" ? "Active — click to close" : "Closed — click to reopen"}
+          </button>
+        </div>
       </div>
 
-      {/* Edit form */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-5 mb-8">
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Poll Name</label>
-          <input type="text" value={pollName} onChange={(e) => setPollName(e.target.value)}
-            className="w-full px-4 py-2.5 rounded-xl border border-slate-300 outline-none focus:border-[#6b2fa5]" />
-        </div>
+      {duplicateError && (
+        <p className="text-xs text-red-600 flex items-start gap-1.5 mb-4"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> {duplicateError}</p>
+      )}
 
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Image</label>
-          <label className="relative block h-40 rounded-xl border-2 border-dashed border-slate-300 hover:border-[#6b2fa5] cursor-pointer overflow-hidden transition-colors">
-            {imagePreview && <img src={imagePreview} alt="" className="w-full h-full object-cover" />}
-            {imageUploading && (
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 text-white animate-spin" />
-              </div>
-            )}
-            {!imagePreview && (
-              <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
-                <ImagePlus className="w-7 h-7 mb-2" /><p className="text-sm">Click to upload</p>
-              </div>
-            )}
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImage(e.target.files?.[0])} />
-          </label>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Description</label>
-          <textarea rows={3} value={pollDescription} onChange={(e) => setPollDescription(e.target.value)}
-            className="w-full px-4 py-2.5 rounded-xl border border-slate-300 outline-none focus:border-[#6b2fa5] resize-none" />
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Categories</label>
-          <p className="text-xs text-slate-400 mb-3">
-            Renaming is safe — nominees stay attached. Categories that already have nominees can't be removed here (close the poll instead).
-          </p>
-          <div className="space-y-2">
-            {categoryDrafts.map((c, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder={`Category ${i + 1} name`}
-                  value={c.name}
-                  onChange={(e) => updateCategoryName(i, e.target.value)}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 outline-none focus:border-[#6b2fa5]"
-                />
-                {categoryDrafts.length > 1 && (
-                  <button onClick={() => removeCategoryDraft(i)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            ))}
+      {/* Two-column layout on large screens: form on the left, nominees as a sticky sidebar on the right.
+          Falls back to a single stacked column below the lg breakpoint. */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-8 lg:items-start">
+        {/* Left column: share link + edit form */}
+        <div className="min-w-0">
+          {/* Share link */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm mb-6">
+            <label className="flex items-center gap-1.5 text-sm font-semibold text-slate-700 mb-2">
+              <Link2 className="w-3.5 h-3.5 text-[#6b2fa5] flex-shrink-0" /> Nomination Link
+            </label>
+            <p className="text-xs text-slate-400 mb-3">Share this link so people can submit nominations for this poll.</p>
+            <div className="flex flex-col sm:flex-row gap-2 min-w-0">
+              <input
+                type="text"
+                readOnly
+                value={nominateUrl}
+                onFocus={(e) => e.target.select()}
+                className="w-full min-w-0 flex-1 px-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-600 text-sm outline-none truncate"
+              />
+              <button
+                onClick={handleCopyLink}
+                className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors flex-shrink-0
+                  ${linkCopied ? "bg-green-100 text-green-700" : "bg-[#6b2fa5] text-white hover:bg-[#5a1f8a]"}`}
+              >
+                {linkCopied ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
+              </button>
+            </div>
           </div>
-          <button
-            onClick={addCategory}
-            disabled={categoryDrafts.length >= MAX_NOMINATION_CATEGORIES}
-            className="flex items-center gap-1.5 text-sm font-medium text-[#6b2fa5] hover:bg-[#6b2fa5]/5 px-3 py-1.5 rounded-lg transition-colors mt-2 disabled:opacity-40"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add Category
-          </button>
-        </div>
 
-        {saveError && (
-          <p className="text-xs text-red-600 flex items-start gap-1.5"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> {saveError}</p>
-        )}
-        {saveSuccess && (
-          <p className="text-xs text-green-600 flex items-start gap-1.5"><CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> Saved</p>
-        )}
+          {/* Edit form */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-5 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Poll Name</label>
+                <input type="text" value={pollName} onChange={(e) => setPollName(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 outline-none focus:border-[#6b2fa5]" />
+              </div>
 
-        <div className="flex justify-end">
-          <button
-            onClick={handleSave}
-            disabled={saving || imageUploading}
-            className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#6b2fa5] hover:bg-[#5a1f8a] disabled:opacity-60 transition-colors"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
-          </button>
-        </div>
-      </div>
-
-      {/* Nominees viewer */}
-      <h2 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
-        <Users className="w-4 h-4 text-[#6b2fa5]" /> Nominees
-      </h2>
-
-      <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1">
-        {poll.categories.map((c) => (
-          <button
-            key={c.categoryId}
-            onClick={() => setActiveCategoryId(c.categoryId)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-colors
-              ${c.categoryId === activeCategoryId ? "bg-[#6b2fa5] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-          >
-            <Tag className="w-3 h-3" /> {c.name}
-          </button>
-        ))}
-      </div>
-
-      {nomineesLoading ? (
-        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-[#6b2fa5]" /></div>
-      ) : nominees.length === 0 ? (
-        <p className="text-center text-slate-400 text-sm py-8">No nominees in this category yet.</p>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-          {nominees.map((n) => (
-            <div key={n.nomineeId} className="flex items-center gap-3 bg-white rounded-xl border border-slate-200 p-3">
-              <img src={dicebearAvatarUrl(n.name)} alt="" className="w-10 h-10 rounded-full bg-slate-100 flex-shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-900 truncate capitalize">{n.name}</p>
-                <p className="text-xs text-slate-500">{n.count} nomination{n.count !== 1 ? "s" : ""}</p>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Image</label>
+                <label className={`relative block h-40 md:h-[86px] rounded-xl cursor-pointer overflow-hidden transition-colors
+                  ${imagePreview ? "border border-slate-200" : "border-2 border-dashed border-slate-300 hover:border-[#6b2fa5]"}`}>
+                  {imagePreview && <img src={imagePreview} alt="" className="w-full h-full object-cover" />}
+                  {imagePreview && !imageUploading && (
+                    <div className="absolute inset-0 bg-black/0 hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+                      <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 text-slate-700 text-xs font-semibold">
+                        <Pencil className="w-3.5 h-3.5" /> Change photo
+                      </span>
+                    </div>
+                  )}
+                  {imageUploading && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <Loader2 className="w-6 h-6 text-white animate-spin" />
+                    </div>
+                  )}
+                  {!imagePreview && (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
+                      <ImagePlus className="w-6 h-6 mb-1" /><p className="text-xs">Click to upload</p>
+                    </div>
+                  )}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImage(e.target.files?.[0])} />
+                </label>
               </div>
             </div>
-          ))}
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Description</label>
+              <textarea rows={3} value={pollDescription} onChange={(e) => setPollDescription(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 outline-none focus:border-[#6b2fa5] resize-none" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Categories</label>
+              <p className="text-xs text-slate-400 mb-3">
+                Renaming is safe — nominees stay attached. Categories that already have nominees can't be removed here (close the poll instead).
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {categoryDrafts.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2 min-w-0">
+                    <input
+                      type="text"
+                      placeholder={`Category ${i + 1} name`}
+                      value={c.name}
+                      onChange={(e) => updateCategoryName(i, e.target.value)}
+                      className="flex-1 min-w-0 px-4 py-2.5 rounded-xl border border-slate-300 outline-none focus:border-[#6b2fa5]"
+                    />
+                    {categoryDrafts.length > 1 && (
+                      <button onClick={() => removeCategoryDraft(i)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={addCategory}
+                disabled={categoryDrafts.length >= MAX_NOMINATION_CATEGORIES}
+                className="flex items-center gap-1.5 text-sm font-medium text-[#6b2fa5] hover:bg-[#6b2fa5]/5 px-3 py-1.5 rounded-lg transition-colors mt-2 disabled:opacity-40"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Category
+              </button>
+            </div>
+
+            {saveError && (
+              <p className="text-xs text-red-600 flex items-start gap-1.5"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> {saveError}</p>
+            )}
+            {saveSuccess && (
+              <p className="text-xs text-green-600 flex items-start gap-1.5"><CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> Saved</p>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleSave}
+                disabled={saving || imageUploading}
+                className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#6b2fa5] hover:bg-[#5a1f8a] disabled:opacity-60 transition-colors"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
+              </button>
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Right column: nominees viewer — becomes a sticky sidebar on large screens */}
+        <div className="min-w-0 lg:sticky lg:top-6">
+          <h2 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+            <Users className="w-4 h-4 text-[#6b2fa5] flex-shrink-0" /> Nominees
+          </h2>
+
+          <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1">
+            {poll.categories.map((c) => (
+              <button
+                key={c.categoryId}
+                onClick={() => setActiveCategoryId(c.categoryId)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-colors
+                  ${c.categoryId === activeCategoryId ? "bg-[#6b2fa5] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              >
+                <Tag className="w-3 h-3 flex-shrink-0" /> {c.name}
+              </button>
+            ))}
+          </div>
+
+          {nomineesLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-[#6b2fa5]" /></div>
+          ) : nominees.length === 0 ? (
+            <p className="text-center text-slate-400 text-sm py-8">No nominees in this category yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3 mt-2 lg:max-h-[calc(100vh-10rem)] lg:overflow-y-auto lg:pr-1">
+              {nominees.map((n) => (
+                <div key={n.nomineeId} className="flex items-center gap-3 bg-white rounded-xl border border-slate-200 p-3 min-w-0">
+                  <img src={dicebearAvatarUrl(n.name)} alt="" className="w-10 h-10 rounded-full bg-slate-100 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-slate-900 truncate capitalize">{n.name}</p>
+                    <p className="text-xs text-slate-500">{n.count} nomination{n.count !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

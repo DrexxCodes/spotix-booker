@@ -113,31 +113,44 @@ export default function ProfilePage() {
       <Preloader isLoading={loading} />
 
       <div className="min-h-screen bg-slate-50">
-        <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {profileData && (
             <>
-              <ProfileHeader profileData={profileData} />
-              <ProfileStats profileData={profileData} />
-              <PayoutMethodsSection methods={payoutMethods} />
-              <VirtualEventsSection profileData={profileData} />
-              <CollaborationsSection profileData={profileData} />
-              <PersonalInformation profileData={profileData} />
+              <div className="mb-6">
+                <ProfileHeader profileData={profileData} />
+              </div>
 
-              {/* Telegram */}
-              <section>
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-                  <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-                    <div className="w-8 h-8 rounded-lg bg-[#229ED9]/10 flex items-center justify-center">
-                      <MessageSquare className="w-4 h-4 text-[#229ED9]" />
+              {/* Two-column layout on large screens: a sidebar for at-a-glance
+                  info (stats, payout, telegram) and a wider main column for
+                  everything else. Stacks into a single column below lg. */}
+              <div className="lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:gap-6 lg:items-start">
+                <div className="space-y-6 mb-6 lg:mb-0">
+                  <ProfileStats profileData={profileData} />
+                  <PayoutMethodsSection methods={payoutMethods} />
+
+                  {/* Telegram */}
+                  <section>
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                      <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-lg bg-[#229ED9]/10 flex items-center justify-center">
+                          <MessageSquare className="w-4 h-4 text-[#229ED9]" />
+                        </div>
+                        <div>
+                          <h2 className="text-sm font-bold text-slate-900">Telegram</h2>
+                          <p className="text-xs text-slate-400">Receive alerts and manage payouts on the go</p>
+                        </div>
+                      </div>
+                      <TelegramConnect userId={profileData.uid} />
                     </div>
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-900">Telegram</h2>
-                      <p className="text-xs text-slate-400">Receive alerts and manage payouts on the go</p>
-                    </div>
-                  </div>
-                  <TelegramConnect userId={profileData.uid} />
+                  </section>
                 </div>
-              </section>
+
+                <div className="space-y-6 min-w-0">
+                  <VirtualEventsSection profileData={profileData} />
+                  <CollaborationsSection profileData={profileData} />
+                  <PersonalInformation profileData={profileData} />
+                </div>
+              </div>
             </>
           )}
         </main>

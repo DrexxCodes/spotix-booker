@@ -26,7 +26,7 @@ export function ProfileStats({ profileData }: ProfileStatsProps) {
           <BalanceToggleButton />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-4">
           {/* Events Created */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex items-center gap-4">
             <div className="w-10 h-10 rounded-xl bg-[#6b2fa5]/10 flex items-center justify-center flex-shrink-0">

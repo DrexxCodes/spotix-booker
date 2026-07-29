@@ -106,7 +106,7 @@ export default function SdkKeyManagePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto px-4 py-10">
+      <div className="max-w-3xl xl:max-w-5xl mx-auto px-4 py-10">
         <div className="flex items-center justify-between mb-8">
           <div>
             <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-[#6b2fa5] mb-3">
@@ -166,9 +166,9 @@ export default function SdkKeyManagePage() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {keys.map((key) => (
-              <div key={key.keyHash} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+              <div key={key.keyHash} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm h-fit">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">
