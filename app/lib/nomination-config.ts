@@ -11,13 +11,13 @@
  */
 
 /** Max categories an organiser can open for a single nomination poll. */
-export const MAX_NOMINATION_CATEGORIES = 20
+export const MAX_NOMINATION_CATEGORIES = 50
 
 /** Max length (chars) of a nominated name, post-trim. */
 export const MAX_NOMINEE_NAME_LENGTH = 60
 
 /** Min length (chars) of a nominated name, post-trim. */
-export const MIN_NOMINEE_NAME_LENGTH = 2
+export const MIN_NOMINEE_NAME_LENGTH = 3
 
 export interface NominationCategory {
   categoryId: string
