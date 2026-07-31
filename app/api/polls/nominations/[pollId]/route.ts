@@ -4,14 +4,22 @@
  * GET   /api/polls/nominations/:pollId → Fetch one nomination poll (owner only)
  * PATCH /api/polls/nominations/:pollId → { status: "active" | "closed" }
  * DELETE /api/polls/nominations/:pollId → Delete (only if no nominees yet)
+ *
+ * Data source: Supabase (nomination_polls / nomination_nominees tables).
+ * See /README-SUPABASE-NOMINATIONS.md and /supabase/schema.sql.
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
-import { FieldValue } from "firebase-admin/firestore"
 import { redis } from "@/lib/redis"
+import {
+  getNominationPollById,
+  updateNominationPoll,
+  categoryIdsWithNominees,
+  pollHasAnyNominees,
+  deleteNominationPoll,
+} from "@/lib/nomination-db"
 import { MAX_NOMINATION_CATEGORIES, genNominationCategoryId, type NominationCategory } from "@/lib/nomination-config"
 
 const DEV_TAG = "spotix-api-v1"
@@ -42,22 +50,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ pol
   const { pollId } = await params
 
   try {
-    const snap = await adminDb.collection("nominationPolls").doc(pollId).get()
-    if (!snap.exists) return fail("Nomination poll not found", 404)
-    const d = snap.data()!
-    if (d.creatorId !== userId) return fail("Not authorized to view this poll", 403)
+    const poll = await getNominationPollById(pollId)
+    if (!poll) return fail("Nomination poll not found", 404)
+    if (poll.creatorId !== userId) return fail("Not authorized to view this poll", 403)
 
-    return ok({
-      poll: {
-        pollId: snap.id,
-        pollName: d.pollName ?? "",
-        pollImage: d.pollImage ?? "",
-        pollDescription: d.pollDescription ?? "",
-        categories: d.categories ?? [],
-        status: d.status ?? "active",
-        createdAt: d.createdAt?.toDate?.()?.toISOString() ?? "",
-      },
-    })
+    const { creatorId, ...publicShape } = poll
+    return ok({ poll: publicShape })
   } catch (err: any) {
     console.error("[GET /api/polls/nominations/[pollId]] error:", err)
     return fail("Failed to fetch nomination poll", 500)
@@ -87,13 +85,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ po
   try { body = await req.json() }
   catch { return fail("Invalid JSON body", 400) }
 
-  const ref = adminDb.collection("nominationPolls").doc(pollId)
-  const snap = await ref.get()
-  if (!snap.exists) return fail("Nomination poll not found", 404)
-  const existing = snap.data()!
+  const existing = await getNominationPollById(pollId)
+  if (!existing) return fail("Nomination poll not found", 404)
   if (existing.creatorId !== userId) return fail("Not authorized to update this poll", 403)
 
-  const updates: Record<string, any> = { updatedAt: FieldValue.serverTimestamp() }
+  const updates: Parameters<typeof updateNominationPoll>[1] = {}
 
   if (body.status !== undefined) {
     if (!["active", "closed"].includes(body.status)) return fail("status must be 'active' or 'closed'", 400)
@@ -143,14 +139,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ po
     // block it if it already has nominees.
     const removedIds = [...existingIds].filter((id) => !seenIds.has(id))
     if (removedIds.length > 0) {
-      const chunks: string[][] = []
-      for (let i = 0; i < removedIds.length; i += 10) chunks.push(removedIds.slice(i, i + 10))
-
-      let blockedIds: string[] = []
-      for (const chunk of chunks) {
-        const nomineesSnap = await ref.collection("nominees").where("categoryId", "in", chunk).limit(1).get()
-        if (!nomineesSnap.empty) blockedIds.push(nomineesSnap.docs[0].data().categoryId)
-      }
+      const blockedIds = await categoryIdsWithNominees(pollId, removedIds)
 
       if (blockedIds.length > 0) {
         const removedNames = existingCategories.filter((c) => blockedIds.includes(c.categoryId)).map((c) => c.name).join(", ")
@@ -162,7 +151,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ po
   }
 
   try {
-    await ref.update(updates)
+    await updateNominationPoll(pollId, updates)
     // Same Upstash instance as spotix-user — bust its cache so edits show
     // up immediately instead of waiting out the 60s TTL.
     await redis.del(`nomination-poll:${pollId}`).catch(() => {})
@@ -180,16 +169,15 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { pollId } = await params
 
   try {
-    const ref = adminDb.collection("nominationPolls").doc(pollId)
-    const snap = await ref.get()
-    if (!snap.exists) return fail("Nomination poll not found", 404)
-    if (snap.data()?.creatorId !== userId) return fail("Not authorized to delete this poll", 403)
+    const existing = await getNominationPollById(pollId)
+    if (!existing) return fail("Nomination poll not found", 404)
+    if (existing.creatorId !== userId) return fail("Not authorized to delete this poll", 403)
 
-    const nomineesSnap = await ref.collection("nominees").limit(1).get()
-    if (!nomineesSnap.empty)
+    const hasNominees = await pollHasAnyNominees(pollId)
+    if (hasNominees)
       return fail("Cannot delete a nomination poll that already has nominees — close it instead", 409)
 
-    await ref.delete()
+    await deleteNominationPoll(pollId)
     return ok({ message: "Nomination poll deleted" })
   } catch (err: any) {
     console.error("[DELETE /api/polls/nominations/[pollId]] error:", err)

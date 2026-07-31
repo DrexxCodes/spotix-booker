@@ -106,7 +106,7 @@ export default function NominationPollsListPage() {
               <Link href={`/polls/nominations/${p.pollId}`} className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <img src={p.pollImage || "/placeholder.svg"} alt="" className="w-14 h-14 rounded-xl object-cover bg-slate-100 flex-shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-slate-900 truncate">{p.pollName}</p>
+                  <p className="font-semibold text-slate-900 truncate" title={p.pollName}>{p.pollName}</p>
                   <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
                     <Tag className="w-3 h-3 flex-shrink-0" /> {p.categories.length} categor{p.categories.length === 1 ? "y" : "ies"}
                   </p>

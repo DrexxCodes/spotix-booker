@@ -6,12 +6,15 @@
  * Owner-only. Powers the "Import from Nominees" dialog on the main poll
  * creator: lists nominees (with nomination counts) for a given category
  * of one of the caller's own nomination polls, sorted by count desc.
+ *
+ * Data source: Supabase (nomination_nominees table). See
+ * /README-SUPABASE-NOMINATIONS.md and /supabase/schema.sql.
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { getNominationPollById, listNomineesForOwner } from "@/lib/nomination-db"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -42,30 +45,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ poll
   const categoryId = req.nextUrl.searchParams.get("categoryId")
 
   try {
-    const pollSnap = await adminDb.collection("nominationPolls").doc(pollId).get()
-    if (!pollSnap.exists) return fail("Nomination poll not found", 404)
-    if (pollSnap.data()?.creatorId !== userId) return fail("Not authorized to view these nominees", 403)
+    const poll = await getNominationPollById(pollId)
+    if (!poll) return fail("Nomination poll not found", 404)
+    if (poll.creatorId !== userId) return fail("Not authorized to view these nominees", 403)
 
-    let query = adminDb
-      .collection("nominationPolls")
-      .doc(pollId)
-      .collection("nominees") as FirebaseFirestore.Query
+    const nominees = await listNomineesForOwner(pollId, categoryId)
 
-    if (categoryId) query = query.where("categoryId", "==", categoryId)
-
-    const snap = await query.orderBy("count", "desc").get()
-
-    const nominees = snap.docs.map((doc) => {
-      const d = doc.data()
-      return {
-        nomineeId: doc.id,
-        categoryId: d.categoryId ?? "",
-        name: d.displayName ?? d.name ?? "",
-        count: d.count ?? 0,
-      }
-    })
-
-    return ok({ nominees, categories: pollSnap.data()?.categories ?? [] })
+    return ok({ nominees, categories: poll.categories ?? [] })
   } catch (err: any) {
     console.error("[GET /api/polls/nominations/[pollId]/nominees] error:", err)
     return fail("Failed to fetch nominees", 500)

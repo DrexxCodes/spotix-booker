@@ -6,16 +6,16 @@
  *                                 (used by the "Import from Nominees" dialog
  *                                 in the main poll creator)
  *
- * Firestore: nominationPolls/{pollId}
- * Nominees live in the nominationPolls/{pollId}/nominees subcollection,
- * written by the public spotix-user nominate endpoint.
+ * Data source: Supabase (nomination_polls table). Nominees live in the
+ * nomination_nominees table, written by the public spotix-user nominate
+ * endpoint via the submit_nomination() RPC. See
+ * /README-SUPABASE-NOMINATIONS.md and /supabase/schema.sql.
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
-import { FieldValue } from "firebase-admin/firestore"
+import { createNominationPoll, listNominationPollsByCreator } from "@/lib/nomination-db"
 import {
   MAX_NOMINATION_CATEGORIES,
   genNominationCategoryId,
@@ -75,20 +75,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const pollRef = adminDb.collection("nominationPolls").doc()
-    await pollRef.set({
+    const pollId = await createNominationPoll({
       creatorId: userId,
       pollName: pollName.trim(),
       pollImage: pollImage.trim(),
       pollDescription: (pollDescription ?? "").trim(),
       categories: cleanCategories,
-      status: "active",
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
     })
 
     return ok(
-      { pollId: pollRef.id, message: "Nomination poll created successfully" },
+      { pollId, message: "Nomination poll created successfully" },
       201
     )
   } catch (err: any) {
@@ -104,25 +100,7 @@ export async function GET() {
   const { userId } = auth
 
   try {
-    const snap = await adminDb
-      .collection("nominationPolls")
-      .where("creatorId", "==", userId)
-      .orderBy("createdAt", "desc")
-      .get()
-
-    const polls = snap.docs.map((doc) => {
-      const d = doc.data()
-      return {
-        pollId: doc.id,
-        pollName: d.pollName ?? "",
-        pollImage: d.pollImage ?? "",
-        pollDescription: d.pollDescription ?? "",
-        categories: d.categories ?? [],
-        status: d.status ?? "active",
-        createdAt: d.createdAt?.toDate?.()?.toISOString() ?? "",
-      }
-    })
-
+    const polls = await listNominationPollsByCreator(userId)
     return ok({ polls })
   } catch (err: any) {
     console.error("[GET /api/polls/nominations] error:", err)

@@ -120,7 +120,10 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
               <ChevronLeft className="w-5 h-5" />
             </button>
           )}
-          <h3 className="font-bold text-slate-900 flex-1">
+          <h3
+            className="font-bold text-slate-900 flex-1 min-w-0 truncate"
+            title={step === "nominees" ? selectedPoll?.pollName : undefined}
+          >
             {step === "polls" ? "Import from Nominees" : selectedPoll?.pollName}
           </h3>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700">
