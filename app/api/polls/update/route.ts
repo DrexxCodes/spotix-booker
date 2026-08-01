@@ -18,6 +18,13 @@
  * Never allowed:
  *   - deleting a contestant or category that has ≥ 1 vote
  *
+ * contestantsTBD: self-healing — stays true only while contestants/
+ * categories are still under the minimum required count, regardless of
+ * what the request explicitly asks for. Clears automatically the moment
+ * a real lineup is submitted, so callers that don't know about this
+ * field (an older edit UI, for instance) don't need to explicitly unset
+ * it — see the effectiveTBD computation below.
+ *
  * All structural limits come from lib/poll-config.ts.
  */
 
@@ -210,6 +217,7 @@ export async function PATCH(req: NextRequest) {
     contestants,
     categories,
     statsVisible,
+    contestantsTBD,
   } = body
 
   if (!pollId?.trim()) return fail("pollId is required", 400)
@@ -224,6 +232,18 @@ export async function PATCH(req: NextRequest) {
   if (owner !== userId) return fail("You do not own this poll", 403)
 
   const pollType = existingData.pollType ?? "single"
+
+  // Contestants TBD: callers that don't know about this field (an older
+  // edit page, for instance) fall back to whatever's already on the poll,
+  // so nothing changes for them. A poll only STAYS in TBD mode if the
+  // incoming contestants/categories are still under the minimum — the
+  // moment a real lineup is submitted, this clears itself automatically
+  // regardless of what contestantsTBD was requested as, so "finishing" a
+  // TBD poll doesn't require the caller to explicitly know to unset it.
+  const requestedTBD = typeof contestantsTBD === "boolean" ? contestantsTBD : Boolean(existingData.contestantsTBD)
+  const singleIsShort = pollType === "single" && (!Array.isArray(contestants) || contestants.length < 2)
+  const groupIsShort  = pollType === "group"  && (!Array.isArray(categories)  || categories.length  < 1)
+  const effectiveTBD  = requestedTBD && (pollType === "single" ? singleIsShort : groupIsShort)
 
   // ── Common field validation ──────────────────────────────────────────────────
   if (!pollName?.trim())        return fail("pollName is required", 400)
@@ -249,9 +269,20 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (typeof statsVisible === "boolean") updatePayload.statsVisible = statsVisible
+  updatePayload.contestantsTBD = effectiveTBD
 
   // ── Single poll ─────────────────────────────────────────────────────────────
-  if (pollType === "single") {
+  if (pollType === "single" && effectiveTBD) {
+    // Still TBD — price is kept if provided (meaningful once contestants
+    // are eventually added), contestants forced empty regardless of
+    // whatever partial rows were in the request.
+    if (pollPrice !== undefined) {
+      const priceErr = validateVotePrice(Number(pollPrice ?? 0))
+      if (priceErr) return fail(priceErr, 400)
+      updatePayload.pollPrice = Number(pollPrice ?? 0)
+    }
+    updatePayload.contestants = []
+  } else if (pollType === "single") {
     const priceErr = validateVotePrice(Number(pollPrice ?? 0))
     if (priceErr) return fail(priceErr, 400)
 
@@ -288,7 +319,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   // ── Group poll ──────────────────────────────────────────────────────────────
-  if (pollType === "group") {
+  if (pollType === "group" && effectiveTBD) {
+    updatePayload.categories = []
+  } else if (pollType === "group") {
     if (!Array.isArray(categories) || categories.length < 1)
       return fail("At least 1 top-level category is required", 400)
     if (categories.length > MAX_GROUP_TOP_CATEGORIES)

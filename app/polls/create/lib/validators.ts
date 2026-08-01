@@ -66,6 +66,13 @@ export function validateCategoryTree(cats: CategoryForm[], path: string): string
 }
 
 export function validateStep3(form: PollForm, contestants: ContestantForm[], categories: CategoryForm[]): string[] {
+  // Contestants TBD — organiser is deferring the whole lineup (e.g.
+  // waiting on a linked nomination poll to close). Nothing to validate;
+  // api/polls/create/route.ts forces contestants/categories to [] server-side
+  // regardless of what's in local state, so this is purely a client-side
+  // shortcut to skip the "needs 2+ contestants" gate on Step 3.
+  if (form.contestantsTBD) return []
+
   if (form.pollType === "single") {
     const e: string[] = []
     if (contestants.length < 2) e.push("At least 2 contestants are required")

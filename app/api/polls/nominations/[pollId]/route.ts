@@ -19,8 +19,15 @@ import {
   categoryIdsWithNominees,
   pollHasAnyNominees,
   deleteNominationPoll,
+  getVotingPollForLinking,
 } from "@/lib/nomination-db"
-import { MAX_NOMINATION_CATEGORIES, genNominationCategoryId, type NominationCategory } from "@/lib/nomination-config"
+import {
+  MAX_NOMINATION_CATEGORIES,
+  genNominationCategoryId,
+  MIN_NOMINATION_THRESHOLD,
+  MAX_NOMINATION_THRESHOLD,
+  type NominationCategory,
+} from "@/lib/nomination-config"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -65,7 +72,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ pol
 /**
  * PATCH /api/polls/nominations/:pollId
  * Body (all optional, merge-patch style):
- *   { pollName?, pollImage?, pollDescription?, status?, categories? }
+ *   { pollName?, pollImage?, pollDescription?, status?, categories?,
+ *     nominationThreshold?, linkedVotingPollId? }
  *
  * categories, when provided, is the FULL desired category list:
  *   - Existing categories: pass their real categoryId to rename in place
@@ -74,6 +82,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ pol
  *   - Removing a category: just leave it out of the array — but this is
  *     rejected if that category already has nominees, to avoid orphaning
  *     nominee data silently.
+ *
+ * nominationThreshold: an integer caps how many times one nominee can be
+ * nominated poll-wide; pass null to remove the cap (unlimited).
+ *
+ * linkedVotingPollId: links one of the caller's OWN Firestore voting
+ * polls — its start date/time is snapshotted into voting_starts_at at
+ * link time (see getVotingPollForLinking() in lib/nomination-db.ts for
+ * why this is a snapshot rather than a live fetch). Pass null to unlink.
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ pollId: string }> }) {
   const auth = await authenticate()
@@ -105,6 +121,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ po
   }
   if (body.pollDescription !== undefined) {
     updates.pollDescription = String(body.pollDescription ?? "").trim()
+  }
+
+  if (body.nominationThreshold !== undefined) {
+    if (body.nominationThreshold === null) {
+      updates.nominationThreshold = null
+    } else {
+      const n = Number(body.nominationThreshold)
+      if (!Number.isInteger(n) || n < MIN_NOMINATION_THRESHOLD || n > MAX_NOMINATION_THRESHOLD) {
+        return fail(
+          `nominationThreshold must be a whole number between ${MIN_NOMINATION_THRESHOLD} and ${MAX_NOMINATION_THRESHOLD}, or null for unlimited`,
+          400
+        )
+      }
+      updates.nominationThreshold = n
+    }
+  }
+
+  if (body.linkedVotingPollId !== undefined) {
+    if (body.linkedVotingPollId === null) {
+      updates.linkedVotingPollId = null
+      updates.linkedVotingPollName = null
+      updates.votingStartsAt = null
+    } else {
+      const votingPoll = await getVotingPollForLinking(String(body.linkedVotingPollId), userId)
+      if (!votingPoll) return fail("Voting poll not found, or not owned by you", 404)
+      updates.linkedVotingPollId = votingPoll.pollId
+      updates.linkedVotingPollName = votingPoll.pollName
+      updates.votingStartsAt = votingPoll.votingStartsAt
+    }
   }
 
   if (body.categories !== undefined) {

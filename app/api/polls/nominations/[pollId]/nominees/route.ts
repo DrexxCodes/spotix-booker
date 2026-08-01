@@ -51,7 +51,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ poll
 
     const nominees = await listNomineesForOwner(pollId, categoryId)
 
-    return ok({ nominees, categories: poll.categories ?? [] })
+    return ok({ nominees, categories: poll.categories ?? [], nominationThreshold: poll.nominationThreshold })
   } catch (err: any) {
     console.error("[GET /api/polls/nominations/[pollId]/nominees] error:", err)
     return fail("Failed to fetch nominees", 500)

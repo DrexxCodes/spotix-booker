@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   Loader2, ImagePlus, Plus, X, AlertCircle, CheckCircle,
-  ChevronLeft, Tag, Users, Trash2, Save, Copy, Link2, Check, Pencil,
+  ChevronLeft, Tag, Users, Trash2, Save, Copy, Link2, Check, Pencil, Settings2,
 } from "lucide-react"
 import { doUpload } from "@/polls/create/lib/factories"
 import { MAX_NOMINATION_CATEGORIES } from "@/lib/nomination-config"
@@ -245,6 +245,12 @@ export default function NominationDetailClient({ pollId }: { pollId: string }) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 break-words min-w-0">Edit Nomination Poll</h1>
         <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            href={`/polls/nominations/${poll.pollId}/settings`}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors flex-shrink-0"
+          >
+            <Settings2 className="w-3.5 h-3.5" /> Settings
+          </Link>
           <button
             onClick={handleDuplicate}
             disabled={duplicating}

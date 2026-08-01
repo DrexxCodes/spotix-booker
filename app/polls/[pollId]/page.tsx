@@ -30,6 +30,7 @@ import {
   LayoutGrid,
   RefreshCw,
   AlertTriangle,
+  Sparkles,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -68,6 +69,12 @@ interface Poll {
   updatedAt: string | null
   linkedEventId: string | null
   linkedEventName: string | null
+  /** True while this poll is waiting on real contestants (e.g. an open
+   *  nomination poll hasn't closed yet) — set at creation via the
+   *  "Contestants TBD" toggle. Cleared automatically once a
+   *  PATCH /api/polls/update brings the poll above the minimum
+   *  contestant count. See spotix-booker/app/api/polls/update/route.ts. */
+  contestantsTBD?: boolean
 }
 
 interface EntryRow {
@@ -103,16 +110,19 @@ const STATUS_PILL: Record<PollStatus, { cls: string; icon: typeof CheckCircle; l
   ended:    { cls: "bg-gray-100 text-gray-600",     icon: XCircle,     label: "Ended"    },
   upcoming: { cls: "bg-yellow-100 text-yellow-700", icon: Clock,       label: "Upcoming" },
 }
+// Overrides the pill above entirely while contestantsTBD is true — being
+// "Upcoming" is irrelevant if there's nobody to vote for yet.
+const COMING_SOON_PILL = { cls: "bg-purple-100 text-purple-700", icon: Sparkles, label: "Coming Soon" }
 
 // ─── Standings row (shared leaf renderer) ──────────────────────────────────────
 
-function StandingsList({ contestants, status }: { contestants: Contestant[]; status: PollStatus }) {
+function StandingsList({ contestants, status, emptyMessage = "No contestants yet" }: { contestants: Contestant[]; status: PollStatus; emptyMessage?: string }) {
   const sorted     = [...contestants].sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0))
   const totalVotes = sorted.reduce((s, c) => s + (c.votes ?? 0), 0)
   const winner     = sorted[0]
 
   if (sorted.length === 0) {
-    return <p className="text-sm text-gray-400 text-center py-6">No contestants yet</p>
+    return <p className="text-sm text-gray-400 text-center py-6">{emptyMessage}</p>
   }
 
   return (
@@ -395,7 +405,9 @@ export default function PollManagePage() {
   }
 
   const status = getPollStatus(poll)
-  const { cls: statusCls, icon: StatusIcon, label: statusLabel } = STATUS_PILL[status]
+  const { cls: statusCls, icon: StatusIcon, label: statusLabel } = poll.contestantsTBD
+    ? COMING_SOON_PILL
+    : STATUS_PILL[status]
   const isGroup = poll.pollType === "group"
 
   // Total votes across the whole poll — for group polls, sum every leaf category.
@@ -442,6 +454,17 @@ export default function PollManagePage() {
               </span>
             </div>
             <p className="text-sm text-gray-500 mb-3">{poll.pollDescription}</p>
+
+            {poll.contestantsTBD && (
+              <div className="flex items-center gap-2 bg-purple-50 border border-purple-100 rounded-xl px-3.5 py-2.5 mb-4">
+                <Sparkles className="w-4 h-4 text-[#6b2fa5] flex-shrink-0" />
+                <p className="text-xs text-purple-700">
+                  Contestants haven't been added yet — this poll won't show as votable to
+                  visitors until you add at least {isGroup ? "1 category with contestants" : "2 contestants"} from
+                  the Edit page.
+                </p>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2 mb-4">
               {isGroup && (
@@ -587,7 +610,9 @@ export default function PollManagePage() {
               <div className="space-y-3">
                 {(poll.categories ?? []).length === 0 ? (
                   <div className="text-center py-16 bg-white/50 rounded-2xl border-2 border-dashed border-gray-200">
-                    <p className="text-gray-400 text-sm font-medium">No categories added yet</p>
+                    <p className="text-gray-400 text-sm font-medium">
+                      {poll.contestantsTBD ? "Contestants TBD — add categories from the Edit page" : "No categories added yet"}
+                    </p>
                   </div>
                 ) : (
                   poll.categories.map((cat) => (
@@ -600,7 +625,11 @@ export default function PollManagePage() {
                 <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
                   <Users className="w-4 h-4 text-[#6b2fa5]" /> Contestant Standings
                 </h3>
-                <StandingsList contestants={poll.contestants ?? []} status={status} />
+                <StandingsList
+                  contestants={poll.contestants ?? []}
+                  status={status}
+                  emptyMessage={poll.contestantsTBD ? "Contestants TBD — add them from the Edit page" : "No contestants yet"}
+                />
               </div>
             )}
           </>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Loader2, Plus, Tag, ChevronRight, Copy } from "lucide-react"
+import { Loader2, Plus, Tag, ChevronRight, Copy, ChevronLeft } from "lucide-react"
 
 interface NominationPollSummary {
   pollId: string
@@ -68,6 +68,9 @@ export default function NominationPollsListPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
+      <Link href="/polls" className="inline-flex items-center gap-1 text-[#6b2fa5] hover:text-[#5a1f8a] text-sm font-medium mb-6">
+        <ChevronLeft className="w-4 h-4 flex-shrink-0" /> Back to Polls
+      </Link>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Nomination Polls</h1>

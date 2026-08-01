@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Plus } from "lucide-react"
+import { Plus, Clock3 } from "lucide-react"
 import { ContestantRow } from "./ContestantRow"
 import { CategoryBlock } from "./CategoryBlock"
 import { ImportNomineesDialog } from "./ImportNomineesDialog"
@@ -14,12 +14,54 @@ interface ContestantsStepProps {
   setContestants: (c: ContestantForm[]) => void
   categories: CategoryForm[]
   setCategories: (c: CategoryForm[]) => void
+  contestantsTBD: boolean
+  onToggleTBD: (tbd: boolean) => void
 }
 
-export function ContestantsStep({ pollType, contestants, setContestants, categories, setCategories }: ContestantsStepProps) {
+export function ContestantsStep({
+  pollType, contestants, setContestants, categories, setCategories, contestantsTBD, onToggleTBD,
+}: ContestantsStepProps) {
   // Which category (single-poll: "root", group-poll: a categoryId) is currently
   // requesting an import. null = dialog closed.
   const [importTarget, setImportTarget] = useState<string | null>(null)
+
+  const tbdToggle = (
+    <label className="flex items-start gap-3 bg-purple-50 border border-purple-100 rounded-xl p-4 cursor-pointer select-none mb-4">
+      <input
+        type="checkbox"
+        checked={contestantsTBD}
+        onChange={(e) => onToggleTBD(e.target.checked)}
+        className="w-4 h-4 mt-0.5 accent-[#6b2fa5] flex-shrink-0"
+      />
+      <span>
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <Clock3 className="w-3.5 h-3.5 text-[#6b2fa5]" /> Contestants TBD
+        </span>
+        <span className="block text-xs text-slate-500 mt-0.5">
+          Publish this poll now with just the name and image, and add real contestants later —
+          e.g. once a linked nomination poll closes. It won't show as votable to visitors until
+          you do; the public page shows "Voting Poll Coming Soon" in the meantime.
+        </span>
+      </span>
+    </label>
+  )
+
+  if (contestantsTBD) {
+    return (
+      <div className="space-y-4">
+        {tbdToggle}
+        <div className="text-center py-10 bg-white/50 rounded-2xl border-2 border-dashed border-slate-300">
+          <Clock3 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-slate-500 text-sm font-medium">
+            No contestants to set up right now — you're good to publish.
+          </p>
+          <p className="text-slate-400 text-xs mt-1">
+            Come back to this poll's Edit page once you're ready to add the real lineup.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   // ── Single poll ──────────────────────────────────────────────────────────
   if (pollType === "single") {
@@ -31,6 +73,7 @@ export function ContestantsStep({ pollType, contestants, setContestants, categor
 
     return (
       <div className="space-y-4">
+        {tbdToggle}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
           {contestants.map((c, i) => (
             <ContestantRow key={i} contestant={c} index={i} folder="spotix/polls/contestants" onChange={(u) => update(i, u)} onRemove={() => remove(i)} removable={contestants.length > 2} />
@@ -80,6 +123,7 @@ export function ContestantsStep({ pollType, contestants, setContestants, categor
 
   return (
     <div className="space-y-4">
+      {tbdToggle}
       {categories.map((cat, i) => (
         <CategoryBlock
           key={cat.categoryId}

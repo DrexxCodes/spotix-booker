@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { X, Loader2, ChevronLeft, Search, Check } from "lucide-react"
+import { X, Loader2, ChevronLeft, Search, Check, Trophy } from "lucide-react"
 import { dicebearAvatarUrl } from "@/lib/dicebear"
 import { genContestantId, type ContestantForm } from "../lib/factories"
 
@@ -41,6 +41,8 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
 
   const [nominees, setNominees] = useState<Nominee[]>([])
   const [nomineesLoading, setNomineesLoading] = useState(false)
+  const [nominationThreshold, setNominationThreshold] = useState<number | null>(null)
+  const [qualifiedOnly, setQualifiedOnly] = useState(false)
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
@@ -66,6 +68,7 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
     setActiveCategoryId(poll.categories[0]?.categoryId ?? null)
     setStep("nominees")
     setSelected(new Set())
+    setQualifiedOnly(false)
   }
 
   // ── Load nominees for the active category ───────────────────────────────
@@ -76,7 +79,10 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
       try {
         const res = await fetch(`/api/polls/nominations/${selectedPoll.pollId}/nominees?categoryId=${activeCategoryId}`)
         const data = await res.json()
-        if (res.ok) setNominees(data.nominees ?? [])
+        if (res.ok) {
+          setNominees(data.nominees ?? [])
+          setNominationThreshold(data.nominationThreshold ?? null)
+        }
       } finally {
         setNomineesLoading(false)
       }
@@ -84,7 +90,11 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
     load()
   }, [selectedPoll, activeCategoryId])
 
-  const filtered = nominees.filter((n) => n.name.toLowerCase().includes(search.toLowerCase()))
+  const isQualified = (n: Nominee) => nominationThreshold != null && n.count >= nominationThreshold
+
+  const filtered = nominees
+    .filter((n) => n.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((n) => !qualifiedOnly || isQualified(n))
 
   const toggle = (nomineeId: string) => {
     setSelected((prev) => {
@@ -169,7 +179,7 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
                 {selectedPoll?.categories.map((c) => (
                   <button
                     key={c.categoryId}
-                    onClick={() => { setActiveCategoryId(c.categoryId); setSelected(new Set()) }}
+                    onClick={() => { setActiveCategoryId(c.categoryId); setSelected(new Set()); setQualifiedOnly(false) }}
                     className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-colors
                       ${c.categoryId === activeCategoryId ? "bg-[#6b2fa5] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
                   >
@@ -198,11 +208,28 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
                 </button>
               </div>
 
+              {nominationThreshold != null && (
+                <label className="flex items-center gap-2 mb-3 cursor-pointer select-none w-fit">
+                  <input
+                    type="checkbox"
+                    checked={qualifiedOnly}
+                    onChange={(e) => setQualifiedOnly(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-[#6b2fa5]"
+                  />
+                  <span className="flex items-center gap-1 text-xs font-medium text-slate-600">
+                    <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                    Qualified only ({nominationThreshold}+ nominations)
+                  </span>
+                </label>
+              )}
+
               {/* Nominee list */}
               {nomineesLoading ? (
                 <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-[#6b2fa5]" /></div>
               ) : filtered.length === 0 ? (
-                <p className="text-center text-slate-400 text-sm py-8">No nominees in this category yet.</p>
+                <p className="text-center text-slate-400 text-sm py-8">
+                  {qualifiedOnly ? "No qualified nominees in this category yet." : "No nominees in this category yet."}
+                </p>
               ) : (
                 <div className="space-y-2">
                   {filtered.map((n) => {
@@ -217,7 +244,14 @@ export function ImportNomineesDialog({ onClose, onImport }: ImportNomineesDialog
                         <img src={dicebearAvatarUrl(n.name)} alt="" className="w-9 h-9 rounded-full bg-slate-100 flex-shrink-0" />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold text-slate-900 truncate capitalize">{n.name}</p>
-                          <p className="text-xs text-slate-500">{n.count} nomination{n.count !== 1 ? "s" : ""}</p>
+                          <p className="text-xs text-slate-500 flex items-center gap-1">
+                            {n.count} nomination{n.count !== 1 ? "s" : ""}
+                            {isQualified(n) && (
+                              <span className="inline-flex items-center gap-0.5 text-amber-600 font-medium">
+                                <Trophy className="w-3 h-3" /> Qualified
+                              </span>
+                            )}
+                          </p>
                         </div>
                         <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 border-2
                           ${isSelected ? "bg-[#6b2fa5] border-[#6b2fa5]" : "border-slate-300"}`}>

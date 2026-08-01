@@ -142,6 +142,7 @@ export async function POST(req: NextRequest) {
     pollType         = "single",
     buyerBearsBurden = true,
     statsVisible     = true,
+    contestantsTBD   = false,
   } = body
 
   // ── Common validation ───────────────────────────────────────────────────────
@@ -158,7 +159,12 @@ export async function POST(req: NextRequest) {
   if (end <= start) return fail("End date/time must be after start date/time", 400)
 
   // ── Single poll ─────────────────────────────────────────────────────────────
-  if (pollType === "single") {
+  // contestantsTBD skips ALL contestant/category requirements below —
+  // the organiser is publishing name/image/schedule now and adding real
+  // contestants later (typically once a linked nomination poll closes).
+  // The write step forces contestants/categories to [] regardless of what
+  // was sent, so this bypass can't be used to sneak in half-valid data.
+  if (pollType === "single" && !contestantsTBD) {
     const priceErr = validateVotePrice(Number(pollPrice ?? 0))
     if (priceErr) return fail(priceErr, 400)
 
@@ -172,10 +178,15 @@ export async function POST(req: NextRequest) {
       if (!c.name?.trim())         return fail(`Contestant ${i + 1}: name is required`, 400)
       if (!c.image?.trim())        return fail(`Contestant ${i + 1}: image is required`, 400)
     }
+  } else if (pollType === "single") {
+    // TBD single poll — price is still meaningful (applies once contestants
+    // are added later), so still validate it if one was provided.
+    const priceErr = validateVotePrice(Number(pollPrice ?? 0))
+    if (priceErr) return fail(priceErr, 400)
   }
 
   // ── Group poll ──────────────────────────────────────────────────────────────
-  if (pollType === "group") {
+  if (pollType === "group" && !contestantsTBD) {
     if (!Array.isArray(categories) || categories.length < 1)
       return fail("At least 1 top-level category is required for a group poll", 400)
     if (categories.length > MAX_GROUP_TOP_CATEGORIES)
@@ -209,6 +220,7 @@ export async function POST(req: NextRequest) {
       pollEntries: [],
       buyerBearsBurden: Boolean(buyerBearsBurden),
       statsVisible:     Boolean(statsVisible),
+      contestantsTBD:   Boolean(contestantsTBD),
       status:    "active",
       suspended: false,
       flagged:   false,
@@ -216,7 +228,14 @@ export async function POST(req: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     }
 
-    if (pollType === "single") {
+    if (contestantsTBD) {
+      // Never trust the client's contestants/categories while TBD, even
+      // though validation was already skipped above for them — force
+      // empty regardless of what was sent.
+      doc.pollPrice   = pollType === "single" ? Number(pollPrice ?? 0) : 0
+      doc.contestants = []
+      doc.categories  = []
+    } else if (pollType === "single") {
       doc.pollPrice   = Number(pollPrice ?? 0)
       doc.contestants = contestants.map((c: any) => ({
         contestantId: c.contestantId,
@@ -227,9 +246,7 @@ export async function POST(req: NextRequest) {
         votes:        0,
       }))
       doc.categories  = []
-    }
-
-    if (pollType === "group") {
+    } else if (pollType === "group") {
       doc.pollPrice   = 0
       doc.contestants = []
       doc.categories  = sanitizeCategoryTree(categories)

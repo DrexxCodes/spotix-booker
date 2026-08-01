@@ -19,6 +19,16 @@ export const MAX_NOMINEE_NAME_LENGTH = 60
 /** Min length (chars) of a nominated name, post-trim. */
 export const MIN_NOMINEE_NAME_LENGTH = 3
 
+/**
+ * Nomination Threshold bounds — the organiser-set cap on how many times
+ * one nominee can be nominated before they're "qualified" and further
+ * nominations for them are rejected. Set from
+ * /polls/nominations/[pollId]/settings; stored as nomination_threshold
+ * on the poll (null = unlimited).
+ */
+export const MIN_NOMINATION_THRESHOLD = 1
+export const MAX_NOMINATION_THRESHOLD = 100000
+
 export interface NominationCategory {
   categoryId: string
   name: string

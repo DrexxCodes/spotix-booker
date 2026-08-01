@@ -29,6 +29,7 @@ const initialForm: PollForm = {
   pollType: "single",
   buyerBearsBurden: true,
   statsVisible: true,
+  contestantsTBD: false,
 }
 
 interface DraftPayload {
@@ -153,9 +154,16 @@ function CreatePollPageInner() {
       pollType: form.pollType,
       buyerBearsBurden: form.buyerBearsBurden,
       statsVisible: form.statsVisible,
+      contestantsTBD: form.contestantsTBD,
     }
 
-    if (form.pollType === "single") {
+    if (form.contestantsTBD) {
+      // Server also enforces this regardless of what's sent — see
+      // api/polls/create/route.ts — but don't even bother serialising
+      // whatever half-filled rows are sitting in local state.
+      if (form.pollType === "single") { payload.pollPrice = form.pollPrice; payload.contestants = [] }
+      else payload.categories = []
+    } else if (form.pollType === "single") {
       payload.pollPrice = form.pollPrice
       payload.contestants = contestants.map((c) => ({
         contestantId: c.contestantId, name: c.name, image: c.imageUrl,
@@ -236,6 +244,8 @@ function CreatePollPageInner() {
             pollType={form.pollType}
             contestants={contestants}
             setContestants={setContestants}
+            contestantsTBD={form.contestantsTBD}
+            onToggleTBD={(tbd) => setForm({ ...form, contestantsTBD: tbd })}
             categories={categories}
             setCategories={setCategories}
           />

@@ -33,6 +33,12 @@ export interface PollForm {
   pollType: "single" | "group"
   buyerBearsBurden: boolean
   statsVisible: boolean
+  /** When true, this poll is created with name/image/schedule set but no
+   *  real contestants yet — typically waiting on an open-nomination poll
+   *  to close first. Public page shows "Voting Poll Coming Soon" instead
+   *  of an empty contestant list. See ContestantsStep.tsx and
+   *  api/polls/create/route.ts. */
+  contestantsTBD: boolean
 }
 
 // ─── ID generators ────────────────────────────────────────────────────────────
