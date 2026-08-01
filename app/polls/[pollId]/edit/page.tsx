@@ -1,15 +1,16 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
-import { uploadImage } from "@/lib/image-uploader"
+import { dicebearAvatarUrl } from "@/lib/dicebear"
 import {
-  Loader, ArrowLeft, Save, AlertCircle, CheckCircle, ImageIcon,
+  Loader, Loader2, ArrowLeft, Save, AlertCircle, CheckCircle, ImageIcon,
   Info, Calendar, Users, Plus, Trash2, ChevronRight, ChevronLeft,
   Layers, FolderPlus, Tag, ChevronDown, ChevronUp, ToggleLeft, ToggleRight,
+  Download, User, ImagePlus, Wand2,
 } from "lucide-react"
 import {
   MIN_VOTE_PRICE, MAX_VOTE_PRICE,
@@ -17,6 +18,14 @@ import {
   MAX_GROUP_TOTAL_SUBCATEGORIES, MAX_CONTESTANTS_PER_CATEGORY,
   countSubcategories,
 } from "@/lib/poll-config"
+// Reuse the exact same ID-generation, upload, and dialog logic used in poll
+// creation so editing behaves identically (per babe's request).
+import {
+  genContestantId, genCategoryId, doUpload,
+  type ContestantForm as CreateContestantForm,
+} from "../../create/lib/factories"
+import { ImageChoiceDialog } from "../../create/components/ImageChoiceDialog"
+import { ImportNomineesDialog } from "../../create/components/ImportNomineesDialog"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +34,7 @@ interface ContestantForm {
   name:         string
   imagePreview: string | null
   imageUrl:     string | null
+  imageType:    "uploaded" | "generated" | null
   uploading:    boolean
   isExisting:   boolean
   hasVotes:     boolean   // from DB — cannot be deleted if true
@@ -58,28 +68,6 @@ interface PollMeta {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function genContestantId(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-  let id = "sp-cont-"
-  for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length))
-  return id
-}
-
-function genCategoryId(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-  let id = "sp-cat-"
-  for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length))
-  return id
-}
-
-async function doUpload(file: File, folder: string): Promise<string | null> {
-  try {
-    const { uploadPromise } = uploadImage(file, { cloudinaryFolder: folder })
-    const result = await uploadPromise
-    return result.url
-  } catch { return null }
-}
-
 /** Recursively check if any contestant in the category tree has votes */
 function categoryHasVotes(cat: any): boolean {
   if ((cat.contestants ?? []).some((c: any) => (c.votes ?? 0) > 0)) return true
@@ -97,6 +85,7 @@ function hydrateCategories(cats: any[]): CategoryForm[] {
       name:         c.name ?? "",
       imagePreview: c.image ?? null,
       imageUrl:     c.image ?? null,
+      imageType:    null,
       uploading:    false,
       isExisting:   true,
       hasVotes:     (c.votes ?? 0) > 0,
@@ -115,14 +104,32 @@ function serializeCategory(cat: CategoryForm): object {
     name:          cat.name,
     pollPrice:     cat.pollPrice,
     contestants:   cat.subcategories.length === 0
-      ? cat.contestants.map((c) => ({ contestantId: c.contestantId, name: c.name, image: c.imageUrl }))
+      ? cat.contestants.map((c) => ({
+          contestantId: c.contestantId, name: c.name, image: c.imageUrl,
+          imageType: c.imageType ?? "uploaded",
+          imageSeed: c.imageType === "generated" ? c.contestantId : null,
+        }))
       : [],
     subcategories: cat.subcategories.map(serializeCategory),
   }
 }
 
 function emptyContestant(): ContestantForm {
-  return { contestantId: "", name: "", imagePreview: null, imageUrl: null, uploading: false, isExisting: false, hasVotes: false }
+  return { contestantId: "", name: "", imagePreview: null, imageUrl: null, imageType: null, uploading: false, isExisting: false, hasVotes: false }
+}
+
+/** Map a contestant imported from a nomination poll (create-shaped) into this page's ContestantForm */
+function fromImportedContestant(c: CreateContestantForm): ContestantForm {
+  return {
+    contestantId: c.contestantId,
+    name:         c.name,
+    imagePreview: c.imagePreview,
+    imageUrl:     c.imageUrl,
+    imageType:    "generated",
+    uploading:    false,
+    isExisting:   false,
+    hasVotes:     false,
+  }
 }
 
 function emptyCategory(): CategoryForm {
@@ -214,14 +221,34 @@ function ContestantRow({
   onUpdate: (p: Partial<ContestantForm>) => void
   onRemove: () => void; canRemove: boolean
 }) {
-  const handleImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return
-    onUpdate({ imagePreview: URL.createObjectURL(file), imageUrl: null, uploading: true })
+  const [showChoice, setShowChoice] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Same ID-generation rule as poll creation: a new contestant's ID is
+  // silently assigned the first time a photo is uploaded or generated —
+  // there's no manual "Generate ID" step. Existing contestants keep their
+  // locked, already-persisted ID.
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return
+    const preview = URL.createObjectURL(file)
+    const withId = c.contestantId || genContestantId()
+    onUpdate({ contestantId: withId, imagePreview: preview, imageType: "uploaded", uploading: true })
     const url = await doUpload(file, "spotix/polls/contestants")
-    if (url) onUpdate({ imageUrl: url, uploading: false })
-    else onUpdate({ uploading: false })
+    onUpdate({ contestantId: withId, imagePreview: preview, imageUrl: url, imageType: "uploaded", uploading: false })
   }
-  const inputId = `edit-cont-${c.contestantId || idx}`
+
+  const handleGenerate = () => {
+    const withId = c.contestantId || genContestantId()
+    const url = dicebearAvatarUrl(withId)
+    onUpdate({ contestantId: withId, imagePreview: url, imageUrl: url, imageType: "generated", uploading: false })
+    setShowChoice(false)
+  }
+
+  const handleUploadChoice = () => {
+    setShowChoice(false)
+    // Defer so the dialog unmounts before the native file picker opens
+    setTimeout(() => fileInputRef.current?.click(), 0)
+  }
 
   return (
     <div className={`border rounded-xl p-3 space-y-2.5 ${c.isExisting ? "border-gray-200 bg-white" : "border-[#6b2fa5]/20 bg-[#6b2fa5]/3"}`}>
@@ -229,6 +256,7 @@ function ContestantRow({
         <div className="flex items-center gap-1.5">
           <p className="text-xs font-semibold text-gray-600">#{idx + 1}</p>
           {!c.isExisting && <span className="text-[10px] bg-[#6b2fa5]/10 text-[#6b2fa5] px-1.5 py-0.5 rounded-full font-semibold">New</span>}
+          {c.isExisting && <span className="text-[10px] bg-gray-50 text-gray-400 border border-gray-200 px-1.5 py-0.5 rounded-full font-medium">ID locked</span>}
           {c.hasVotes && <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-semibold">Has votes</span>}
         </div>
         {canRemove && !c.hasVotes && (
@@ -237,35 +265,40 @@ function ContestantRow({
           </button>
         )}
       </div>
-      <input type="text" placeholder="Name" value={c.name}
-        onChange={(e) => onUpdate({ name: e.target.value })}
-        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-[#6b2fa5]" />
-      <div className="flex gap-1.5">
-        <input type="text" value={c.contestantId} readOnly={c.isExisting}
-          placeholder={c.isExisting ? "ID locked" : "Generate ID…"}
-          onChange={(e) => !c.isExisting && onUpdate({ contestantId: e.target.value })}
-          className={`flex-1 px-2 py-1.5 border rounded-lg text-[10px] font-mono
-            ${c.isExisting ? "bg-gray-50 text-gray-400 border-gray-200" : "bg-white text-gray-700 border-gray-300"}`} />
-        {!c.isExisting && (
-          <button onClick={() => onUpdate({ contestantId: genContestantId() })}
-            className="px-2 py-1.5 bg-[#6b2fa5] text-white rounded-lg text-[10px] font-semibold hover:bg-[#5a1f8a] whitespace-nowrap">
-            Gen ID
-          </button>
-        )}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setShowChoice(true)}
+          className="relative w-12 h-12 rounded-full bg-gray-100 flex-shrink-0 overflow-hidden group"
+        >
+          {c.imagePreview ? (
+            <img src={c.imagePreview} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-300">
+              <User className="w-5 h-5" />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+            {c.uploading
+              ? <Loader2 className="w-3.5 h-3.5 text-white animate-spin" />
+              : c.imageType === "generated"
+              ? <Wand2 className="w-3.5 h-3.5 text-white" />
+              : <ImagePlus className="w-3.5 h-3.5 text-white" />}
+          </div>
+        </button>
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
+        <input type="text" placeholder="Name" value={c.name}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-[#6b2fa5]" />
       </div>
-      <label htmlFor={inputId}
-        className={`flex items-center gap-2 border-2 border-dashed rounded-lg p-2 cursor-pointer transition-colors
-          ${c.uploading ? "opacity-60 pointer-events-none" : "hover:border-[#6b2fa5]/40"}
-          ${c.imageUrl ? "border-green-300 bg-green-50/30" : "border-gray-200"}`}>
-        {c.imagePreview
-          ? <img src={c.imagePreview} alt="" className="w-10 h-10 rounded-md object-cover flex-shrink-0" />
-          : <div className="w-10 h-10 bg-gray-100 rounded-md flex items-center justify-center flex-shrink-0">
-              <ImageIcon className="w-4 h-4 text-gray-300" />
-            </div>}
-        <span className="text-xs text-gray-400">{c.uploading ? "Uploading…" : c.imageUrl ? "Photo ✓" : "Upload photo"}</span>
-        {c.uploading && <Loader className="w-3 h-3 animate-spin text-[#6b2fa5] ml-auto" />}
-      </label>
-      <input id={inputId} type="file" accept="image/*" className="hidden" onChange={handleImage} disabled={c.uploading} />
+
+      {showChoice && (
+        <ImageChoiceDialog
+          onUpload={handleUploadChoice}
+          onGenerate={handleGenerate}
+          onClose={() => setShowChoice(false)}
+        />
+      )}
     </div>
   )
 }
@@ -273,12 +306,13 @@ function ContestantRow({
 // ─── Category block (recursive) ───────────────────────────────────────────────
 
 function CategoryBlock({
-  cat, path, depth, totalSubcats, onUpdate, onRemove, canRemove,
+  cat, path, depth, totalSubcats, onUpdate, onRemove, canRemove, onOpenImport,
 }: {
   cat: CategoryForm; path: string; depth: number
   totalSubcats: number
   onUpdate: (u: CategoryForm) => void
   onRemove: () => void; canRemove: boolean
+  onOpenImport: (targetCategoryId: string) => void
 }) {
   const isLeaf   = cat.subcategories.length === 0
   const canAddSub = totalSubcats < MAX_GROUP_TOTAL_SUBCATEGORIES
@@ -328,7 +362,8 @@ function CategoryBlock({
               depth={depth + 1} totalSubcats={totalSubcats}
               onUpdate={(u) => updSub(si, u)}
               onRemove={() => rmSub(si)}
-              canRemove={!sub.hasVotes && cat.subcategories.length > 1} />
+              canRemove={!sub.hasVotes && cat.subcategories.length > 1}
+              onOpenImport={onOpenImport} />
           ))}
 
           {/* Add sub-category */}
@@ -353,12 +388,18 @@ function CategoryBlock({
                     canRemove={cat.contestants.length > 2} />
                 ))}
               </div>
-              {cat.contestants.length < MAX_CONTESTANTS_PER_CATEGORY && (
-                <button onClick={addCont}
-                  className="w-full py-1.5 border border-dashed border-gray-200 text-gray-400 rounded-lg text-xs font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> Add contestant
+              <div className="flex flex-wrap gap-2">
+                {cat.contestants.length < MAX_CONTESTANTS_PER_CATEGORY && (
+                  <button onClick={addCont}
+                    className="flex-1 py-1.5 border border-dashed border-gray-200 text-gray-400 rounded-lg text-xs font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Add contestant
+                  </button>
+                )}
+                <button onClick={() => onOpenImport(cat.categoryId)}
+                  className="flex-1 py-1.5 border border-dashed border-gray-300 text-gray-500 rounded-lg text-xs font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-1.5">
+                  <Download className="w-3.5 h-3.5" /> Import from Nominees
                 </button>
-              )}
+              </div>
             </>
           )}
           {!isLeaf && <p className="text-[10px] text-gray-400 italic px-1">Add contestants inside the sub-categories below.</p>}
@@ -427,6 +468,7 @@ export default function EditPollPage() {
           name:         c.name         ?? "",
           imagePreview: c.image        ?? null,
           imageUrl:     c.image        ?? null,
+          imageType:    null,
           uploading:    false,
           isExisting:   true,
           hasVotes:     (c.votes ?? 0) > 0,
@@ -453,12 +495,25 @@ export default function EditPollPage() {
   const updCont = (i: number, p: Partial<ContestantForm>) =>
     setContestants((prev) => prev.map((c, ci) => ci === i ? { ...c, ...p } : c))
 
-  const handleContestantImage = async (i: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return
-    updCont(i, { imagePreview: URL.createObjectURL(file), imageUrl: null, uploading: true })
-    const url = await doUpload(file, "spotix/polls/contestants")
-    if (url) updCont(i, { imageUrl: url, uploading: false })
-    else updCont(i, { uploading: false })
+  // ── Import from Nominees ────────────────────────────────────────────────────
+  // "root" targets the flat single-poll contestants list; any other value is
+  // the categoryId of the group-poll leaf category requesting the import.
+  const [importTarget, setImportTarget] = useState<string | null>(null)
+
+  const injectImported = (cats: CategoryForm[], targetId: string, imported: ContestantForm[]): CategoryForm[] =>
+    cats.map((cat) => {
+      if (cat.categoryId === targetId) return { ...cat, contestants: [...cat.contestants, ...imported] }
+      if (cat.subcategories.length > 0) return { ...cat, subcategories: injectImported(cat.subcategories, targetId, imported) }
+      return cat
+    })
+
+  const handleImport = (imported: CreateContestantForm[]) => {
+    const mapped = imported.map(fromImportedContestant)
+    if (importTarget === "root") {
+      setContestants((prev) => [...prev, ...mapped])
+    } else if (importTarget) {
+      setCategories((prev) => injectImported(prev, importTarget, mapped))
+    }
   }
 
   // ── Step navigation ─────────────────────────────────────────────────────────
@@ -493,7 +548,11 @@ export default function EditPollPage() {
 
       if (meta.pollType === "single") {
         payload.pollPrice   = meta.pollPrice
-        payload.contestants = contestants.map((c) => ({ contestantId: c.contestantId, name: c.name, image: c.imageUrl }))
+        payload.contestants = contestants.map((c) => ({
+          contestantId: c.contestantId, name: c.name, image: c.imageUrl,
+          imageType: c.imageType ?? "uploaded",
+          imageSeed: c.imageType === "generated" ? c.contestantId : null,
+        }))
       } else {
         payload.categories = categories.map(serializeCategory)
       }
@@ -685,50 +744,25 @@ export default function EditPollPage() {
                   </h2>
                   <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{contestants.length}/{MAX_SINGLE_CONTESTANTS}</span>
                 </div>
-                <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {contestants.map((c, idx) => (
-                    <div key={idx} className={`border rounded-xl p-4 space-y-3 ${c.isExisting ? "border-gray-200" : "border-[#6b2fa5]/30 bg-[#6b2fa5]/5"}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs font-semibold text-gray-700">Contestant {idx + 1}</p>
-                          {!c.isExisting && <span className="text-xs bg-[#6b2fa5]/10 text-[#6b2fa5] px-2 py-0.5 rounded-full font-medium">New</span>}
-                          {c.hasVotes && <span className="text-xs bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full font-medium">Has votes</span>}
-                        </div>
-                        {contestants.length > 2 && !c.hasVotes && (
-                          <button onClick={() => setContestants((p) => p.filter((_, i) => i !== idx))} className="p-1.5 hover:bg-red-50 rounded-lg">
-                            <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                          </button>
-                        )}
-                      </div>
-                      <input type="text" value={c.name} onChange={(e) => updCont(idx, { name: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#6b2fa5]" />
-                      <div className="flex gap-2">
-                        <input type="text" value={c.contestantId} disabled={c.isExisting}
-                          placeholder={c.isExisting ? "ID locked" : "Generate →"}
-                          className={`flex-1 px-3 py-2 border rounded-lg text-xs font-mono ${c.isExisting ? "bg-gray-50 text-gray-400 border-gray-200" : "border-gray-300"}`} />
-                        {!c.isExisting && (
-                          <button onClick={() => updCont(idx, { contestantId: genContestantId() })}
-                            className="px-3 py-2 bg-[#6b2fa5] text-white rounded-lg text-xs font-semibold hover:bg-[#5a1f8a]">Generate</button>
-                        )}
-                      </div>
-                      <label htmlFor={`edit-cimg-${idx}`}
-                        className={`block border-2 border-dashed rounded-lg p-3 text-center cursor-pointer transition-colors
-                          ${c.uploading ? "opacity-60 pointer-events-none" : "hover:border-[#6b2fa5]/40"}
-                          ${c.imageUrl ? "border-green-300 bg-green-50/30" : "border-gray-200"}`}>
-                        {c.imagePreview
-                          ? <img src={c.imagePreview} alt="" className="w-16 h-16 mx-auto rounded-lg object-cover" />
-                          : <div className="py-2"><ImageIcon className="w-5 h-5 text-gray-300 mx-auto mb-1" /><p className="text-xs text-gray-400">Upload photo</p></div>}
-                      </label>
-                      <input id={`edit-cimg-${idx}`} type="file" accept="image/*" className="hidden"
-                        onChange={(e) => handleContestantImage(idx, e)} disabled={c.uploading} />
-                    </div>
+                    <ContestantRow key={idx} c={c} idx={idx}
+                      onUpdate={(p) => updCont(idx, p)}
+                      onRemove={() => setContestants((p) => p.filter((_, i) => i !== idx))}
+                      canRemove={contestants.length > 2} />
                   ))}
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
                   {contestants.length < MAX_SINGLE_CONTESTANTS && (
                     <button onClick={() => setContestants((p) => [...p, emptyContestant()])}
-                      className="w-full py-2.5 border-2 border-dashed border-gray-200 text-gray-400 rounded-xl text-sm font-semibold hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-2">
+                      className="flex items-center gap-1.5 text-sm font-semibold text-[#6b2fa5] hover:bg-[#6b2fa5]/5 px-3 py-2 rounded-lg transition-colors">
                       <Plus className="w-4 h-4" /> Add Contestant
                     </button>
                   )}
+                  <button onClick={() => setImportTarget("root")}
+                    className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 border border-gray-300 hover:border-[#6b2fa5] hover:text-[#6b2fa5] px-3 py-2 rounded-lg transition-colors">
+                    <Download className="w-4 h-4" /> Import from Nominees
+                  </button>
                 </div>
               </div>
             )}
@@ -764,7 +798,8 @@ export default function EditPollPage() {
                       totalSubcats={totalSubcats}
                       onUpdate={(u) => setCategories((prev) => prev.map((c, i) => i === ci ? u : c))}
                       onRemove={() => setCategories((prev) => prev.filter((_, i) => i !== ci))}
-                      canRemove={!cat.hasVotes && categories.length > 1} />
+                      canRemove={!cat.hasVotes && categories.length > 1}
+                      onOpenImport={(targetId) => setImportTarget(targetId)} />
                   ))}
                 </div>
                 {categories.length < MAX_GROUP_TOP_CATEGORIES && (
@@ -774,6 +809,13 @@ export default function EditPollPage() {
                   </button>
                 )}
               </div>
+            )}
+
+            {importTarget && (
+              <ImportNomineesDialog
+                onClose={() => setImportTarget(null)}
+                onImport={handleImport}
+              />
             )}
 
             <div className="flex gap-3">

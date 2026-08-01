@@ -64,19 +64,19 @@ export const MAX_SINGLE_CONTESTANTS = 50
 // ── Group poll limits ─────────────────────────────────────────────────────────
 
 /** Maximum number of top-level (Tier 1) categories in a group poll. */
-export const MAX_GROUP_TOP_CATEGORIES = 20
+export const MAX_GROUP_TOP_CATEGORIES = 50
 
 /**
  * Maximum total number of sub-categories (Tier 2 and deeper) across the
  * entire group poll.  Top-level categories do NOT count toward this total.
  */
-export const MAX_GROUP_TOTAL_SUBCATEGORIES = 50
+export const MAX_GROUP_TOTAL_SUBCATEGORIES = 150
 
 /**
  * Maximum contestants inside any single category at any nesting level.
  * Applies to every category, whether it is a Tier-1 root or a deep leaf.
  */
-export const MAX_CONTESTANTS_PER_CATEGORY = 30
+export const MAX_CONTESTANTS_PER_CATEGORY = 35
 
 // ── Derived helpers ───────────────────────────────────────────────────────────
 
