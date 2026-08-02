@@ -2,7 +2,8 @@
 
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Loader2, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react"
+import Link from "next/link"
+import { Loader2, ChevronLeft, ChevronRight, ArrowLeft, AlertCircle } from "lucide-react"
 import { PollInfoStep } from "./components/PollInfoStep"
 import { ScheduleStep } from "./components/ScheduleStep"
 import { ContestantsStep } from "./components/ContestantsStep"
@@ -195,6 +196,10 @@ function CreatePollPageInner() {
 
   return (
     <div className="max-w-2xl lg:max-w-4xl mx-auto px-4 py-8">
+      <Link href="/polls" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800 mb-6 transition-colors">
+        <ArrowLeft className="w-4 h-4" /> Back to Polls
+      </Link>
+
       <h1 className="text-2xl font-bold text-slate-900 mb-1">Create a Poll</h1>
       <p className="text-slate-500 text-sm mb-5">
         Looking to run open nominations first?{" "}

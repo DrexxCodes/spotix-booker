@@ -1,10 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Clock3 } from "lucide-react"
+import { Plus, Clock3, Layers } from "lucide-react"
 import { ContestantRow } from "./ContestantRow"
 import { CategoryBlock } from "./CategoryBlock"
 import { ImportNomineesDialog } from "./ImportNomineesDialog"
+import { ImportNomineesCategoryDialog } from "./ImportNomineesCategoryDialog"
 import { emptyContestant, emptyCategory, type ContestantForm, type CategoryForm } from "../lib/factories"
 import { MAX_SINGLE_CONTESTANTS } from "@/lib/poll-config"
 
@@ -24,6 +25,11 @@ export function ContestantsStep({
   // Which category (single-poll: "root", group-poll: a categoryId) is currently
   // requesting an import. null = dialog closed.
   const [importTarget, setImportTarget] = useState<string | null>(null)
+
+  // Same idea, but for the whole-category importer (group polls only).
+  // "root" = top-level category list, otherwise a categoryId whose
+  // subcategories slot should receive the imported categories.
+  const [importCategoriesTarget, setImportCategoriesTarget] = useState<string | null>(null)
 
   const tbdToggle = (
     <label className="flex items-start gap-3 bg-purple-50 border border-purple-100 rounded-xl p-4 cursor-pointer select-none mb-4">
@@ -121,6 +127,15 @@ export function ContestantsStep({
       return cat
     })
 
+  // Recursively find a category by id (to append imported *categories* into
+  // its subcategories slot — used for nested group-poll structures).
+  const injectImportedCategories = (cats: CategoryForm[], targetId: string, imported: CategoryForm[]): CategoryForm[] =>
+    cats.map((cat) => {
+      if (cat.categoryId === targetId) return { ...cat, subcategories: [...cat.subcategories, ...imported] }
+      if (cat.subcategories.length > 0) return { ...cat, subcategories: injectImportedCategories(cat.subcategories, targetId, imported) }
+      return cat
+    })
+
   return (
     <div className="space-y-4">
       {tbdToggle}
@@ -132,18 +147,40 @@ export function ContestantsStep({
           onChange={(u) => updateCategory(i, u)}
           onRemove={() => removeCategory(i)}
           onOpenImport={(targetCategoryId) => setImportTarget(targetCategoryId)}
+          onOpenImportCategories={(targetCategoryId) => setImportCategoriesTarget(targetCategoryId)}
           eventImageFolder="spotix/polls/contestants"
         />
       ))}
 
-      <button onClick={addCategory} className="flex items-center gap-1.5 text-sm font-medium text-[#6b2fa5] hover:bg-[#6b2fa5]/5 px-3 py-2 rounded-lg border border-dashed border-[#6b2fa5]/40 transition-colors">
-        <Plus className="w-3.5 h-3.5" /> Add Category
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={addCategory} className="flex items-center gap-1.5 text-sm font-medium text-[#6b2fa5] hover:bg-[#6b2fa5]/5 px-3 py-2 rounded-lg border border-dashed border-[#6b2fa5]/40 transition-colors">
+          <Plus className="w-3.5 h-3.5" /> Add Category
+        </button>
+        <button
+          onClick={() => setImportCategoriesTarget("root")}
+          className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-[#6b2fa5] px-3 py-2 rounded-lg border border-dashed border-slate-300 hover:border-[#6b2fa5] transition-colors"
+        >
+          <Layers className="w-3.5 h-3.5" /> Import Categories
+        </button>
+      </div>
 
       {importTarget && (
         <ImportNomineesDialog
           onClose={() => setImportTarget(null)}
           onImport={(imported) => setCategories(injectImported(categories, importTarget, imported))}
+        />
+      )}
+
+      {importCategoriesTarget && (
+        <ImportNomineesCategoryDialog
+          onClose={() => setImportCategoriesTarget(null)}
+          onImport={(imported) =>
+            setCategories(
+              importCategoriesTarget === "root"
+                ? [...categories, ...imported]
+                : injectImportedCategories(categories, importCategoriesTarget, imported)
+            )
+          }
         />
       )}
     </div>

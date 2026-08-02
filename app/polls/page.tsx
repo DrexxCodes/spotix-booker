@@ -380,26 +380,39 @@ export default function PollsPage() {
                         }
                       </button>
                     ) : (
-                      // Normal poll — manage + settings + payout buttons
-                      <div className="flex gap-2">
-                        <Link
-                          href={`/polls/${poll.id}`}
-                          className="flex-1 py-2 text-center bg-[#6b2fa5]/10 text-[#6b2fa5] rounded-xl text-xs font-semibold hover:bg-[#6b2fa5]/20 transition-colors flex items-center justify-center gap-1"
+                      // Normal poll — manage + settings + payout + duplicate buttons
+                      <div className="flex flex-col gap-2">
+                        <div className="flex gap-2">
+                          <Link
+                            href={`/polls/${poll.id}`}
+                            className="flex-1 py-2 text-center bg-[#6b2fa5]/10 text-[#6b2fa5] rounded-xl text-xs font-semibold hover:bg-[#6b2fa5]/20 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <BarChart2 className="w-3.5 h-3.5" /> Manage
+                          </Link>
+                          <Link
+                            href={`/polls/${poll.id}/settings`}
+                            className="py-2 px-3 text-center bg-slate-100 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-200 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <Settings2 className="w-3.5 h-3.5" />
+                          </Link>
+                          <Link
+                            href={`/polls/${poll.id}/payout`}
+                            className="flex-1 py-2 text-center bg-gray-100 text-gray-600 rounded-xl text-xs font-semibold hover:bg-gray-200 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <TrendingUp className="w-3.5 h-3.5" /> Payout
+                          </Link>
+                        </div>
+                        <button
+                          onClick={() => handleDuplicate(poll)}
+                          disabled={!!duplicating[poll.id]}
+                          title="Duplicate this poll"
+                          className="w-full py-2 text-center bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-semibold hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] transition-colors flex items-center justify-center gap-1 disabled:opacity-60"
                         >
-                          <BarChart2 className="w-3.5 h-3.5" /> Manage
-                        </Link>
-                        <Link
-                          href={`/polls/${poll.id}/settings`}
-                          className="py-2 px-3 text-center bg-slate-100 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-200 transition-colors flex items-center justify-center gap-1"
-                        >
-                          <Settings2 className="w-3.5 h-3.5" />
-                        </Link>
-                        <Link
-                          href={`/polls/${poll.id}/payout`}
-                          className="flex-1 py-2 text-center bg-gray-100 text-gray-600 rounded-xl text-xs font-semibold hover:bg-gray-200 transition-colors flex items-center justify-center gap-1"
-                        >
-                          <TrendingUp className="w-3.5 h-3.5" /> Payout
-                        </Link>
+                          {duplicating[poll.id]
+                            ? <><Loader className="w-3.5 h-3.5 animate-spin" /> Duplicating…</>
+                            : <><Copy className="w-3.5 h-3.5" /> Duplicate</>
+                          }
+                        </button>
                       </div>
                     )}
                   </div>

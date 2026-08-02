@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronDown, ChevronUp, Plus, Trash2, FolderPlus, Download } from "lucide-react"
+import { ChevronDown, ChevronUp, Plus, Trash2, FolderPlus, Download, Layers } from "lucide-react"
 import { ContestantRow } from "./ContestantRow"
 import { emptyContestant, emptyCategory, type CategoryForm, type ContestantForm } from "../lib/factories"
 
@@ -10,10 +10,14 @@ interface CategoryBlockProps {
   onChange: (updated: CategoryForm) => void
   onRemove: () => void
   onOpenImport: (targetCategoryId: string) => void
+  /** Opens the whole-category importer, targeting this category's
+   *  subcategories slot (so imported nomination categories land as nested
+   *  categories right here, at whatever depth this block is at). */
+  onOpenImportCategories: (targetCategoryId: string) => void
   eventImageFolder: string
 }
 
-export function CategoryBlock({ category, depth, onChange, onRemove, onOpenImport, eventImageFolder }: CategoryBlockProps) {
+export function CategoryBlock({ category, depth, onChange, onRemove, onOpenImport, onOpenImportCategories, eventImageFolder }: CategoryBlockProps) {
   const isLeaf = category.subcategories.length === 0
 
   const updateContestant = (i: number, updated: ContestantForm) => {
@@ -75,6 +79,7 @@ export function CategoryBlock({ category, depth, onChange, onRemove, onOpenImpor
               onChange={(u) => updateSubcategory(i, u)}
               onRemove={() => removeSubcategory(i)}
               onOpenImport={onOpenImport}
+              onOpenImportCategories={onOpenImportCategories}
               eventImageFolder={eventImageFolder}
             />
           ))}
@@ -108,9 +113,17 @@ export function CategoryBlock({ category, depth, onChange, onRemove, onOpenImpor
           )}
 
           {depth < 2 && (
-            <button onClick={addSubcategory} className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-[#6b2fa5] px-3 py-1.5 rounded-lg border border-dashed border-slate-300 hover:border-[#6b2fa5] transition-colors">
-              <FolderPlus className="w-3.5 h-3.5" /> Add Sub-category
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={addSubcategory} className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-[#6b2fa5] px-3 py-1.5 rounded-lg border border-dashed border-slate-300 hover:border-[#6b2fa5] transition-colors">
+                <FolderPlus className="w-3.5 h-3.5" /> Add Sub-category
+              </button>
+              <button
+                onClick={() => onOpenImportCategories(category.categoryId)}
+                className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-[#6b2fa5] px-3 py-1.5 rounded-lg border border-dashed border-slate-300 hover:border-[#6b2fa5] transition-colors"
+              >
+                <Layers className="w-3.5 h-3.5" /> Import Categories
+              </button>
+            </div>
           )}
         </div>
       )}

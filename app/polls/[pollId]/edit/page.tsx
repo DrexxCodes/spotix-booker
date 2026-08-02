@@ -12,6 +12,7 @@ import {
   Layers, FolderPlus, Tag, ChevronDown, ChevronUp, ToggleLeft, ToggleRight,
   Download, User, ImagePlus, Wand2,
 } from "lucide-react"
+import type { CategoryForm as CreateCategoryForm } from "../../create/lib/factories"
 import {
   MIN_VOTE_PRICE, MAX_VOTE_PRICE,
   MAX_SINGLE_CONTESTANTS, MAX_GROUP_TOP_CATEGORIES,
@@ -26,6 +27,7 @@ import {
 } from "../../create/lib/factories"
 import { ImageChoiceDialog } from "../../create/components/ImageChoiceDialog"
 import { ImportNomineesDialog } from "../../create/components/ImportNomineesDialog"
+import { ImportNomineesCategoryDialog } from "../../create/components/ImportNomineesCategoryDialog"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -129,6 +131,20 @@ function fromImportedContestant(c: CreateContestantForm): ContestantForm {
     uploading:    false,
     isExisting:   false,
     hasVotes:     false,
+  }
+}
+
+/** Map a category tree imported from a nomination poll (create-shaped) into this page's CategoryForm */
+function fromImportedCategory(cat: CreateCategoryForm): CategoryForm {
+  return {
+    categoryId: cat.categoryId,
+    name: cat.name,
+    pollPrice: cat.pollPrice,
+    contestants: cat.contestants.map(fromImportedContestant),
+    subcategories: cat.subcategories.map(fromImportedCategory),
+    expanded: true,
+    isExisting: false,
+    hasVotes: false,
   }
 }
 
@@ -306,13 +322,17 @@ function ContestantRow({
 // ─── Category block (recursive) ───────────────────────────────────────────────
 
 function CategoryBlock({
-  cat, path, depth, totalSubcats, onUpdate, onRemove, canRemove, onOpenImport,
+  cat, path, depth, totalSubcats, onUpdate, onRemove, canRemove, onOpenImport, onOpenImportCategories,
 }: {
   cat: CategoryForm; path: string; depth: number
   totalSubcats: number
   onUpdate: (u: CategoryForm) => void
   onRemove: () => void; canRemove: boolean
   onOpenImport: (targetCategoryId: string) => void
+  /** Opens the whole-category importer targeting this category's
+   *  subcategories slot, so imported nomination categories land as nested
+   *  categories right here. */
+  onOpenImportCategories: (targetCategoryId: string) => void
 }) {
   const isLeaf   = cat.subcategories.length === 0
   const canAddSub = totalSubcats < MAX_GROUP_TOTAL_SUBCATEGORIES
@@ -363,15 +383,22 @@ function CategoryBlock({
               onUpdate={(u) => updSub(si, u)}
               onRemove={() => rmSub(si)}
               canRemove={!sub.hasVotes && cat.subcategories.length > 1}
-              onOpenImport={onOpenImport} />
+              onOpenImport={onOpenImport}
+              onOpenImportCategories={onOpenImportCategories} />
           ))}
 
-          {/* Add sub-category */}
+          {/* Add sub-category / import categories */}
           {canAddSub && (
-            <button onClick={addSub}
-              className="w-full py-1.5 border border-dashed border-[#6b2fa5]/30 text-[#6b2fa5] rounded-lg text-xs font-medium hover:bg-[#6b2fa5]/5 flex items-center justify-center gap-1.5">
-              <FolderPlus className="w-3.5 h-3.5" /> Add sub-category
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={addSub}
+                className="flex-1 py-1.5 border border-dashed border-[#6b2fa5]/30 text-[#6b2fa5] rounded-lg text-xs font-medium hover:bg-[#6b2fa5]/5 flex items-center justify-center gap-1.5">
+                <FolderPlus className="w-3.5 h-3.5" /> Add sub-category
+              </button>
+              <button onClick={() => onOpenImportCategories(cat.categoryId)}
+                className="flex-1 py-1.5 border border-dashed border-gray-300 text-gray-500 rounded-lg text-xs font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-1.5">
+                <Layers className="w-3.5 h-3.5" /> Import categories
+              </button>
+            </div>
           )}
 
           {/* Contestants — only for leaf nodes */}
@@ -513,6 +540,27 @@ export default function EditPollPage() {
       setContestants((prev) => [...prev, ...mapped])
     } else if (importTarget) {
       setCategories((prev) => injectImported(prev, importTarget, mapped))
+    }
+  }
+
+  // ── Import whole categories from nominees ───────────────────────────────────
+  // "root" targets the top-level category list; any other value is the
+  // categoryId whose subcategories slot should receive the imported categories.
+  const [importCategoriesTarget, setImportCategoriesTarget] = useState<string | null>(null)
+
+  const injectImportedCategories = (cats: CategoryForm[], targetId: string, imported: CategoryForm[]): CategoryForm[] =>
+    cats.map((cat) => {
+      if (cat.categoryId === targetId) return { ...cat, subcategories: [...cat.subcategories, ...imported] }
+      if (cat.subcategories.length > 0) return { ...cat, subcategories: injectImportedCategories(cat.subcategories, targetId, imported) }
+      return cat
+    })
+
+  const handleImportCategories = (imported: CreateCategoryForm[]) => {
+    const mapped = imported.map(fromImportedCategory)
+    if (importCategoriesTarget === "root") {
+      setCategories((prev) => [...prev, ...mapped])
+    } else if (importCategoriesTarget) {
+      setCategories((prev) => injectImportedCategories(prev, importCategoriesTarget, mapped))
     }
   }
 
@@ -799,14 +847,21 @@ export default function EditPollPage() {
                       onUpdate={(u) => setCategories((prev) => prev.map((c, i) => i === ci ? u : c))}
                       onRemove={() => setCategories((prev) => prev.filter((_, i) => i !== ci))}
                       canRemove={!cat.hasVotes && categories.length > 1}
-                      onOpenImport={(targetId) => setImportTarget(targetId)} />
+                      onOpenImport={(targetId) => setImportTarget(targetId)}
+                      onOpenImportCategories={(targetId) => setImportCategoriesTarget(targetId)} />
                   ))}
                 </div>
                 {categories.length < MAX_GROUP_TOP_CATEGORIES && (
-                  <button onClick={() => setCategories((p) => [...p, emptyCategory()])}
-                    className="w-full py-3 border-2 border-dashed border-[#6b2fa5]/30 text-[#6b2fa5] rounded-xl text-sm font-medium hover:bg-[#6b2fa5]/5 flex items-center justify-center gap-2">
-                    <FolderPlus className="w-4 h-4" /> Add Top-Level Category
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setCategories((p) => [...p, emptyCategory()])}
+                      className="flex-1 py-3 border-2 border-dashed border-[#6b2fa5]/30 text-[#6b2fa5] rounded-xl text-sm font-medium hover:bg-[#6b2fa5]/5 flex items-center justify-center gap-2">
+                      <FolderPlus className="w-4 h-4" /> Add Top-Level Category
+                    </button>
+                    <button onClick={() => setImportCategoriesTarget("root")}
+                      className="flex-1 py-3 border-2 border-dashed border-gray-300 text-gray-500 rounded-xl text-sm font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-2">
+                      <Layers className="w-4 h-4" /> Import Categories
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -815,6 +870,13 @@ export default function EditPollPage() {
               <ImportNomineesDialog
                 onClose={() => setImportTarget(null)}
                 onImport={handleImport}
+              />
+            )}
+
+            {importCategoriesTarget && (
+              <ImportNomineesCategoryDialog
+                onClose={() => setImportCategoriesTarget(null)}
+                onImport={handleImportCategories}
               />
             )}
 
