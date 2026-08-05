@@ -6,6 +6,16 @@ import "./globals.css"
 import { Nav } from "@/components/nav"
 import { Footer } from "@/components/footer"
 
+// Every route in this app renders differently depending on the spotix_at
+// cookie (via proxy.ts + AuthProvider), so nothing here is safe to
+// statically prerender or cache — a stale render would show one booker's
+// (or a logged-out visitor's) shell to someone else, or serve a stale
+// auth decision after a token refresh. Forcing dynamic rendering at the
+// root makes every nested route dynamic too, and is what actually fixes
+// the "stuck on preloader until I refresh" issue in production — see
+// proxy.ts's noStore() helper for the other half of this fix.
+export const dynamic = "force-dynamic"
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],

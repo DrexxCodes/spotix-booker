@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import { Preloader } from "@/components/preloader"
 import { ParticlesBackground } from "@/components/particles-background"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { Mail, Lock, AlertCircle, ChevronRight, Eye, EyeOff } from "lucide-react"
 import Image from "next/image"
 import {
@@ -17,7 +17,6 @@ import {
 import { triggerAuthRefresh, useAuth } from "@/hooks/useAuth"
 
 export default function LoginClient() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -44,12 +43,20 @@ export default function LoginClient() {
   useEffect(() => {
     if (authLoading) return
     if (!user) return
+    // Hard navigation, not router.replace(): this fires right after a silent
+    // token refresh has just set a brand-new spotix_at cookie. A soft
+    // client-side navigation here can be served a stale cached RSC payload
+    // by Next's client Router Cache in production (next dev never caches,
+    // which is why this only ever bit us in prod) — leaving the page stuck
+    // on the Preloader below until a manual refresh forces a real request.
+    // window.location.href always makes a genuine new request, so it's
+    // guaranteed to hit proxy.ts with the fresh cookie already attached.
     if (!user.isBooker) {
-      router.replace("/not-booker")
+      window.location.href = "/not-booker"
     } else {
-      router.replace(redirect)
+      window.location.href = redirect
     }
-  }, [user, authLoading, redirect, router])
+  }, [user, authLoading, redirect])
 
   // Show error with graceful fade-in, then auto-fade-out after 5s
   const showError = (msg: string) => {
@@ -96,12 +103,15 @@ export default function LoginClient() {
 
       triggerAuthRefresh()
 
+      // Hard navigation for the same reason as the reactive redirect above —
+      // /api/auth/login just set a fresh spotix_at cookie via Set-Cookie, and
+      // a soft router.replace() risks a stale cached RSC response in prod.
       if (!isBooker) {
-        router.replace("/not-booker")
+        window.location.href = "/not-booker"
         return
       }
 
-      router.replace(redirect)
+      window.location.href = redirect
     } catch (err: any) {
       console.error("Login error:", err)
 

@@ -53,6 +53,26 @@ const NON_BOOKER_ROUTES = new Set(["/not-booker"]);
 // ── Cookie name (must match what /api/auth sets) ───────────────────────────────
 const ACCESS_TOKEN_COOKIE = "spotix_at";
 
+/**
+ * Every response proxy returns MUST be uncacheable.
+ *
+ * Without this, Next.js's client Router Cache / Full Route Cache is free to
+ * reuse a previous auth decision (allow, or redirect-to-login) for a soft
+ * client-side navigation instead of re-running this middleware against the
+ * request's current cookies. That's invisible in `next dev` (which never
+ * caches route responses) but very visible in production: a page that just
+ * got a fresh `spotix_at` cookie via silent refresh can still get served a
+ * stale "redirect to /login" decision on the very next soft navigation,
+ * which looks exactly like "stuck on the preloader until I hit refresh."
+ *
+ * A hard refresh always "fixes" it because it bypasses the client cache and
+ * forces a brand-new request through this middleware.
+ */
+function noStore(response: NextResponse): NextResponse {
+  response.headers.set("Cache-Control", "no-store, must-revalidate");
+  return response;
+}
+
 // ── proxy ─────────────────────────────────────────────────────────────────
 
 export async function proxy(request: NextRequest) {
@@ -65,16 +85,16 @@ export async function proxy(request: NextRequest) {
 
     // Already logged-in bookers visiting /login → home
     if (payload?.isBooker) {
-      return NextResponse.redirect(new URL("/", request.url));
+      return noStore(NextResponse.redirect(new URL("/", request.url)));
     }
 
     // Authenticated non-bookers visiting /login → /not-booker
     if (payload && !payload.isBooker) {
-      return NextResponse.redirect(new URL("/not-booker", request.url));
+      return noStore(NextResponse.redirect(new URL("/not-booker", request.url)));
     }
 
     // Unauthenticated → allow through to login page
-    return NextResponse.next();
+    return noStore(NextResponse.next());
   }
 
   // ── 2. Verify access token ───────────────────────────────────────────────────
@@ -97,22 +117,22 @@ export async function proxy(request: NextRequest) {
     if (pathname !== "/") {
       loginUrl.searchParams.set("redirect", pathname);
     }
-    return NextResponse.redirect(loginUrl);
+    return noStore(NextResponse.redirect(loginUrl));
   }
 
   // ── 3. Non-booker routes ─────────────────────────────────────────────────────
   if (NON_BOOKER_ROUTES.has(pathname)) {
     // Bookers don't need to see /not-booker — send them home
     if (payload.isBooker) {
-      return NextResponse.redirect(new URL("/", request.url));
+      return noStore(NextResponse.redirect(new URL("/", request.url)));
     }
     // Non-booker on /not-booker — allow
-    return NextResponse.next();
+    return noStore(NextResponse.next());
   }
 
   // ── 4. Protected routes — booker check ──────────────────────────────────────
   if (!payload.isBooker) {
-    return NextResponse.redirect(new URL("/not-booker", request.url));
+    return noStore(NextResponse.redirect(new URL("/not-booker", request.url)));
   }
 
   // ── 5. Authenticated booker — allow and forward identity headers ─────────────
@@ -130,7 +150,7 @@ export async function proxy(request: NextRequest) {
   requestHeaders.set("x-user-is-booker", String(payload.isBooker));
   requestHeaders.set("x-device-id", payload.deviceId);
 
-  return NextResponse.next({ request: { headers: requestHeaders } });
+  return noStore(NextResponse.next({ request: { headers: requestHeaders } }));
 }
 
 // ── Matcher ────────────────────────────────────────────────────────────────────
