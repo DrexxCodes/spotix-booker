@@ -1,31 +1,40 @@
 /**
  * app/api/payout/vault/route.ts
  *
- * "The Vault" — multi-signature payout workflow (spec §4).
+ * "The Vault" — multi-signature payout workflow.
+ *
+ * The Vault lets the Event Creator require multi-party sign-off before any
+ * payout for this event clears. Once enabled it CANNOT be turned off again —
+ * `enabledVault` only ever moves false → true. There is no disable action and
+ * no way to remove a participant once added — both are permanent by design,
+ * so the client must warn the Creator clearly before either call.
  *
  * GET  /api/payout/vault?eventId=xxx
- *   → Vault config for an event (enabled state, participant list — keys never
- *     returned). Callable by the owner or any active collaborator on the event.
+ *   → Vault config for an event (enabledVault state, participant list — keys
+ *     never returned). Callable by the owner or any active collaborator.
  *
  * POST /api/payout/vault
  *   Body: { eventId, action }
- *   action="enable"          — Event Creator only. Irreversible via this action;
- *                               client must show a confirmation dialog before calling.
+ *   action="enable"          — Event Creator only, one-time. Sets
+ *                               enabledVault=true and automatically enrolls
+ *                               the Creator as a Vault participant (they must
+ *                               also set a Vault Key — see spec). Client must
+ *                               show an irreversibility warning before calling.
  *   action="addParticipant"  — Creator only. Body also needs { collaboratorId }.
- *                               Only active "admin"-role collaborators may be added.
- *   action="removeParticipant" — Creator only. Body also needs { collaboratorId }.
- *   action="setKey"          — Any assigned participant sets/rotates their own
- *                               Vault Key. Body also needs { vaultKey }. Stored
- *                               bcrypt-hashed, never returned.
- *   action="disable"         — Admin collaborator only (spec: "Deactivation
- *                               requires an Admin").
+ *                               Only active "admin"-role collaborators may be
+ *                               added, and only while enabledVault is true.
+ *                               Permanent — cannot be undone. Client must show
+ *                               a confirmation dialog before calling.
+ *   action="setKey"          — Any assigned participant (Creator included)
+ *                               sets/rotates their own Vault Key. Body also
+ *                               needs { vaultKey }. Stored bcrypt-hashed
+ *                               (one-way — never stored or returned in the clear).
  *
  * PATCH /api/payout/vault
  *   Body: { payoutId, vaultKey }
  *   → A Vault participant submits their key against a specific pending payout
  *     hold. Once every assigned participant has submitted, the payout is
- *     released from `vault_pending` into the normal `pending` payout queue
- *     (the "final participant submitting their key triggers payout execution").
+ *     released from `vault_pending` into the normal `pending` payout queue.
  */
 
 import { NextRequest, NextResponse } from "next/server"
@@ -56,16 +65,6 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
   }
 }
 
-async function getActiveAdminCollaboration(eventId: string, userId: string) {
-  const snap = await adminDb
-    .collection("collaborations")
-    .where("eventId", "==", eventId)
-    .where("collaboratorId", "==", userId)
-    .where("isActive", "==", true)
-    .get()
-  return snap.docs.find((d) => d.data().role === "admin") ?? null
-}
-
 // ── GET ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const auth = await authenticate()
@@ -92,18 +91,19 @@ export async function GET(req: NextRequest) {
 
   const vaultSnap = await adminDb.collection("vaults").doc(eventId).get()
   if (!vaultSnap.exists) {
-    return ok({ vault: { eventId, enabled: false, participants: [] } })
+    return ok({ vault: { eventId, enabledVault: false, participants: [] } })
   }
 
   const vault = vaultSnap.data()!
   return ok({
     vault: {
       eventId,
-      enabled: vault.enabled === true,
+      enabledVault: vault.enabledVault === true,
       enabledAt: vault.enabledAt ?? null,
       participants: (vault.participants ?? []).map((p: any) => ({
         uid: p.uid,
         email: p.email,
+        isCreator: p.isCreator === true,
         hasSetKey: Boolean(p.keyHash),
         addedAt: p.addedAt ?? null,
       })),
@@ -135,44 +135,70 @@ export async function POST(req: NextRequest) {
   const vaultRef = adminDb.collection("vaults").doc(eventId)
 
   // ── enable ──────────────────────────────────────────────────────────────
+  // One-way switch. Once set, enabledVault is never flipped back to false —
+  // there is deliberately no "disable" action anywhere in this route.
   if (action === "enable") {
     if (!isOwner) return fail("Only the Event Creator can enable the Vault", 403)
 
     const existing = await vaultRef.get()
-    if (existing.exists && existing.data()!.enabled) {
+    if (existing.exists && existing.data()!.enabledVault === true) {
       return fail("The Vault is already enabled for this event", 409)
     }
+
+    // The Creator is automatically enrolled as a Vault participant — the
+    // spec requires the Creator to also set their own Vault Key, since they
+    // are one of the parties who must sign off on every withdrawal.
+    let creatorEmail = ""
+    try {
+      const creatorDoc = await adminDb.collection("users").doc(userId).get()
+      creatorEmail = creatorDoc.data()?.email ?? ""
+    } catch {
+      // non-critical — email backfilled on next setKey/GET if lookup fails
+    }
+
+    const existingParticipants: any[] = existing.exists ? existing.data()!.participants ?? [] : []
+    const participants = existingParticipants.some((p: any) => p.uid === userId)
+      ? existingParticipants
+      : [
+          ...existingParticipants,
+          {
+            uid: userId,
+            email: creatorEmail,
+            isCreator: true,
+            keyHash: null,
+            addedAt: new Date().toISOString(),
+          },
+        ]
 
     await vaultRef.set(
       {
         eventId,
-        enabled: true,
+        enabledVault: true,
         enabledAt: FieldValue.serverTimestamp(),
         enabledBy: userId,
-        participants: existing.exists ? existing.data()!.participants ?? [] : [],
+        participants,
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     )
 
-    return ok({ message: "Vault enabled. This action cannot be undone by the Creator — an Admin collaborator must deactivate it." })
-  }
-
-  // ── disable ─────────────────────────────────────────────────────────────
-  if (action === "disable") {
-    const adminCollab = await getActiveAdminCollaboration(eventId, userId)
-    if (!adminCollab) return fail("Only an Admin collaborator can deactivate the Vault", 403)
-
-    await vaultRef.set(
-      { enabled: false, disabledAt: FieldValue.serverTimestamp(), disabledBy: userId, updatedAt: FieldValue.serverTimestamp() },
-      { merge: true }
-    )
-    return ok({ message: "Vault deactivated." })
+    return ok({
+      message:
+        "Vault enabled. This cannot be undone. Set your Vault Key, then choose which Admins should also be Vault participants.",
+    })
   }
 
   // ── addParticipant ──────────────────────────────────────────────────────
+  // Permanent — there is no removeParticipant action. Once an Admin is added
+  // to the Vault, the Creator cannot take them back out.
   if (action === "addParticipant") {
     if (!isOwner) return fail("Only the Event Creator can add Vault participants", 403)
+
+    const existingVault = await vaultRef.get()
+    if (!existingVault.exists || existingVault.data()!.enabledVault !== true) {
+      return fail("The Vault must be enabled before adding participants", 400)
+    }
+
     const { collaboratorId } = body
     if (!collaboratorId?.trim()) return fail("collaboratorId is required", 400)
 
@@ -185,8 +211,7 @@ export async function POST(req: NextRequest) {
     const adminCollab = collabSnap.docs.find((d) => d.data().role === "admin")
     if (!adminCollab) return fail("collaboratorId must be an active Admin collaborator on this event", 400)
 
-    const vaultSnap = await vaultRef.get()
-    const participants = vaultSnap.exists ? vaultSnap.data()!.participants ?? [] : []
+    const participants = existingVault.data()!.participants ?? []
     if (participants.some((p: any) => p.uid === collaboratorId)) {
       return fail("This participant is already in the Vault", 409)
     }
@@ -194,26 +219,13 @@ export async function POST(req: NextRequest) {
     participants.push({
       uid: collaboratorId,
       email: adminCollab.data().collaboratorEmail,
+      isCreator: false,
       keyHash: null,
       addedAt: new Date().toISOString(),
     })
 
     await vaultRef.set({ eventId, participants, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
-    return ok({ message: "Participant added to the Vault. They must set their Vault Key before payouts can clear." })
-  }
-
-  // ── removeParticipant ───────────────────────────────────────────────────
-  if (action === "removeParticipant") {
-    if (!isOwner) return fail("Only the Event Creator can remove Vault participants", 403)
-    const { collaboratorId } = body
-    if (!collaboratorId?.trim()) return fail("collaboratorId is required", 400)
-
-    const vaultSnap = await vaultRef.get()
-    if (!vaultSnap.exists) return fail("Vault not configured for this event", 404)
-
-    const participants = (vaultSnap.data()!.participants ?? []).filter((p: any) => p.uid !== collaboratorId)
-    await vaultRef.update({ participants, updatedAt: FieldValue.serverTimestamp() })
-    return ok({ message: "Participant removed from the Vault." })
+    return ok({ message: "Participant permanently added to the Vault. They must set their Vault Key before payouts can clear." })
   }
 
   // ── setKey ──────────────────────────────────────────────────────────────
@@ -280,21 +292,44 @@ export async function PATCH(req: NextRequest) {
   const matches = await bcrypt.compare(String(vaultKey), participant.keyHash)
   if (!matches) return fail("Incorrect Vault Key", 401)
 
+  // ── Log: this participant just verified their Vault Key ────────────────────
+  const submittedAt = new Date().toISOString()
+  const signOffLog = {
+    type: "vault_key_submitted",
+    at: submittedAt,
+    byUid: userId,
+    byName: participant.isCreator ? "Event Creator" : "Admin",
+    byEmail: participant.email ?? "",
+    message: `${participant.email || "A Vault participant"} verified their Vault Key`,
+  }
+
   const submissions: Record<string, boolean> = { ...(payout.vaultSubmissions ?? {}), [userId]: true }
+  const submissionLog = { ...(payout.vaultSubmissionLog ?? {}), [userId]: submittedAt }
   const requiredUids: string[] = payout.vaultParticipants ?? participants.map((p) => p.uid)
   const allSubmitted = requiredUids.every((uid) => submissions[uid])
 
   if (allSubmitted) {
+    const releasedLog = {
+      type: "vault_completed",
+      at: new Date().toISOString(),
+      message: "All Vault participants signed off — payout released for processing",
+    }
     await payoutRef.update({
       vaultSubmissions: submissions,
+      vaultSubmissionLog: submissionLog,
       status: "pending", // released into the normal payout queue
       vaultClearedAt: FieldValue.serverTimestamp(),
       pendingAt: FieldValue.serverTimestamp(),
+      logs: FieldValue.arrayUnion(signOffLog, releasedLog),
     })
     return ok({ message: "All Vault Keys submitted. Payout released for processing.", released: true })
   }
 
-  await payoutRef.update({ vaultSubmissions: submissions })
+  await payoutRef.update({
+    vaultSubmissions: submissions,
+    vaultSubmissionLog: submissionLog,
+    logs: FieldValue.arrayUnion(signOffLog),
+  })
   return ok({
     message: "Vault Key accepted. Waiting on remaining participants.",
     released: false,

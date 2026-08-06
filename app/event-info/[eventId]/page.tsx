@@ -803,7 +803,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
 
             {activeTab === "payouts" && visibleTabs.includes("payouts") && (
               loadedTabs.has("payouts") && eventData
-                ? <PayoutsTab availableBalance={availableBalance} eventData={eventData} userId={currentUid} eventId={eventId} currentUserId={currentUid} attendees={attendees} payId={eventData.payId ?? ""} />
+                ? <PayoutsTab availableBalance={availableBalance} eventData={eventData} userId={currentUid} eventId={eventId} currentUserId={currentUid} attendees={attendees} payId={eventData.payId ?? ""} isOwner={isOwner} collabRole={collabInfo?.role ?? null} organizerId={eventData.createdBy ?? ""} />
                 : <TabSkeleton />
             )}
 

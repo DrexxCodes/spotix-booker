@@ -19,6 +19,10 @@ interface ViewPayoutMethodsProps {
   error: string | null
   onRefresh: () => void
   onAddNew: () => void
+  /** When true, hides Add/Set Primary/Delete controls — viewing someone else's methods */
+  readOnly?: boolean
+  /** Optional note shown when readOnly, explaining whose methods these are */
+  readOnlyNote?: string
 }
 
 export default function ViewPayoutMethods({
@@ -27,6 +31,8 @@ export default function ViewPayoutMethods({
   error,
   onRefresh,
   onAddNew,
+  readOnly = false,
+  readOnlyNote,
 }: ViewPayoutMethodsProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -104,13 +110,22 @@ export default function ViewPayoutMethods({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-base font-semibold text-gray-900">Payout Methods</h3>
-        <button
-          onClick={onAddNew}
-          className="px-4 py-2 bg-[#6b2fa5] text-white text-sm font-medium rounded-lg hover:bg-[#5a2589] transition-colors"
-        >
-          + Add New
-        </button>
+        {!readOnly && (
+          <button
+            onClick={onAddNew}
+            className="px-4 py-2 bg-[#6b2fa5] text-white text-sm font-medium rounded-lg hover:bg-[#5a2589] transition-colors"
+          >
+            + Add New
+          </button>
+        )}
       </div>
+
+      {readOnly && readOnlyNote && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex gap-2">
+          <AlertCircle size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-blue-700">{readOnlyNote}</p>
+        </div>
+      )}
 
       {/* Action Error */}
       {actionError && (
@@ -125,13 +140,19 @@ export default function ViewPayoutMethods({
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
           <CreditCard size={36} className="text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500 font-medium text-sm">No payout methods yet</p>
-          <p className="text-xs text-gray-400 mt-1">Add a bank account to receive payouts.</p>
-          <button
-            onClick={onAddNew}
-            className="mt-4 px-4 py-2 bg-[#6b2fa5] text-white text-sm font-medium rounded-lg hover:bg-[#5a2589] transition-colors"
-          >
-            Add Payout Method
-          </button>
+          <p className="text-xs text-gray-400 mt-1">
+            {readOnly
+              ? "The event creator hasn't set up a payout method yet."
+              : "Add a bank account to receive payouts."}
+          </p>
+          {!readOnly && (
+            <button
+              onClick={onAddNew}
+              className="mt-4 px-4 py-2 bg-[#6b2fa5] text-white text-sm font-medium rounded-lg hover:bg-[#5a2589] transition-colors"
+            >
+              Add Payout Method
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -164,35 +185,37 @@ export default function ViewPayoutMethods({
               </div>
 
               {/* Actions */}
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {!method.primary && (
-                  <button
-                    onClick={() => handleSetPrimary(method)}
-                    disabled={actionLoading === `primary-${method.id}`}
-                    title="Set as primary"
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-600 rounded-lg hover:border-[#6b2fa5] hover:text-[#6b2fa5] transition-colors disabled:opacity-50"
-                  >
-                    {actionLoading === `primary-${method.id}` ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Star size={12} />
-                    )}
-                    Set Primary
-                  </button>
-                )}
-                <button
-                  onClick={() => handleDelete(method)}
-                  disabled={!!actionLoading}
-                  title="Delete method"
-                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {actionLoading === `delete-${method.id}` ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Trash2 size={16} />
+              {!readOnly && (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {!method.primary && (
+                    <button
+                      onClick={() => handleSetPrimary(method)}
+                      disabled={actionLoading === `primary-${method.id}`}
+                      title="Set as primary"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-600 rounded-lg hover:border-[#6b2fa5] hover:text-[#6b2fa5] transition-colors disabled:opacity-50"
+                    >
+                      {actionLoading === `primary-${method.id}` ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Star size={12} />
+                      )}
+                      Set Primary
+                    </button>
                   )}
-                </button>
-              </div>
+                  <button
+                    onClick={() => handleDelete(method)}
+                    disabled={!!actionLoading}
+                    title="Delete method"
+                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === `delete-${method.id}` ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={16} />
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

@@ -15,6 +15,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolvePayoutAccess } from "@/lib/payout-access"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -106,15 +107,34 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── Authenticated: list user's payout methods ──────────────────────────────
+  // ── Authenticated: list payout methods ─────────────────────────────────────
+  // If ?eventId= is supplied, methods are resolved role-aware for that event
+  // (spec §4 Role Permissions): Creator/Admin see their own methods, while
+  // Accountant and custom "payout"-permission roles see the Creator's methods
+  // only (since that's who they settle into). Without ?eventId=, this falls
+  // back to the caller's own methods — used by profile/account-level screens
+  // that manage a user's personal payout methods outside any specific event.
   const auth = await authenticate()
   if (auth instanceof NextResponse) return auth
   const { userId } = auth
 
+  const eventId = searchParams.get("eventId")
+  let methodsOwnerId = userId
+  let isReadOnlyForCaller = false
+
+  if (eventId?.trim()) {
+    const access = await resolvePayoutAccess(eventId.trim(), userId)
+    if (!access.ok) return fail(access.error, access.status)
+    methodsOwnerId = access.methodsOwnerId
+    // Accountant / custom-role callers view the Creator's methods but can't
+    // manage them — the client uses this flag to render a read-only list.
+    isReadOnlyForCaller = access.role === "accountant" || access.role === "custom"
+  }
+
   try {
     const snapshot = await adminDb
       .collection("payoutMethods")
-      .doc(userId)
+      .doc(methodsOwnerId)
       .collection("methods")
       .orderBy("createdAt", "asc")
       .get()
@@ -132,7 +152,7 @@ export async function GET(req: NextRequest) {
       }
     })
 
-    return ok({ methods })
+    return ok({ methods, readOnly: isReadOnlyForCaller })
   } catch (err: any) {
     console.error("[GET /api/payout/method] error:", err)
     return fail("Failed to fetch payout methods", 500)

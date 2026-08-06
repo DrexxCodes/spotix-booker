@@ -3,7 +3,7 @@
 import {
   AlertCircle, Wallet, Calendar, Loader2, CheckCircle,
   TrendingUp, CreditCard, X, ChevronRight, Clock, Shield,
-  ReceiptText, Ban, CalendarX,
+  ReceiptText, Ban, CalendarX, Lock, Eye,
 } from "lucide-react"
 import { useState, useEffect, useCallback } from "react"
 import CreatePayoutMethod from "./helper/CreatePayoutMethod"
@@ -11,6 +11,9 @@ import ViewPayoutMethods from "./helper/ViewPayoutMethods"
 import { MaskedAmount } from "@/components/ui/masked-amount"
 import PayoutConfirmation from "./helper/payout-confirmation"
 import PayoutLog from "./helper/payout-log"
+import VaultPanel from "./helper/vault-panel"
+import VaultSignoffs from "./helper/vault-signoffs"
+import VaultKeyEnterOnPayoutDialog from "./helper/vault-key-enter-onPayout"
 
 interface DailyTransaction {
   date: string
@@ -50,6 +53,9 @@ interface PayoutsTabProps {
   currentUserId: string
   attendees: any[]
   payId: string
+  isOwner: boolean
+  collabRole: string | null
+  organizerId: string
 }
 
 const LOCK_HOURS = 30
@@ -215,6 +221,24 @@ const STATUS_BADGE: Record<
     text: "text-green-700",
     icon: <CheckCircle size={11} />,
   },
+  vault_pending: {
+    label: "Awaiting Vault Sign-off",
+    bg: "bg-purple-100",
+    text: "text-purple-700",
+    icon: <Lock size={11} />,
+  },
+  cancelled: {
+    label: "Cancelled",
+    bg: "bg-gray-100",
+    text: "text-gray-600",
+    icon: <Ban size={11} />,
+  },
+  rejected: {
+    label: "Rejected",
+    bg: "bg-gray-100",
+    text: "text-gray-600",
+    icon: <Ban size={11} />,
+  },
 }
 
 // ─── Transaction Card ─────────────────────────────────────────────────────────
@@ -227,14 +251,18 @@ interface TxnCardProps {
   hasMethods: boolean
   isSelected?: boolean
   onToggleSelect?: (date: string) => void
+  /** false when the Vault is enabled but some participant hasn't set their key yet */
+  vaultReady?: boolean
+  /** false for Accountant / custom "payout"-permission roles — records view only, no initiating */
+  canInitiate?: boolean
 }
 
-function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelected, onToggleSelect }: TxnCardProps) {
-  const canWithdraw = isWithdrawable(txn.updatedAt)
+function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelected, onToggleSelect, vaultReady = true, canInitiate = true }: TxnCardProps) {
+  const canWithdraw = isWithdrawable(txn.updatedAt) && vaultReady
   const timeLeft = timeUntilWithdrawable(txn.updatedAt)
   const progress = unlockProgress(txn.updatedAt)
   const badge = payoutStatus ? (STATUS_BADGE[payoutStatus] ?? STATUS_BADGE.pending) : null
-  const isEligibleForBulk = !payoutStatus && canWithdraw
+  const isEligibleForBulk = !payoutStatus && canWithdraw && canInitiate
 
   return (
     <div className={`bg-white border rounded-xl p-5 hover:shadow-md transition-all space-y-4 ${
@@ -302,6 +330,16 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
               {badge?.icon}
               {badge?.label ?? payoutStatus}
             </button>
+          ) : !canInitiate ? (
+            // Accountant / custom "payout"-permission roles — can see this
+            // record exists but can't initiate a payout themselves.
+            <button
+              disabled
+              title="View only — only the Event Creator or an Admin can initiate a payout"
+              className="px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 bg-gray-100 text-gray-400 cursor-not-allowed"
+            >
+              <Eye size={14} /> View Only
+            </button>
           ) : (
             // No payout yet — payout / locked button
             <button
@@ -310,6 +348,7 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
                 if (canWithdraw) onPayout(txn)
               }}
               disabled={!canWithdraw}
+              title={!vaultReady && isWithdrawable(txn.updatedAt) ? "Blocked: not every Vault participant has set their Vault Key yet" : undefined}
               className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2 ${
                 canWithdraw
                   ? "bg-[#6b2fa5] text-white hover:bg-[#5a2589] shadow-sm"
@@ -318,6 +357,8 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
             >
               {canWithdraw ? (
                 <>Payout <ChevronRight size={14} /></>
+              ) : !vaultReady && isWithdrawable(txn.updatedAt) ? (
+                <><Lock size={14} /> Vault Not Ready</>
               ) : (
                 <><Clock size={14} /> Locked</>
               )}
@@ -365,6 +406,9 @@ export default function PayoutsTab({
   eventId,
   currentUserId,
   attendees,
+  isOwner,
+  collabRole,
+  organizerId,
 }: PayoutsTabProps) {
   const [transactions, setTransactions] = useState<DailyTransaction[]>([])
   const [txnLoading, setTxnLoading] = useState(true)
@@ -373,9 +417,34 @@ export default function PayoutsTab({
   const [methods, setMethods] = useState<PayoutMethod[]>([])
   const [methodsLoading, setMethodsLoading] = useState(true)
   const [methodsError, setMethodsError] = useState<string | null>(null)
+  const [methodsReadOnly, setMethodsReadOnly] = useState(false)
 
   // date → payout status, seeded from the status API on mount
   const [payoutStatuses, setPayoutStatuses] = useState<Record<string, string>>({})
+
+  // Vault readiness — reported up by VaultPanel. Payouts are blocked for
+  // every date on this event until every assigned Vault participant
+  // (Creator included) has set their Vault Key.
+  const [vaultStatus, setVaultStatus] = useState<{ enabledVault: boolean; ready: boolean; missing: { uid: string; email: string }[] }>({
+    enabledVault: false,
+    ready: true,
+    missing: [],
+  })
+  const handleVaultStatusChange = useCallback(
+    (status: { enabledVault: boolean; ready: boolean; missing: { uid: string; email: string }[] }) => {
+      setVaultStatus(status)
+    },
+    []
+  )
+
+  // "Enter your own Vault Key now" prompt — shown right after the current
+  // user's own payout request comes back vault-locked. Only meaningful for
+  // roles that can actually be Vault participants (Creator/Admin — see
+  // /api/payout/vault addParticipant, which only accepts admin collaborators).
+  const [vaultKeyPrompt, setVaultKeyPrompt] = useState<{ payoutIds: string[]; amount: number; dates: string[] } | null>(null)
+  // Bumped whenever the requester enters their key immediately, to force
+  // VaultSignoffs (the "awaiting your sign-off" section up top) to refetch.
+  const [vaultSignoffsRefreshKey, setVaultSignoffsRefreshKey] = useState(0)
 
   const [activeView, setActiveView] = useState<ActiveView>("transactions")
   const [dialogTxn, setDialogTxn] = useState<DailyTransaction | null>(null)
@@ -383,6 +452,17 @@ export default function PayoutsTab({
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [isBulkPayoutLoading, setIsBulkPayoutLoading] = useState(false)
   const [bulkPayoutTxns, setBulkPayoutTxns] = useState<DailyTransaction[]>([])
+
+  // Own vs Creator's payout methods (spec §4 Role Permissions) — Creator and
+  // Admin manage/settle to their own methods; Accountant and custom "payout"
+  // roles always settle to the Creator's methods and can't edit them here.
+  const canManageOwnMethods = isOwner || collabRole === "admin"
+
+  // Who may actually INITIATE a payout (spec §4 Role Permissions) — Creator
+  // and Admin only. Accountant and custom roles with the "payout" permission
+  // can still view this whole tab and every payout record on it, but the
+  // request itself is locked to them — mirrors the POST /api/payout gate.
+  const canInitiatePayout = isOwner || collabRole === "admin"
 
   // Live ticker for countdown timers
   const [, setTick] = useState(0)
@@ -420,6 +500,10 @@ export default function PayoutsTab({
       const records: Array<{ date: string; status: string }> = data.payouts ?? []
       const map: Record<string, string> = {}
       for (const r of records) {
+        // A cancelled or rejected payout shouldn't block a fresh request for
+        // that date — treat it as if no payout exists yet on the
+        // Transactions view.
+        if (r.status === "cancelled" || r.status === "rejected") continue
         map[r.date] = r.status
       }
       setPayoutStatuses(map)
@@ -432,16 +516,17 @@ export default function PayoutsTab({
     try {
       setMethodsLoading(true)
       setMethodsError(null)
-      const res = await fetch("/api/payout/method")
+      const res = await fetch(`/api/payout/method?eventId=${eventId}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to fetch payout methods")
       setMethods(data.methods ?? [])
+      setMethodsReadOnly(Boolean(data.readOnly))
     } catch (err: any) {
       setMethodsError(err.message || "Failed to load payout methods")
     } finally {
       setMethodsLoading(false)
     }
-  }, [])
+  }, [eventId])
 
   useEffect(() => {
     fetchTransactions()
@@ -454,9 +539,13 @@ export default function PayoutsTab({
     (t) => isWithdrawable(t.updatedAt) && !payoutStatuses[t.date]
   ).length
 
-  function handlePayoutSuccess(date: string) {
-    // Optimistically mark as pending; next status fetch will confirm
-    setPayoutStatuses((prev) => ({ ...prev, [date]: "pending" }))
+  function handlePayoutSuccess(date: string, vaultLocked?: boolean, payoutIds?: string[], totalAmount?: number) {
+    // Optimistically mark status; next status fetch will confirm
+    setPayoutStatuses((prev) => ({ ...prev, [date]: vaultLocked ? "vault_pending" : "pending" }))
+
+    if (vaultLocked && canManageOwnMethods && payoutIds?.length) {
+      setVaultKeyPrompt({ payoutIds, amount: totalAmount ?? 0, dates: [date] })
+    }
   }
 
   function handlePayoutError(rawMessage: string, txnDate: string) {
@@ -470,13 +559,24 @@ export default function PayoutsTab({
     setDialogTxn(null) // Clear single transaction if any
   }
 
-  function handleBulkPayoutSuccess(dates: string | string[]) {
+  function handleBulkPayoutSuccess(dates: string | string[], vaultLocked?: boolean, payoutIds?: string[], totalAmount?: number) {
     const datesToUpdate = Array.isArray(dates) ? dates : [dates]
     datesToUpdate.forEach((date) => {
-      setPayoutStatuses((prev) => ({ ...prev, [date]: "pending" }))
+      setPayoutStatuses((prev) => ({ ...prev, [date]: vaultLocked ? "vault_pending" : "pending" }))
     })
     setSelectedDates(new Set())
     setBulkPayoutTxns([])
+
+    if (vaultLocked && canManageOwnMethods && payoutIds?.length) {
+      setVaultKeyPrompt({ payoutIds, amount: totalAmount ?? 0, dates: datesToUpdate })
+    }
+  }
+
+  // Called once the requester submits their own Vault Key immediately from
+  // vault-key-enter.tsx's "Enter Now" path.
+  function handleVaultKeyEntered() {
+    fetchPayoutStatuses()
+    setVaultSignoffsRefreshKey((k) => k + 1)
   }
 
   return (
@@ -487,11 +587,11 @@ export default function PayoutsTab({
           txns={bulkPayoutTxns.length > 0 ? bulkPayoutTxns : dialogTxn!}
           methods={methods}
           eventId={eventId}
-          onSuccess={(dates) => {
+          onSuccess={(dates, vaultLocked, payoutIds, totalAmount) => {
             if (bulkPayoutTxns.length > 0) {
-              handleBulkPayoutSuccess(dates)
+              handleBulkPayoutSuccess(dates, vaultLocked, payoutIds, totalAmount)
             } else if (dialogTxn) {
-              handlePayoutSuccess(dialogTxn.date)
+              handlePayoutSuccess(dialogTxn.date, vaultLocked, payoutIds, totalAmount)
             }
           }}
           onError={(msg) => {
@@ -511,6 +611,26 @@ export default function PayoutsTab({
         />
       )}
 
+      {/* "Enter your OWN Vault Key" — bottom-sheet shown right after the
+          requester's own payout request comes back vault-locked */}
+      {vaultKeyPrompt && (
+        <VaultKeyEnterOnPayoutDialog
+          payoutIds={vaultKeyPrompt.payoutIds}
+          amount={vaultKeyPrompt.amount}
+          dates={vaultKeyPrompt.dates}
+          onClose={() => setVaultKeyPrompt(null)}
+          onEntered={handleVaultKeyEntered}
+        />
+      )}
+
+      {/* Vault — sign-offs needed from the current user take priority visibility */}
+      <VaultSignoffs
+        key={vaultSignoffsRefreshKey}
+        eventId={eventId}
+        currentUserId={currentUserId}
+        onResolved={fetchPayoutStatuses}
+      />
+
       {/* Info Alert */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3">
         <AlertCircle size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
@@ -520,6 +640,17 @@ export default function PayoutsTab({
           have a primary payout method set before requesting.
         </p>
       </div>
+
+      {/* View-only notice for Accountant / custom "payout"-permission roles */}
+      {!canInitiatePayout && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex gap-3">
+          <Eye size={18} className="text-gray-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-gray-600 leading-relaxed">
+            You can view every payout record on this event, but only the Event Creator or an
+            Admin can initiate a payout.
+          </p>
+        </div>
+      )}
 
       {/* ── 3 Stat Blocks ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -578,6 +709,26 @@ export default function PayoutsTab({
           error={payoutError}
           onDismiss={() => setPayoutError(null)}
         />
+      )}
+
+      {/* The Vault — settings, participants, key setup */}
+      <VaultPanel eventId={eventId} isOwner={isOwner} currentUserId={currentUserId} onStatusChange={handleVaultStatusChange} />
+
+      {vaultStatus.enabledVault && !vaultStatus.ready && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 flex gap-3">
+          <Lock size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-purple-900">
+              Payouts are blocked until every Vault participant sets their Vault Key
+            </p>
+            <p className="text-xs text-purple-700 mt-0.5">
+              Waiting on:{" "}
+              {vaultStatus.missing
+                .map((m) => (m.uid === currentUserId ? "You" : m.email))
+                .join(", ")}
+            </p>
+          </div>
+        </div>
       )}
 
       {/* ── View Toggle ───────────────────────────────────────────────────── */}
@@ -665,8 +816,8 @@ export default function PayoutsTab({
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Bulk payout checklist banner */}
-              {methods.length > 0 && (
+              {/* Bulk payout checklist banner — initiators only */}
+              {methods.length > 0 && canInitiatePayout && (
                 <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-purple-900">Bulk Payout</p>
@@ -696,6 +847,8 @@ export default function PayoutsTab({
                   hasMethods={methods.length > 0}
                   onPayout={(t) => setDialogTxn(t)}
                   onAddMethod={() => setActiveView("methods")}
+                  vaultReady={vaultStatus.ready}
+                  canInitiate={canInitiatePayout}
                   isSelected={selectedDates.has(txn.date)}
                   onToggleSelect={(date) => {
                     const newSelected = new Set(selectedDates)
@@ -715,7 +868,21 @@ export default function PayoutsTab({
 
     
       {activeView === "logs" && (
-        <PayoutLog eventId={eventId} userId={userId} />
+        <PayoutLog
+          eventId={eventId}
+          userId={userId}
+          canManage={isOwner || collabRole === "admin"}
+          onCancelled={() => {
+            // A cancel or reject just happened — that payout's status moved
+            // off "vault_pending" (if it was there at all), so refresh both
+            // the Transactions view's status map and force VaultSignoffs to
+            // refetch so a rejected/cancelled payout instantly disappears
+            // from the "awaiting your Vault sign-off" panel and no other
+            // Admin can submit a key against it.
+            fetchPayoutStatuses()
+            setVaultSignoffsRefreshKey((k) => k + 1)
+          }}
+        />
       )}
 
      
@@ -726,11 +893,17 @@ export default function PayoutsTab({
           error={methodsError}
           onRefresh={fetchMethods}
           onAddNew={() => setActiveView("addMethod")}
+          readOnly={methodsReadOnly || !canManageOwnMethods}
+          readOnlyNote={
+            methodsReadOnly || !canManageOwnMethods
+              ? "These are the event creator's payout methods. Payouts you initiate on this event settle here — only the creator can add, edit, or remove them."
+              : undefined
+          }
         />
       )}
 
       
-      {activeView === "addMethod" && (
+      {activeView === "addMethod" && canManageOwnMethods && (
         <CreatePayoutMethod
           userId={currentUserId}
           onCreated={(newMethod) => {

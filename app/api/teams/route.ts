@@ -116,6 +116,33 @@ export async function GET(req: NextRequest) {
         }
       })
 
+      // ── Financial figures (mirrors app/api/event/list/[eventId]/route.ts) ──────
+      // Calculate totalRevenue from ticketPrices and ticket sales if not stored
+      let calculatedRevenue = 0
+      if (attendees.length > 0 && ev.ticketPrices && ev.ticketPrices.length > 0) {
+        for (const attendee of attendees) {
+          const ticketType = ev.ticketPrices.find((t: any) => t.policy === attendee.ticketType)
+          if (ticketType) {
+            calculatedRevenue += Number(ticketType.price)
+          }
+        }
+      }
+
+      // Same "agent/booker payouts" subcollection event/list/[eventId] sums —
+      // NOT the organizer withdrawal `payouts` top-level collection (see
+      // app/api/payout/route.ts). Kept consistent with that route so the
+      // figures a collaborator sees here always match what the Creator sees.
+      const payoutsSnap = await adminDb.collection("events").doc(eventId).collection("payouts").get()
+      let calculatedTotalPaidOut = 0
+      payoutsSnap.docs.forEach((d) => {
+        const p = d.data()
+        if (p.status === "Confirmed") calculatedTotalPaidOut += p.payoutAmount ?? 0
+      })
+
+      const totalRevenue = ev.totalRevenue ?? ev.revenue ?? calculatedRevenue ?? 0
+      const totalPaidOut = ev.totalPaidOut ?? calculatedTotalPaidOut
+      const availableRevenue = ev.availableRevenue ?? (totalRevenue - totalPaidOut)
+
       return ok({
         collaboration: {
           collaborationId: collabDoc.id,
@@ -137,7 +164,9 @@ export async function GET(req: NextRequest) {
           createdBy: ev.organizerId ?? "",
           totalCapacity: ev.totalCapacity ?? 0,
           ticketsSold: ev.ticketsSold ?? 0,
-          totalRevenue: ev.revenue ?? 0,
+          totalRevenue,
+          totalPaidOut,
+          availableRevenue,
           status: ev.status ?? "active",
           eventStart: ev.eventStart ?? "",
           eventEnd: ev.eventEnd ?? "",

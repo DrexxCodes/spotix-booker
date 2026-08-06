@@ -27,7 +27,12 @@ interface PayoutConfirmationProps {
   txns: DailyTransaction | DailyTransaction[]
   methods: PayoutMethod[]
   eventId: string
-  onSuccess: (dates: string | string[]) => void
+  /**
+   * payoutIds is every payout doc created in this request (one per date —
+   * more than one on a bulk request) — the parent needs these to open the
+   * "enter your own Vault Key now" prompt against the right records.
+   */
+  onSuccess: (dates: string | string[], vaultLocked?: boolean, payoutIds?: string[], totalAmount?: number) => void
   onError: (message: string) => void
   onClose: () => void
 }
@@ -53,6 +58,8 @@ export default function PayoutConfirmation({
     if (!selectedMethod) return
     setProcessing(true)
     const successDates: string[] = []
+    const successPayoutIds: string[] = []
+    let anyVaultLocked = false
 
     try {
       for (const txn of transactions) {
@@ -72,9 +79,32 @@ export default function PayoutConfirmation({
           onError(data.error || "Payout request failed")
           return
         }
+        if (data.vaultLocked) anyVaultLocked = true
+        if (data.payoutId) successPayoutIds.push(data.payoutId)
         successDates.push(txn.date)
       }
-      onSuccess(successDates.length === 1 ? successDates[0] : successDates)
+
+      // One bundled Vault notification for the whole request (all days at
+      // once on a bulk request) — not one email per day. Fire-and-forget:
+      // the payout itself already succeeded, so a notification hiccup
+      // shouldn't surface as an error to the requester.
+      if (anyVaultLocked) {
+        fetch("/api/payout/vault-notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            eventId,
+            dates: successDates,
+            amount: totalAmount,
+            payoutIds: successPayoutIds,
+          }),
+        }).catch(() => {
+          // Non-critical — Vault participants can still see the pending
+          // sign-off in-app even if the email failed to send.
+        })
+      }
+
+      onSuccess(successDates.length === 1 ? successDates[0] : successDates, anyVaultLocked, successPayoutIds, totalAmount)
       onClose()
     } catch {
       onClose()

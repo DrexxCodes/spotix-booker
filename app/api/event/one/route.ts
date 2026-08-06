@@ -1,7 +1,42 @@
 /**
- * app/api/events/route.ts
+ * app/api/event/one/route.ts
  *
- * POST /api/events — Create a new event (authenticated bookers only)
+ * POST /api/event/one — Create a new event (authenticated bookers only)
+ *
+ * ── Auth discrepancy fixed ─────────────────────────────────────────────────────
+ * This route previously read identity via a bespoke `resolveIdentity()` that:
+ *   1. Checked `x-user-id`/`x-user-is-booker` request headers first — dead code.
+ *      proxy.ts's matcher explicitly excludes `/api/*`, so those headers are
+ *      never injected on API requests; only page navigations get them.
+ *   2. Read the access token off `request.cookies` (NextRequest's cookie jar)
+ *      instead of the `cookies()` helper from `next/headers` that every other
+ *      route in this app (teams, event/list/[eventId], payout, payout/vault,
+ *      payout/method, ...) uses.
+ *   3. Imported `COOKIE_ACCESS_TOKEN` from `@/api/auth/route` — the ONLY
+ *      cross-import of a Route Handler module anywhere in this codebase.
+ *      `route.ts` files are only supposed to export HTTP method handlers and
+ *      the segment config (`runtime`, `dynamic`, etc.); pulling in a stray
+ *      named export drags in that whole module's dependency graph and isn't
+ *      something Next.js's route module loader is built to support cleanly.
+ *
+ * None of that is what was actually causing "you must be logged in" for an
+ * already-logged-in user, though — it's just legacy drift worth cleaning up.
+ * The real cause: the auth flow was updated app-wide to hold the access token
+ * in memory and attach it as an `Authorization: Bearer` header via
+ * `authFetch()` (see lib/auth-client.ts), with the `spotix_at` cookie kept in
+ * sync alongside it. Every other authenticated page in the app was migrated
+ * to call its APIs through `authFetch()`. The one-time event creation form
+ * (app/components/create-event/create-one-time-event.tsx) was missed — it
+ * was still calling this endpoint with a plain `fetch()`. That meant:
+ *   - No Authorization header was ever sent (this route did support Bearer,
+ *     it just never received one from this particular caller).
+ *   - No silent-refresh-and-retry on 401 — the auto-refresh authFetch()
+ *     provides for every other call was never triggered here.
+ * Filling out the multi-step create-event form easily takes longer than the
+ * access token's 15-minute TTL, so the `spotix_at` cookie would go stale
+ * mid-form with nothing to refresh it, and submitting would 401 even though
+ * the user's session (refresh token) was still completely valid. Fixed on
+ * the client by switching that call to `authFetch()`.
  *
  * Changes from previous version:
  *  - Step 6: After writing the event, atomically increments totalEvents on
@@ -17,10 +52,10 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { verifyAccessToken } from "@/lib/auth-tokens";
-import { COOKIE_ACCESS_TOKEN } from "@/api/auth/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,14 +78,17 @@ interface TicketType {
   quantity?: number;
 }
 
+// ── Auth — matches the pattern used everywhere else in the app ───────────────
+// (app/api/teams/route.ts, app/api/event/list/[eventId]/route.ts,
+//  app/api/payout/route.ts, etc.) Cookie first (the common case — every page
+// load carries it), Authorization Bearer as a fallback for authFetch()'s
+// in-memory-token calls, which matters here specifically because this
+// endpoint is reached from a long-running multi-step form.
 async function resolveIdentity(
   request: NextRequest
 ): Promise<{ uid: string; isBooker: boolean } | null> {
-  const headerUid = request.headers.get("x-user-id");
-  const headerIsBooker = request.headers.get("x-user-is-booker");
-  if (headerUid) return { uid: headerUid, isBooker: headerIsBooker === "true" };
-
-  const cookieToken = request.cookies.get(COOKIE_ACCESS_TOKEN)?.value;
+  const cookieStore = await cookies();
+  const cookieToken = cookieStore.get("spotix_at")?.value;
   const bearerToken = request.headers.get("Authorization")?.replace("Bearer ", "");
   const token = cookieToken || bearerToken;
   if (!token) return null;

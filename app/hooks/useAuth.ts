@@ -2,6 +2,7 @@
 
 import { useEffect, useState, createContext, useContext, ReactNode, createElement } from "react"
 import { authFetch, getAccessToken, tryRefreshTokens, clearAccessToken, cancelProactiveRefresh } from "@/lib/auth-client"
+import { Preloader } from "@/components/preloader"
 
 type User = {
   id: string
@@ -52,7 +53,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true)
   const [refreshKey, setRefreshKey] = useState(0)
 
+  // Only true for the very first AuthProvider mount on a cold page load —
+  // never on client-side route navigations, since the root layout (and this
+  // provider with it) doesn't remount on those. Captured once via the lazy
+  // useState initializer so a later refreshKey-triggered recheck (e.g. right
+  // after login) never brings this overlay back.
+  const [showColdLoadCheck, setShowColdLoadCheck] = useState(() => !authInitialized)
+
   useEffect(() => {
+    const markInitialized = () => {
+      setLoading(false)
+      setShowColdLoadCheck(false)
+      if (!authInitialized) {
+        authInitialized = true
+        authInitResolvers.forEach(resolve => resolve())
+        authInitResolvers = []
+      }
+    }
+
     const initializeAuth = async () => {
       try {
         // Check if we have an access token in memory
@@ -65,24 +83,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           const refreshed = await tryRefreshTokens()
           if (!refreshed) {
             // No valid session
-            setLoading(false)
-            if (!authInitialized) {
-              authInitialized = true
-              authInitResolvers.forEach(resolve => resolve())
-              authInitResolvers = []
-            }
+            markInitialized()
             return
           }
           token = getAccessToken()
         }
 
         if (!token) {
-          setLoading(false)
-          if (!authInitialized) {
-            authInitialized = true
-            authInitResolvers.forEach(resolve => resolve())
-            authInitResolvers = []
-          }
+          markInitialized()
           return
         }
 
@@ -106,12 +114,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch (err) {
         console.error("Failed to initialize auth:", err)
       } finally {
-        setLoading(false)
-        if (!authInitialized) {
-          authInitialized = true
-          authInitResolvers.forEach(resolve => resolve())
-          authInitResolvers = []
-        }
+        markInitialized()
       }
     }
 
@@ -158,6 +161,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   return createElement(
     AuthContext.Provider,
     { value: { user, loading } },
+    createElement(Preloader, {
+      isLoading: showColdLoadCheck,
+      message: "Checking authentication status... It'll be a moment",
+    }),
     children
   )
 }

@@ -3,11 +3,11 @@
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { auth } from "@/lib/firebase"
 import { Preloader } from "@/components/preloader"
 import { AddPricing } from "./add-pricing"
 import { AlertCircle, Sparkles, CheckCircle } from "lucide-react"
 import { uploadImage } from "@/lib/image-uploader"
+import { authFetch, getAccessToken } from "@/lib/auth-client"
 import { MapPickerModal } from "./map-picker-modal"
 import type { TicketType } from "@/types/ticket"
 
@@ -269,7 +269,14 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
     setApiWarnings([])
     console.log("📝 Form submitted - starting validation")
 
-    if (!auth.currentUser) {
+    // NOTE: this app doesn't use the Firebase client SDK for session state —
+    // login is a server-side REST call (see app/api/auth/login/route.ts) that
+    // issues our own JWT, so `auth.currentUser` here is always null and this
+    // guard used to reject every submission even when the user was properly
+    // logged in. The real session lives in the in-memory access token /
+    // spotix_at cookie managed by lib/auth-client.ts — check that instead,
+    // same as useProtectedPage() does for every other protected page.
+    if (!getAccessToken()) {
       setError("You must be logged in to create an event")
       return
     }
@@ -338,14 +345,15 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
         eventStart,
         eventEndDate,
         eventEnd,
-        userId: auth.currentUser.uid,
       })
 
       const uploadedUrls = uploadedImageUrls.filter((url): url is string => url !== null)
 
       // Prepare the request body for the API
+      // Note: no userId field — /api/event/one derives the organizer id from
+      // the verified access token server-side (see resolveIdentity() there),
+      // it never reads it from the body.
       const requestBody = {
-        userId: auth.currentUser.uid,
         eventName,
         eventDescription,
         eventImages: uploadedUrls,
@@ -369,7 +377,13 @@ export function CreateOneTimeEvent({ onSuccess }: CreateOneTimeEventProps) {
       console.log("📤 Sending request to API...")
 
       // Call the API endpoint
-      const response = await fetch("/api/event/one", {
+      // NOTE: this must go through authFetch (not plain fetch) — it attaches
+      // the in-memory access token as an Authorization header and silently
+      // refreshes + retries on a 401. A long, multi-step create-event session
+      // easily outlasts the 15-minute access token cookie; without authFetch
+      // this call would 401 with "you must be logged in" even though the
+      // user's session is still perfectly valid.
+      const response = await authFetch("/api/event/one", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
