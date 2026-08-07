@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { adminDb } from "@/lib/firebase-admin"
 
+// NOTE: Firestore paths here are FLAT — events/{eventId}/questions and
+// events/{eventId}/formSettings/ticketSettings — matching the structure
+// spotix-user's app/api/v1/survey/route.ts reads from, and the structure
+// the rest of the Spotix codebase uses (events/{eventId}/...).
+//
+// This used to write to the legacy nested path
+// events/{userId}/userEvents/{eventId}/questions, which meant forms saved
+// here were invisible to the buyer-facing app: it was reading from a
+// completely different Firestore location. `userId` is kept as a required
+// param (the caller still sends it, and it's useful for future ownership
+// checks) but it is no longer part of the storage path.
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -39,11 +51,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Store each question as a separate document
+    // Store each question as a separate document — flat structure
     const questionsCollectionRef = adminDb
       .collection("events")
-      .doc(userId)
-      .collection("userEvents")
       .doc(eventId)
       .collection("questions")
 
@@ -67,12 +77,10 @@ export async function POST(request: NextRequest) {
       questionIds.push(docRef.id)
     }
 
-    // Store ticket settings in a separate document
+    // Store ticket settings in a separate document — flat structure
     if (ticketSettings) {
       const settingsRef = adminDb
         .collection("events")
-        .doc(userId)
-        .collection("userEvents")
         .doc(eventId)
         .collection("formSettings")
         .doc("ticketSettings")
@@ -104,11 +112,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Missing required parameters: userId, eventId" }, { status: 400 })
     }
 
-    // Get questions
+    // Get questions — flat structure
     const questionsCollectionRef = adminDb
       .collection("events")
-      .doc(userId)
-      .collection("userEvents")
       .doc(eventId)
       .collection("questions")
 
@@ -118,11 +124,9 @@ export async function GET(request: NextRequest) {
       ...doc.data(),
     }))
 
-    // Get ticket settings
+    // Get ticket settings — flat structure
     const settingsRef = adminDb
       .collection("events")
-      .doc(userId)
-      .collection("userEvents")
       .doc(eventId)
       .collection("formSettings")
       .doc("ticketSettings")
@@ -151,11 +155,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Missing required parameters: userId, eventId" }, { status: 400 })
     }
 
-    // Delete all questions
+    // Delete all questions — flat structure
     const questionsCollectionRef = adminDb
       .collection("events")
-      .doc(userId)
-      .collection("userEvents")
       .doc(eventId)
       .collection("questions")
 
@@ -165,11 +167,9 @@ export async function DELETE(request: NextRequest) {
       batch.delete(doc.ref)
     })
 
-    // Delete ticket settings
+    // Delete ticket settings — flat structure
     const settingsRef = adminDb
       .collection("events")
-      .doc(userId)
-      .collection("userEvents")
       .doc(eventId)
       .collection("formSettings")
       .doc("ticketSettings")
