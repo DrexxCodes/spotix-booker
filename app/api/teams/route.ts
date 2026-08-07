@@ -53,6 +53,64 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
 // ── Built-in role permission map (same as client-side) ────────────────────────
 const BUILT_IN_ROLES = ["admin", "checkin", "accountant"]
 
+// ── Best-effort team notification emails ───────────────────────────────────────
+// Fire-and-forget by design: notification email failures must never surface
+// as a failed "add"/"role change" to the booker who just did it — same
+// philosophy as app/api/payout/vault-notify/route.ts.
+async function getUserDisplayName(uid: string, fallback: string): Promise<string> {
+  try {
+    const doc = await adminDb.collection("users").doc(uid).get()
+    return doc.data()?.fullName || fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function notifyTeamMemberAdded(params: {
+  eventId: string
+  eventName: string
+  adderName: string
+  recipientName: string
+  email: string
+  role: string
+}) {
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/v1/notify/team-member-added`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      console.warn("[teams] team-member-added notification failed:", await res.text().catch(() => ""))
+    }
+  } catch (err) {
+    console.error("[teams] team-member-added notification error:", err)
+  }
+}
+
+async function notifyTeamMemberChanged(params: {
+  eventId: string
+  eventName: string
+  adderName: string
+  recipientName: string
+  email: string
+  role: string
+  permissions: string[] | null
+}) {
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/v1/notify/team-member-changed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      console.warn("[teams] team-member-changed notification failed:", await res.text().catch(() => ""))
+    }
+  } catch (err) {
+    console.error("[teams] team-member-changed notification error:", err)
+  }
+}
+
 // ── GET ───────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const auth = await authenticate()
@@ -305,11 +363,28 @@ export async function POST(req: NextRequest) {
       addedAt: new Date().toISOString(),
     })
 
+    const recipientName = collaboratorDoc.data()?.fullName ?? collaboratorEmail
+    const adderName = await getUserDisplayName(userId, ownerDoc.data()?.email ?? "A Spotix booker")
+    const eventName = eventDoc.data()?.eventName ?? "your event"
+
+    // Best-effort — awaited so it actually fires before the serverless
+    // function exits (a bare unawaited promise risks getting cut off),
+    // but errors are swallowed inside notifyTeamMemberAdded itself so a
+    // failed email never turns this into a failed "add".
+    await notifyTeamMemberAdded({
+      eventId,
+      eventName,
+      adderName,
+      recipientName,
+      email: collaboratorEmail.trim().toLowerCase(),
+      role: role.trim(),
+    })
+
     return ok({
       message: "Collaborator added successfully",
       collaborationId: collabRef.id,
       collaboratorId,
-      displayName: collaboratorDoc.data()?.fullName ?? collaboratorEmail,
+      displayName: recipientName,
       role: role.trim(),
     }, 201)
   } catch (e: any) {
@@ -338,15 +413,42 @@ export async function PATCH(req: NextRequest) {
     const collabSnap = await collabRef.get()
 
     if (!collabSnap.exists) return fail("Collaboration not found", 404)
-    if (collabSnap.data()!.ownerId !== userId) return fail("Only the event owner can change roles", 403)
+    const existing = collabSnap.data()!
+    if (existing.ownerId !== userId) return fail("Only the event owner can change roles", 403)
 
     const isBuiltIn = ["admin", "checkin", "accountant"].includes(role.trim())
+    const newPermissions = isBuiltIn ? null : (body.permissions ?? [])
+
     await collabRef.update({
       role: role.trim(),
-      permissions: isBuiltIn ? null : (body.permissions ?? []),
+      permissions: newPermissions,
     })
 
-    return ok({ message: "Role updated successfully", role: role.trim(), permissions: isBuiltIn ? null : (body.permissions ?? []) })
+    // Only email if something actually changed — PATCH can get called on
+    // an unchanged role/permission set (e.g. re-saving the same custom
+    // role), and that shouldn't spam the teammate.
+    const roleChanged = existing.role !== role.trim()
+    const permsChanged = JSON.stringify(existing.permissions ?? null) !== JSON.stringify(newPermissions)
+
+    if (roleChanged || permsChanged) {
+      const [eventDoc, ownerDoc, collaboratorDoc] = await Promise.all([
+        adminDb.collection("events").doc(existing.eventId).get(),
+        adminDb.collection("users").doc(userId).get(),
+        adminDb.collection("users").doc(existing.collaboratorId).get(),
+      ])
+
+      await notifyTeamMemberChanged({
+        eventId: existing.eventId,
+        eventName: eventDoc.data()?.eventName ?? "your event",
+        adderName: ownerDoc.data()?.fullName ?? "A Spotix booker",
+        recipientName: collaboratorDoc.data()?.fullName ?? existing.collaboratorEmail,
+        email: existing.collaboratorEmail,
+        role: role.trim(),
+        permissions: newPermissions,
+      })
+    }
+
+    return ok({ message: "Role updated successfully", role: role.trim(), permissions: newPermissions })
   } catch (e: any) {
     console.error("[PATCH /api/teams]", e)
     return fail("Internal server error", 500)

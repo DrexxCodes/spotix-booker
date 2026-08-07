@@ -18,6 +18,32 @@ async function authenticate(req: Request): Promise<{ userId: string } | Response
   }
 }
 
+// ─── Best-effort transfer-request notification email ──────────────────────
+// Fire-and-forget by design, same philosophy as app/api/payout/vault-notify
+// and app/api/teams — a failed notification email must never surface as a
+// failed transfer request.
+async function notifyEventTransferRequest(params: {
+  eventId: string
+  eventName: string
+  organizerName: string
+  recipientName: string
+  email: string
+  expiresAt: string
+}) {
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/v1/notify/event-transfer-request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      console.warn("[transfer] event-transfer-request notification failed:", await res.text().catch(() => ""))
+    }
+  } catch (err) {
+    console.error("[transfer] event-transfer-request notification error:", err)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/event/transfer?eventId={eventId}
 // Returns the pending transfer request for a given event (if any).
@@ -215,6 +241,22 @@ export async function POST(req: Request) {
     })
 
     await batch.commit()
+
+    // Best-effort — awaited so it fires before the serverless function
+    // exits, but internal errors are swallowed so a failed email never
+    // turns this into a failed transfer request.
+    const recipientSnap = await adminDb.collection("users").doc(recipientId).get()
+    const recipientName = recipientSnap.data()?.fullName ?? recipientUsername
+    const organizerName = organizerData.fullName ?? organizerData.username ?? "A Spotix booker"
+
+    await notifyEventTransferRequest({
+      eventId,
+      eventName: eventData.eventName ?? "your event",
+      organizerName,
+      recipientName,
+      email: recipientEmail,
+      expiresAt: expiresAt.toISOString(),
+    })
 
     return Response.json({ transferId: transferRef.id, status: "pending" }, { status: 201 })
   }
