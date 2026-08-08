@@ -33,6 +33,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolvePollAccess } from "@/lib/poll-team-access"
 import {
   validateVotePrice,
   MAX_SINGLE_CONTESTANTS,
@@ -222,14 +223,16 @@ export async function PATCH(req: NextRequest) {
 
   if (!pollId?.trim()) return fail("pollId is required", 400)
 
-  // ── Ownership check ─────────────────────────────────────────────────────────
-  const pollRef  = adminDb.collection("voting").doc(pollId)
-  const pollSnap = await pollRef.get()
-  if (!pollSnap.exists) return fail("Poll not found", 404)
+  // ── Access check ────────────────────────────────────────────────────────────
+  // Owner or an active poll team member can save edits (see
+  // app/lib/poll-team-access.ts) — team members get full edit-page access
+  // but never reach payouts or the standalone Settings page.
+  const access = await resolvePollAccess(pollId, userId)
+  if (!access.ok) return fail(access.error, access.status)
 
+  const pollRef      = adminDb.collection("voting").doc(pollId)
+  const pollSnap     = access.pollSnap
   const existingData = pollSnap.data()!
-  const owner        = existingData.creatorId ?? existingData.organizerId ?? null
-  if (owner !== userId) return fail("You do not own this poll", 403)
 
   const pollType = existingData.pollType ?? "single"
 

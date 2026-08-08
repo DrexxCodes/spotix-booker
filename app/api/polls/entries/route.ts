@@ -11,13 +11,17 @@
  * Cursor-based pagination: pass the `reference` of the last entry on the
  * current page as `cursor` to fetch the next page.
  *
- * Ownership-checked: only the poll's creator/organizer can list its entries.
+ * Access-checked: the poll's creator/organizer OR an active poll team
+ * member can list its entries (see app/lib/poll-team-access.ts) — viewing
+ * vote stats/entries is part of the edit-page access granted to a poll
+ * team member.
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { resolvePollAccess } from "@/lib/poll-team-access"
 import { Timestamp } from "firebase-admin/firestore"
 
 const DEV_TAG = "spotix-api-v1"
@@ -65,13 +69,10 @@ export async function GET(req: NextRequest) {
   if (!pollId?.trim()) return fail("pollId is required", 400)
 
   try {
-    const pollRef = adminDb.collection("voting").doc(pollId)
-    const pollSnap = await pollRef.get()
-    if (!pollSnap.exists) return fail("Poll not found", 404)
+    const access = await resolvePollAccess(pollId, userId)
+    if (!access.ok) return fail(access.error, access.status)
 
-    const pollData = pollSnap.data()!
-    const owner = pollData.creatorId ?? pollData.organizerId ?? null
-    if (owner !== userId) return fail("You do not own this poll", 403)
+    const pollRef = adminDb.collection("voting").doc(pollId)
 
     let query = pollRef
       .collection("entries")

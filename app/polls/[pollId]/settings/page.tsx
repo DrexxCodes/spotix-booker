@@ -14,6 +14,8 @@ import {
   CheckCircle,
   Search,
 } from "lucide-react"
+import PollTeamPanel from "./components/PollTeamPanel"
+import TieBreakerPanel from "./components/TieBreakerPanel"
 
 interface EventOption {
   id: string
@@ -69,6 +71,11 @@ export default function PollSettingsPage() {
         authFetch("/api/event/list?action=owned"),
       ])
 
+      // Poll Settings is creator-only — a poll team member gets 403 here
+      // (see app/api/polls/settings/route.ts). Bounce them out instead of
+      // rendering a settings shell they have no business seeing; they
+      // still have full access to the Edit page.
+      if (linkRes.status === 403) { router.replace("/polls"); return }
       if (!linkRes.ok) throw new Error("Failed to load poll settings")
       if (!eventsRes.ok) throw new Error("Failed to load events")
 
@@ -280,6 +287,12 @@ export default function PollSettingsPage() {
             {isLinked ? "Already Linked — Unlink First" : "Link to Selected Event"}
           </button>
         </div>
+
+        {/* Tie-Breaker — resolves ties instead of crowning a winner by array order */}
+        <TieBreakerPanel pollId={pollId} />
+
+        {/* Poll Team — creator-only, imported per poll settings page */}
+        <PollTeamPanel pollId={pollId} />
       </div>
     </div>
   )

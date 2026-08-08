@@ -10,7 +10,7 @@ import {
   Loader, Loader2, ArrowLeft, Save, AlertCircle, CheckCircle, ImageIcon,
   Info, Calendar, Users, Plus, Trash2, ChevronRight, ChevronLeft,
   Layers, FolderPlus, Tag, ChevronDown, ChevronUp, ToggleLeft, ToggleRight,
-  Download, User, ImagePlus, Wand2,
+  Download, User, ImagePlus, Wand2, UserCog, BarChart3, Crown, ShieldCheck,
 } from "lucide-react"
 import type { CategoryForm as CreateCategoryForm } from "../../create/lib/factories"
 import {
@@ -66,6 +66,17 @@ interface PollMeta {
   pollImageUploading: boolean
   pollType:          "single" | "group"
   statsVisible:      boolean
+}
+
+/** Read-only vote-stats snapshot, captured once from the raw poll payload
+ *  at load time — kept separate from the editable form state above so it
+ *  never gets serialized back to the server on save. This is what a poll
+ *  team member's "view vote stats" access resolves to on the Edit page,
+ *  since team members never reach the main poll page's Overview tab. */
+interface VoteStatsSnapshot {
+  totalVotes: number
+  totalRevenue: number
+  standings: { name: string; votes: number; path?: string }[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -154,6 +165,37 @@ function emptyCategory(): CategoryForm {
     contestants: [emptyContestant(), emptyContestant()],
     subcategories: [], expanded: true, isExisting: false, hasVotes: false,
   }
+}
+
+/** Flattens a raw (un-hydrated) category tree from the API into a list of
+ *  leaf-contestant standings for the read-only Vote Stats panel. */
+function flattenCategoryStandings(cats: any[], path: string): { name: string; votes: number; path?: string }[] {
+  const out: { name: string; votes: number; path?: string }[] = []
+  for (const cat of cats ?? []) {
+    const label = path ? `${path} › ${cat.name}` : cat.name
+    if ((cat.subcategories ?? []).length > 0) {
+      out.push(...flattenCategoryStandings(cat.subcategories, label))
+    } else {
+      for (const c of cat.contestants ?? []) {
+        out.push({ name: c.name, votes: c.votes ?? 0, path: label })
+      }
+    }
+  }
+  return out
+}
+
+/** Builds the read-only vote-stats snapshot from the raw poll payload
+ *  returned by /api/polls/one — computed once at load time, independent
+ *  of the editable form state. */
+function computeVoteStats(poll: any): VoteStatsSnapshot {
+  if ((poll.pollType ?? "single") === "single") {
+    const standings = (poll.contestants ?? []).map((c: any) => ({ name: c.name, votes: c.votes ?? 0 }))
+    const totalVotes = standings.reduce((s: number, c: any) => s + c.votes, 0)
+    return { totalVotes, totalRevenue: poll.pollAmount ?? 0, standings }
+  }
+  const standings = flattenCategoryStandings(poll.categories ?? [], "")
+  const totalVotes = standings.reduce((s, c) => s + c.votes, 0)
+  return { totalVotes, totalRevenue: poll.pollAmount ?? 0, standings }
 }
 
 // ─── Validators ───────────────────────────────────────────────────────────────
@@ -438,16 +480,71 @@ function CategoryBlock({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// ─── Vote Stats panel (read-only) ──────────────────────────────────────────────
+// Gives a poll team member "view vote stats" access right on the Edit page,
+// since their access is scoped to this page only — they never reach the
+// main poll page's Overview/Entries tabs.
+function VoteStatsPanel({ stats }: { stats: VoteStatsSnapshot }) {
+  const [open, setOpen] = useState(false)
+  const sorted = [...stats.standings].sort((a, b) => b.votes - a.votes).slice(0, 8)
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden mb-4">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <BarChart3 className="w-4 h-4 text-[#6b2fa5]" />
+          <span className="text-sm font-semibold text-gray-900">Vote Stats</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">{stats.totalVotes.toLocaleString()} votes · ₦{stats.totalRevenue.toLocaleString()}</span>
+          {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 p-4 space-y-2">
+          {sorted.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-3">No votes yet</p>
+          ) : (
+            sorted.map((s, i) => {
+              const pct = stats.totalVotes > 0 ? Math.round((s.votes / stats.totalVotes) * 100) : 0
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="w-4 text-[10px] font-bold text-gray-400">{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <p className="text-xs font-medium text-gray-800 truncate">{s.name}{s.path ? <span className="text-gray-400"> · {s.path}</span> : ""}</p>
+                      <p className="text-xs font-bold text-gray-900 flex-shrink-0 ml-2">{s.votes.toLocaleString()}</p>
+                    </div>
+                    <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-[#6b2fa5] rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function EditPollPage() {
   const router = useRouter()
   const params = useParams()
   const pollId = params.pollId as string
 
   const [loadingPoll, setLoadingPoll] = useState(true)
+  const [loadError,   setLoadError]   = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState(1)
   const [stepErrors,  setStepErrors]  = useState<string[]>([])
   const [submitting,  setSubmitting]  = useState(false)
   const [saved,       setSaved]       = useState(false)
+  const [access,      setAccess]      = useState<"owner" | "member" | null>(null)
+  const [voteStats,   setVoteStats]   = useState<VoteStatsSnapshot | null>(null)
 
   const [meta, setMeta] = useState<PollMeta>({
     pollName: "", pollDescription: "",
@@ -462,17 +559,31 @@ export default function EditPollPage() {
   const [categories,  setCategories]  = useState<CategoryForm[]>([])
 
   // ── Load poll ───────────────────────────────────────────────────────────────
+  // Uses /api/polls/one (not /api/polls/list) because this page must be
+  // reachable by both the poll creator AND an active poll team member —
+  // /api/polls/list only ever returns polls the caller owns (it powers the
+  // "My Polls" dashboard), while /api/polls/one resolves owner-or-member
+  // access via app/lib/poll-team-access.ts. A team member lands here via
+  // the link in their invite email, not through their own dashboard.
   useEffect(() => {
     const init = async () => {
       let token = getAccessToken()
       if (!token) { const r = await tryRefreshTokens(); if (!r) { router.push("/login"); return }; token = getAccessToken() }
       if (!token) { router.push("/login"); return }
 
-      const res  = await authFetch("/api/polls/list")
-      if (!res.ok) { router.push("/polls"); return }
+      const res = await authFetch(`/api/polls/one?pollId=${encodeURIComponent(pollId)}`)
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setLoadError(d.error ?? "You don't have access to this poll.")
+        setLoadingPoll(false)
+        return
+      }
       const data = await res.json()
-      const poll = (data.polls ?? []).find((p: any) => p.id === pollId)
+      const poll = data.poll
       if (!poll) { router.push("/polls"); return }
+
+      setAccess(data.access ?? "owner")
+      setVoteStats(computeVoteStats(poll))
 
       setMeta({
         pollName:          poll.pollName        ?? "",
@@ -613,7 +724,10 @@ export default function EditPollPage() {
       if (!res.ok) { setStepErrors([data.error || "Failed to save changes"]); return }
 
       setSaved(true)
-      setTimeout(() => router.push(`/polls/${pollId}`), 1200)
+      // Team members don't have access to the main poll page (owner-only),
+      // so send them back to their own dashboard instead of bouncing them
+      // through a 403 on redirect.
+      setTimeout(() => router.push(access === "member" ? "/polls" : `/polls/${pollId}`), 1200)
     } catch {
       setStepErrors(["An unexpected error occurred. Please try again."])
     } finally {
@@ -625,7 +739,27 @@ export default function EditPollPage() {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><Loader className="w-8 h-8 animate-spin text-[#6b2fa5]" /></div>
   }
 
+  // Neither the owner nor an active poll team member — bounce out cleanly
+  // instead of rendering a form the caller has no right to see.
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="max-w-sm text-center space-y-3">
+          <div className="w-14 h-14 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mx-auto">
+            <AlertCircle className="w-6 h-6 text-red-500" />
+          </div>
+          <p className="font-semibold text-gray-900">Can't open this poll</p>
+          <p className="text-sm text-gray-500">{loadError}</p>
+          <Link href="/polls" className="inline-flex items-center gap-2 text-sm font-semibold text-[#6b2fa5] hover:underline mt-2">
+            <ArrowLeft className="w-4 h-4" /> Back to Polls
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   const isGroup = meta.pollType === "group"
+  const isTeamMember = access === "member"
   const steps = [
     { n: 1, label: "Poll Info",  icon: Info     },
     { n: 2, label: "Schedule",   icon: Calendar },
@@ -636,14 +770,32 @@ export default function EditPollPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 py-8">
 
-        <Link href={`/polls/${pollId}`} className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-6 transition-colors">
-          <ArrowLeft className="w-4 h-4" /> Back to Poll
-        </Link>
+        {isTeamMember ? (
+          <div className="inline-flex items-center gap-2 text-sm text-gray-500 mb-6">
+            <UserCog className="w-4 h-4" /> Editing as poll team member
+          </div>
+        ) : (
+          <Link href={`/polls/${pollId}`} className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-6 transition-colors">
+            <ArrowLeft className="w-4 h-4" /> Back to Poll
+          </Link>
+        )}
 
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Edit Poll</h1>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-2xl font-bold text-gray-900">Edit Poll</h1>
+            {isTeamMember ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                <ShieldCheck className="w-3 h-3" /> Team Member
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                <Crown className="w-3 h-3" /> Poll Creator
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500 mt-1">
             {isGroup ? "Update categories, sub-categories, and contestants" : "Update poll details or contestants"}
+            {isTeamMember && " · Payouts and poll settings stay with the poll creator"}
           </p>
           <div className="flex items-center gap-2 mt-5">
             {steps.map((s, idx) => {
@@ -661,6 +813,8 @@ export default function EditPollPage() {
             })}
           </div>
         </div>
+
+        {voteStats && <VoteStatsPanel stats={voteStats} />}
 
         {saved && (
           <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-3">

@@ -31,6 +31,8 @@ import {
   RefreshCw,
   AlertTriangle,
   Sparkles,
+  Ban,
+  Scale,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -75,6 +77,30 @@ interface Poll {
    *  PATCH /api/polls/update brings the poll above the minimum
    *  contestant count. See spotix-booker/app/api/polls/update/route.ts. */
   contestantsTBD?: boolean
+  /** Tie-breaker configuration — see app/polls/[pollId]/settings/components/TieBreakerPanel.tsx */
+  enabledTieBreaker?: boolean
+  tieBreakerDuration?: number | null
+  tieBreakerRounds?: number | null
+  /** Live tie-breaker round state, keyed by scope ("single" or a leaf categoryId). See
+   *  spotix-user/src/app/lib/tie-breaker.ts / spotix-backend/v1/lib/tie-breaker.js for the
+   *  state machine that produces this — this codebase only reads and displays it. */
+  tieBreakers?: Record<string, TieBreakerLiveState>
+}
+
+interface TieBreakerLiveState {
+  status: "active" | "fptp" | "resolved"
+  round: number
+  contestantIds: string[]
+  endsAt: string | null
+  isFinalRound: boolean
+  winnerId: string | null
+  resolvedMethod: "tiebreaker-round" | "fptp" | null
+}
+
+interface TieBreakerConfig {
+  enabled:  boolean
+  duration: number | null
+  rounds:   number | null
 }
 
 interface EntryRow {
@@ -116,10 +142,41 @@ const COMING_SOON_PILL = { cls: "bg-purple-100 text-purple-700", icon: Sparkles,
 
 // ─── Standings row (shared leaf renderer) ──────────────────────────────────────
 
-function StandingsList({ contestants, status, emptyMessage = "No contestants yet" }: { contestants: Contestant[]; status: PollStatus; emptyMessage?: string }) {
+function StandingsList({
+  contestants,
+  status,
+  emptyMessage = "No contestants yet",
+  tieBreaker,
+  liveState,
+}: {
+  contestants: Contestant[]
+  status: PollStatus
+  emptyMessage?: string
+  /** Poll-level tie-breaker config, only relevant once status === "ended". */
+  tieBreaker?: TieBreakerConfig
+  /** Live round state for this scope, if a tie-breaker has ever kicked in — see TieBreakerLiveState. */
+  liveState?: TieBreakerLiveState
+}) {
   const sorted     = [...contestants].sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0))
   const totalVotes = sorted.reduce((s, c) => s + (c.votes ?? 0), 0)
-  const winner     = sorted[0]
+  const topScore   = sorted[0]?.votes ?? 0
+
+  const ended   = status === "ended"
+  // Edge case 1: nobody voted — never crown a winner off a 0-0 "lead".
+  const noVotes = ended && totalVotes === 0
+  // Edge case 2: 2+ contestants share the top score — sorted[0] is just
+  // array order at that point, not a real winner, so don't crown it either.
+  // If a tie-breaker round already resolved this scope, its winnerId is
+  // authoritative — trust it over the raw vote tally (a stray late vote
+  // landing after resolution shouldn't flip the displayed winner).
+  const tiedTop = ended && !noVotes ? sorted.filter((c) => (c.votes ?? 0) === topScore) : []
+  const rawIsTie = tiedTop.length > 1
+  const tieBreakerLive = liveState?.status === "active" || liveState?.status === "fptp"
+  const resolvedByTieBreaker = liveState?.status === "resolved" ? liveState.winnerId : null
+
+  const isTie    = (rawIsTie || tieBreakerLive) && !resolvedByTieBreaker
+  const winnerId = resolvedByTieBreaker ?? (ended && !noVotes && !rawIsTie ? sorted[0]?.contestantId ?? null : null)
+  const tiedIds  = tieBreakerLive ? (liveState?.contestantIds ?? []) : tiedTop.map((c) => c.contestantId)
 
   if (sorted.length === 0) {
     return <p className="text-sm text-gray-400 text-center py-6">{emptyMessage}</p>
@@ -127,13 +184,72 @@ function StandingsList({ contestants, status, emptyMessage = "No contestants yet
 
   return (
     <div className="space-y-3">
+      {noVotes && (
+        <div className="flex items-center gap-2 px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl">
+          <Ban className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          <p className="text-xs text-gray-500 font-medium">No votes were cast — no winner.</p>
+        </div>
+      )}
+
+      {resolvedByTieBreaker && (
+        <div className="flex items-start gap-2.5 px-3.5 py-2.5 bg-green-50 border border-green-200 rounded-xl">
+          <Crown className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-green-800">
+            Decided by tie-breaker{liveState?.resolvedMethod === "fptp" ? " (first-past-the-post)" : ` (round ${liveState?.round})`}.
+          </p>
+        </div>
+      )}
+
+      {isTie && !tieBreakerLive && (
+        <div className="flex items-start gap-2.5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+          <Scale className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="text-xs text-amber-800">
+            <p className="font-semibold">
+              {tiedTop.length}-way tie at {topScore.toLocaleString()} vote{topScore !== 1 ? "s" : ""} — no winner crowned yet.
+            </p>
+            {tieBreaker?.enabled ? (
+              <p className="mt-0.5 text-amber-700">
+                Tie-breaker is enabled for this poll — {tieBreaker.duration ? `${tieBreaker.duration}h per round` : "duration not set"}
+                {tieBreaker.rounds ? `, up to ${tieBreaker.rounds} round${tieBreaker.rounds !== 1 ? "s" : ""}` : ", 1 round"}, then decided
+                first-past-the-post.
+              </p>
+            ) : (
+              <p className="mt-0.5 text-amber-700">
+                No tie-breaker is configured — enable one from Poll Settings to resolve ties automatically next time.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tieBreakerLive && (
+        <div className="flex items-start gap-2.5 px-3.5 py-2.5 bg-purple-50 border border-purple-200 rounded-xl">
+          <Scale className="w-4 h-4 text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+          <div className="text-xs text-purple-800">
+            <p className="font-semibold">
+              {liveState?.status === "fptp"
+                ? "First-past-the-post — next vote among the tied contestants wins."
+                : `Tie-breaker round ${liveState?.round}${liveState?.isFinalRound ? " (final round)" : ""} is open.`}
+            </p>
+            {liveState?.status === "active" && liveState?.endsAt && (
+              <p className="mt-0.5 text-purple-700">
+                Round closes {new Date(liveState.endsAt).toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short" })}.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {sorted.map((c, idx) => {
         const pct      = totalVotes > 0 ? Math.round(((c.votes ?? 0) / totalVotes) * 100) : 0
-        const isWinner = status === "ended" && c.contestantId === winner?.contestantId
+        const isWinner = winnerId === c.contestantId
+        const isTied   = isTie && tiedIds.includes(c.contestantId)
         return (
           <div
             key={c.contestantId}
-            className={`flex items-center gap-3 p-3 rounded-xl ${isWinner ? "bg-yellow-50 border border-yellow-200" : "bg-gray-50"}`}
+            className={`flex items-center gap-3 p-3 rounded-xl ${
+              isWinner ? "bg-yellow-50 border border-yellow-200" : isTied ? "bg-amber-50 border border-amber-200" : "bg-gray-50"
+            }`}
           >
             <span className="w-5 text-xs font-bold text-gray-400 text-center">{idx + 1}</span>
             <img
@@ -145,6 +261,7 @@ function StandingsList({ contestants, status, emptyMessage = "No contestants yet
               <div className="flex items-center gap-2 mb-1">
                 <p className="text-sm font-semibold text-gray-900 truncate">{c.name}</p>
                 {isWinner && <Crown className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0" />}
+                {isTied && <Scale className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
               </div>
               <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                 <div
@@ -167,11 +284,14 @@ function StandingsList({ contestants, status, emptyMessage = "No contestants yet
 // ─── Category panel (recursive) — group-poll standings ─────────────────────────
 
 function CategoryStandingsPanel({
-  category, depth, status,
+  category, depth, status, tieBreaker, tieBreakers,
 }: {
   category: CategoryNode
   depth: number
   status: PollStatus
+  tieBreaker?: TieBreakerConfig
+  /** Full poll-level tie-breaker state map, keyed by scope — this panel looks up its own leaf category's entry. */
+  tieBreakers?: Record<string, TieBreakerLiveState>
 }) {
   const [open, setOpen] = useState(depth === 0)
   const hasSubcategories = (category.subcategories ?? []).length > 0
@@ -212,9 +332,9 @@ function CategoryStandingsPanel({
         <div className="px-4 pb-4 border-t border-inherit pt-4 space-y-3">
           {hasSubcategories
             ? category.subcategories.map((sub) => (
-                <CategoryStandingsPanel key={sub.categoryId} category={sub} depth={depth + 1} status={status} />
+                <CategoryStandingsPanel key={sub.categoryId} category={sub} depth={depth + 1} status={status} tieBreaker={tieBreaker} tieBreakers={tieBreakers} />
               ))
-            : <StandingsList contestants={category.contestants} status={status} />}
+            : <StandingsList contestants={category.contestants} status={status} tieBreaker={tieBreaker} liveState={tieBreakers?.[category.categoryId]} />}
         </div>
       )}
     </div>
@@ -427,6 +547,12 @@ export default function PollManagePage() {
   const totalVotes = isGroup ? (poll.pollCount ?? sumCategoryVotes(poll.categories ?? [])) : (poll.pollCount ?? 0)
   const contestantCount = isGroup ? countContestants(poll.categories ?? []) : (poll.contestants?.length ?? 0)
 
+  const tieBreakerConfig: TieBreakerConfig = {
+    enabled:  poll.enabledTieBreaker ?? false,
+    duration: poll.tieBreakerDuration ?? null,
+    rounds:   poll.tieBreakerRounds ?? null,
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-4 py-8">
@@ -616,7 +742,7 @@ export default function PollManagePage() {
                   </div>
                 ) : (
                   poll.categories.map((cat) => (
-                    <CategoryStandingsPanel key={cat.categoryId} category={cat} depth={0} status={status} />
+                    <CategoryStandingsPanel key={cat.categoryId} category={cat} depth={0} status={status} tieBreaker={tieBreakerConfig} tieBreakers={poll.tieBreakers} />
                   ))
                 )}
               </div>
@@ -629,6 +755,8 @@ export default function PollManagePage() {
                   contestants={poll.contestants ?? []}
                   status={status}
                   emptyMessage={poll.contestantsTBD ? "Contestants TBD — add them from the Edit page" : "No contestants yet"}
+                  tieBreaker={tieBreakerConfig}
+                  liveState={poll.tieBreakers?.["single"]}
                 />
               </div>
             )}

@@ -68,6 +68,16 @@ function shapePoll(id: string, d: FirebaseFirestore.DocumentData, needsNormaliza
     createdAt:       toIso(d.createdAt),
     updatedAt:       toIso(d.updatedAt),
     needsNormalization,
+    // Tie-breaker config + live round state — previously omitted here even
+    // though the poll detail page (app/polls/[pollId]/page.tsx) reads
+    // poll.enabledTieBreaker/tieBreakerDuration/tieBreakerRounds straight
+    // off what this route returns. Without these the "tied — no winner
+    // crowned" banner always showed as unconfigured, regardless of what
+    // was actually saved via /api/polls/tiebreaker.
+    enabledTieBreaker:  d.enabledTieBreaker  ?? false,
+    tieBreakerDuration: d.tieBreakerDuration ?? null,
+    tieBreakerRounds:   d.tieBreakerRounds   ?? null,
+    tieBreakers:        d.tieBreakers        ?? {},
   }
 }
 
