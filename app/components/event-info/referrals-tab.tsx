@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, Trash2, X, AlertCircle } from "lucide-react"
+import { Plus, Trash2, X, AlertCircle, Share2, Check } from "lucide-react"
 
 interface ReferralUsage {
   name: string
@@ -28,6 +28,24 @@ export default function ReferralsTab({ eventId }: ReferralsTabProps) {
   const [codeToDelete, setCodeToDelete] = useState<string | null>(null)
   const [addError, setAddError] = useState<string | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+
+  // ── Build shareable referral link ─────────────────────────────────────────────
+  const getReferralLink = (code: string) => {
+    const base = process.env.NEXT_PUBLIC_APP_URL || "https://spotix.com.ng"
+    return `${base}/event/${eventId}?referral=${encodeURIComponent(code)}`
+  }
+
+  const handleShareReferral = async (code: string) => {
+    const link = getReferralLink(code)
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopiedCode(code)
+      setTimeout(() => setCopiedCode((prev) => (prev === code ? null : prev)), 2000)
+    } catch (error) {
+      console.error("Failed to copy referral link:", error)
+    }
+  }
 
   // ── Fetch referrals ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -117,8 +135,9 @@ export default function ReferralsTab({ eventId }: ReferralsTabProps) {
           <input
             type="text"
             value={referralCode}
-            onChange={(e) => { setReferralCode(e.target.value); setAddError(null) }}
-            placeholder="Enter referral code name"
+            onChange={(e) => { setReferralCode(e.target.value.replace(/\s+/g, "")); setAddError(null) }}
+            onKeyDownCapture={(e) => { if (e.key === " ") e.preventDefault() }}
+            placeholder="Enter referral code name (no spaces)"
             className="w-full sm:flex-1 px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#6b2fa5] focus:border-transparent transition-all"
             disabled={loading}
             onKeyDown={(e) => {
@@ -177,6 +196,7 @@ export default function ReferralsTab({ eventId }: ReferralsTabProps) {
                     <th className="px-4 sm:px-6 py-3 text-left text-xs sm:text-sm font-semibold text-slate-900">Referral Code</th>
                     <th className="px-4 sm:px-6 py-3 text-left text-xs sm:text-sm font-semibold text-slate-900">Uses</th>
                     <th className="px-4 sm:px-6 py-3 text-left text-xs sm:text-sm font-semibold text-slate-900">Tickets</th>
+                    <th className="px-4 sm:px-6 py-3 text-right text-xs sm:text-sm font-semibold text-slate-900">Share</th>
                     <th className="px-4 sm:px-6 py-3 text-right text-xs sm:text-sm font-semibold text-slate-900">Actions</th>
                   </tr>
                 </thead>
@@ -200,6 +220,25 @@ export default function ReferralsTab({ eventId }: ReferralsTabProps) {
                         <span className="inline-flex items-center justify-center min-w-[2rem] px-2.5 py-1 bg-green-100 text-green-700 text-xs sm:text-sm font-semibold rounded-full">
                           {referral.totalTickets}
                         </span>
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 text-right">
+                        <button
+                          onClick={() => handleShareReferral(referral.code)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[#6b2fa5] hover:bg-[#6b2fa5]/10 rounded-lg transition-all active:scale-95 font-medium text-xs sm:text-sm"
+                          title="Copy share referral link"
+                        >
+                          {copiedCode === referral.code ? (
+                            <>
+                              <Check size={16} className="text-green-600" />
+                              <span className="text-green-600">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Share2 size={16} />
+                              <span className="hidden sm:inline">Share Link</span>
+                            </>
+                          )}
+                        </button>
                       </td>
                       <td className="px-4 sm:px-6 py-4 text-right">
                         <button
@@ -274,6 +313,28 @@ export default function ReferralsTab({ eventId }: ReferralsTabProps) {
 
             {/* Modal Content */}
             <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(85vh-100px)]">
+              <div className="flex items-center gap-2 bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl px-4 py-3 mb-6">
+                <span className="flex-1 text-xs sm:text-sm font-mono text-slate-600 break-all">
+                  {getReferralLink(selectedReferral.code)}
+                </span>
+                <button
+                  onClick={() => handleShareReferral(selectedReferral.code)}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-[#6b2fa5] text-white rounded-lg hover:bg-[#5a2589] active:scale-95 transition-all font-medium text-xs sm:text-sm"
+                >
+                  {copiedCode === selectedReferral.code ? (
+                    <>
+                      <Check size={16} />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 size={16} />
+                      <span>Share Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
               <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6">
                 <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200 shadow-sm">
                   <p className="text-xs sm:text-sm text-blue-700 font-medium mb-1">Total Uses</p>

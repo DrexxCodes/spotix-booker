@@ -643,8 +643,7 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
                   The payout for <span className="font-semibold">{confirmCancel.date}</span> (₦
                   {Number(confirmCancel.amount).toLocaleString()}), requested by{" "}
                   <span className="font-semibold">{confirmCancel.initiatedByName ?? "another team member"}</span>,
-                  will be permanently rejected. It can no longer proceed — any remaining Vault
-                  sign-offs will be blocked — and this can't be undone.
+                  will be permanently rejected. The whole team will see you rejected it.
                 </p>
               </div>
             )}

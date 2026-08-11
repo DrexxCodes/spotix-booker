@@ -115,6 +115,7 @@ export async function POST(
 
   const { code } = body
   if (!code?.trim()) return fail("code is required", 400)
+  if (/\s/.test(code.trim())) return fail("Referral code cannot contain spaces", 400)
 
   const owned = await resolveOwnedEvent(eventId, userId)
   if (owned instanceof NextResponse) return owned

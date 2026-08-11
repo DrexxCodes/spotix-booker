@@ -335,7 +335,7 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
             // record exists but can't initiate a payout themselves.
             <button
               disabled
-              title="View only — only the Event Creator or an Admin can initiate a payout"
+              title="You can't initiate payouts on this event"
               className="px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 bg-gray-100 text-gray-400 cursor-not-allowed"
             >
               <Eye size={14} /> View Only
@@ -360,7 +360,7 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
               ) : !vaultReady && isWithdrawable(txn.updatedAt) ? (
                 <><Lock size={14} /> Vault Not Ready</>
               ) : (
-                <><Clock size={14} /> Locked</>
+                <><Clock size={14} /> Processing</>
               )}
             </button>
           )}
