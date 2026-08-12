@@ -3,13 +3,25 @@
  *
  * GET /api/polls/list
  *
- * Returns all polls owned by the authenticated booker by querying the
- * FLAT voting collection:
- *   voting/{pollId}  where creatorId == userId
+ * Returns every poll the authenticated booker can see:
+ *   1. Polls they own — voting/{pollId} where creatorId == userId
+ *   2. Polls they've been added to as a poll team member — resolved via
+ *      pollCollaborations (collaboratorId == userId, isActive == true),
+ *      then fetched from the same flat voting/{pollId} collection.
+ *
+ * Each poll is shaped with a `role: "owner" | "member"` field so the
+ * dashboard, command center (app/polls/[pollId]/page.tsx), and payout
+ * page can all reuse this single list to grant a team member the exact
+ * same read surface as the creator, while still gating owner-only actions
+ * (initiating a payout, adding team members without canAddAdmin, linking/
+ * unlinking an event) client-side off that field — the server-side routes
+ * for those actions enforce the same rule independently either way.
  *
  * Also checks for legacy nested polls at voting/{userId}/polls/{pollId}
  * and returns them with a `needsNormalization: true` flag so the UI can
- * prompt the booker to run the Normalize migration.
+ * prompt the booker to run the Normalize migration. Legacy polls are only
+ * ever looked up for the owner, since the poll-team feature only applies
+ * to polls already migrated to the flat collection.
  */
 
 import { NextRequest, NextResponse } from "next/server"
@@ -37,9 +49,18 @@ function toIso(value: unknown): string | null {
   return null
 }
 
-function shapePoll(id: string, d: FirebaseFirestore.DocumentData, needsNormalization = false) {
+function shapePoll(
+  id: string,
+  d: FirebaseFirestore.DocumentData,
+  needsNormalization = false,
+  role: "owner" | "member" = "owner",
+) {
   return {
     id,
+    // "owner" → full access, including initiating payouts and adding team
+    // members. "member" → same read surface, minus initiating a payout and
+    // minus adding team members (unless canAddAdmin is also true).
+    role,
     pollName:        d.pollName        ?? "",
     pollImage:       d.pollImage       ?? "",
     pollDescription: d.pollDescription ?? "",
@@ -134,7 +155,36 @@ export async function GET(_req: NextRequest) {
       // Legacy path doesn't exist — not an error
     }
 
-    const polls = [...flatPolls, ...legacyPolls]
+    // ── 3. Polls this booker was added to as a poll team member ───────────────
+    let memberPolls: ReturnType<typeof shapePoll>[] = []
+
+    try {
+      const collabSnap = await adminDb
+        .collection("pollCollaborations")
+        .where("collaboratorId", "==", userId)
+        .where("isActive", "==", true)
+        .get()
+
+      const ownedIds = new Set(flatPolls.map((p) => p.id))
+      const memberPollIds = [...new Set(
+        collabSnap.docs
+          .map((doc) => doc.data().pollId as string)
+          .filter((id) => id && !ownedIds.has(id))
+      )]
+
+      if (memberPollIds.length > 0) {
+        const memberPollRefs = memberPollIds.map((id) => adminDb.collection("voting").doc(id))
+        const memberPollSnaps = await adminDb.getAll(...memberPollRefs)
+        memberPolls = memberPollSnaps
+          .filter((snap) => snap.exists)
+          .map((snap) => shapePoll(snap.id, snap.data()!, false, "member"))
+      }
+    } catch (err) {
+      // A failure here shouldn't hide the booker's own polls
+      console.error("[GET /api/polls/list] member-polls lookup failed:", err)
+    }
+
+    const polls = [...flatPolls, ...legacyPolls, ...memberPolls]
 
     return ok({ polls, hasLegacy: legacyPolls.length > 0 })
   } catch (err: any) {

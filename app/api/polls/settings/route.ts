@@ -2,11 +2,18 @@
  * app/api/polls/settings/route.ts
  *
  * GET  /api/polls/settings?pollId=xxx
- *   → Returns current linkage info for the poll (eventId, eventName if linked)
+ *   → Returns current linkage info for the poll (eventId, eventName if
+ *     linked), plus `role` ("owner" | "member") and `canAddAdmin` for the
+ *     requester so the Settings page can render for a poll team member
+ *     (same page the creator sees) while still gating the event link/
+ *     unlink controls and the "Add" button on the Team panel appropriately.
+ *     Callable by the poll creator or any active team member.
  *
  * POST /api/polls/settings
  *   Body: { pollId, eventId, action: "link" | "unlink" }
- *   → Links or unlinks a poll ↔ event.
+ *   → Links or unlinks a poll ↔ event. Poll-creator-only, regardless of
+ *     team membership — this stays out of scope for canAddAdmin, which
+ *     only ever governs adding team members.
  *
  * On LINK:
  *   - Checks events/{eventId} for an existing votingId — returns 409 if already linked to a different poll
@@ -23,6 +30,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolvePollAccess } from "@/lib/poll-team-access"
 
 const DEV_TAG = "spotix-api-v1"
 function ok(data: object, status = 200) {
@@ -54,17 +62,18 @@ export async function GET(req: NextRequest) {
   if (!pollId) return fail("pollId is required", 400)
 
   try {
-    const pollSnap = await adminDb.collection("voting").doc(pollId).get()
-    if (!pollSnap.exists) return fail("Poll not found", 404)
-    const d = pollSnap.data()!
-    if (d.creatorId !== userId && d.organizerId !== userId)
-      return fail("Forbidden", 403)
+    const access = await resolvePollAccess(pollId, userId)
+    if (!access.ok) return fail(access.error, access.status)
+
+    const d = access.pollSnap.data()!
 
     return ok({
       pollId,
       pollName:        d.pollName        ?? "",
       linkedEventId:   d.linkedEventId   ?? null,
       linkedEventName: d.linkedEventName ?? null,
+      role:            access.role,
+      canAddAdmin:     access.canAddAdmin,
     })
   } catch (err) {
     console.error("[GET /api/polls/settings]", err)

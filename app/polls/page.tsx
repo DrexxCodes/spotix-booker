@@ -7,7 +7,7 @@ import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
 import {
   Loader, Plus, Vote, TrendingUp, Clock, CheckCircle,
   XCircle, BarChart2, AlertTriangle, RefreshCw, Shuffle, Settings2,
-  ListChecks, Copy,
+  ListChecks, Copy, Users,
 } from "lucide-react"
 
 interface Contestant { contestantId: string; name: string; image: string; votes: number; imageType?: string; imageSeed?: string | null }
@@ -39,6 +39,9 @@ interface Poll {
   statsVisible: boolean
   createdAt: string | null
   needsNormalization: boolean
+  /** "owner" (created it) or "member" (added as a poll team mate) — from
+   *  /api/polls/list. Drives the "Teammate" tag on the card below. */
+  role?: "owner" | "member"
 }
 
 function genId(prefix: string): string {
@@ -347,6 +350,14 @@ export default function PollsPage() {
                         <StatusIcon className="w-3 h-3" /> {status}
                       </span>
                     </div>
+
+                    {/* Teammate tag — this poll belongs to someone else, the
+                        current user is just on its team (see PollTeamPanel) */}
+                    {poll.role === "member" && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-semibold bg-purple-100 text-[#6b2fa5]">
+                        <Users className="w-3 h-3" /> Teammate
+                      </span>
+                    )}
 
                     <p className="text-xs text-gray-400 line-clamp-2 mb-3">{poll.pollDescription}</p>
 

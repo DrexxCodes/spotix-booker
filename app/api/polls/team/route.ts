@@ -2,32 +2,43 @@
  * app/api/polls/team/route.ts
  *
  * GET  /api/polls/team?pollId=<id>&action=list
- *   → Returns all team members on a poll (poll creator only)
+ *   → Returns all team members on a poll. The creator or any active team
+ *     member can call this (a member needs it to render their own Team
+ *     panel on the Settings page).
  *
  * POST /api/polls/team
  *   Body: { pollId, collaboratorEmail }
  *   → Looks up the user by email (same lookup /api/whoru performs),
  *     creates a pollCollaborations doc, and fires the poll-team-added
- *     email. Only the poll creator can call this.
+ *     email. Callable by the poll creator, or by an active team member
+ *     who has been granted the canAddAdmin privilege (see PATCH below).
+ *
+ * PATCH /api/polls/team
+ *   Body: { collaborationId, canAddAdmin }
+ *   → Grants or revokes a team member's ability to add further team
+ *     members. Poll-creator-only — a member can never change this for
+ *     themselves or anyone else, even one with canAddAdmin already.
  *
  * DELETE /api/polls/team
  *   Body: { collaborationId }
  *   → Deletes a pollCollaborations doc. Either the poll creator (dismiss
  *     a team mate) or the team mate themselves (exit) can call this.
  *
- * Poll teams have exactly one access tier — there's no role/permission
- * selection like the event-team feature (app/api/teams/route.ts). Being
- * on the team grants edit-page access (poll info, schedule, contestants/
- * categories, and the vote-stats-visibility toggle) plus read access to
- * vote stats/entries. It never grants access to the standalone Poll
- * Settings page or to payouts — those stay creator-only regardless of
- * team membership (see app/lib/poll-team-access.ts).
+ * Poll teams have exactly one access tier plus a single opt-in privilege
+ * flag (canAddAdmin) — there's no full role/permission matrix like the
+ * event-team feature (app/api/teams/route.ts). Being on the team grants
+ * the same read/edit surface as the creator — command center, edit page,
+ * vote stats/entries, and the standalone Poll Settings page — MINUS
+ * initiating a payout (creator-only, always) and MINUS adding new team
+ * members (creator, or a member with canAddAdmin). See
+ * app/lib/poll-team-access.ts for the full breakdown.
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { resolvePollAccess } from "@/lib/poll-team-access"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -75,7 +86,7 @@ async function notifyPollTeamAdded(params: {
   }
 }
 
-// ── GET — list team members (poll creator only) ──────────────────────────────
+// ── GET — list team members (creator or any active team member) ──────────────
 export async function GET(req: NextRequest) {
   const auth = await authenticate()
   if (auth instanceof NextResponse) return auth
@@ -89,12 +100,8 @@ export async function GET(req: NextRequest) {
   if (action !== "list") return fail("Invalid action. Use 'list'.", 400)
 
   try {
-    const pollSnap = await adminDb.collection("voting").doc(pollId).get()
-    if (!pollSnap.exists) return fail("Poll not found", 404)
-
-    const d = pollSnap.data()!
-    const owner = d.creatorId ?? d.organizerId ?? null
-    if (owner !== userId) return fail("Only the poll creator can view the team", 403)
+    const access = await resolvePollAccess(pollId, userId)
+    if (!access.ok) return fail(access.error, access.status)
 
     const snap = await adminDb
       .collection("pollCollaborations")
@@ -110,10 +117,15 @@ export async function GET(req: NextRequest) {
         collaboratorEmail: c.collaboratorEmail,
         displayName:       c.displayName ?? c.collaboratorEmail,
         addedAt:           c.addedAt ?? null,
+        canAddAdmin:       c.canAddAdmin === true,
+        isYou:             c.collaboratorId === userId,
       }
     })
 
-    return ok({ members })
+    // role/canAddAdmin describe the requester themselves — lets the Settings
+    // page gate the "Add" button and the canAddAdmin toggle without a
+    // second round trip.
+    return ok({ members, role: access.role, canAddAdmin: access.canAddAdmin })
   } catch (e: any) {
     console.error("[GET /api/polls/team]", e)
     return fail("Internal server error", 500)
@@ -136,20 +148,27 @@ export async function POST(req: NextRequest) {
   const email = collaboratorEmail.trim().toLowerCase()
 
   try {
-    const pollRef  = adminDb.collection("voting").doc(pollId)
-    const pollSnap = await pollRef.get()
-    if (!pollSnap.exists) return fail("Poll not found", 404)
+    const access = await resolvePollAccess(pollId, userId)
+    if (!access.ok) return fail(access.error, access.status)
 
-    const pollData = pollSnap.data()!
-    const owner = pollData.creatorId ?? pollData.organizerId ?? null
-    if (owner !== userId) return fail("Only the poll creator can add team members", 403)
+    // Owner can always add; a member needs the canAddAdmin privilege the
+    // creator granted them (see PATCH below) — a member never grants it
+    // to themselves, since resolvePollAccess reads canAddAdmin straight
+    // off their own pollCollaborations doc.
+    if (access.role === "member" && !access.canAddAdmin) {
+      return fail("You don't have permission to add team members on this poll. Ask the poll creator to grant you that privilege.", 403)
+    }
+
+    const pollData = access.pollSnap.data()!
+    const owner    = access.ownerId
 
     // Same gate as the event-team feature — reuses the profile-level
-    // enabledCollaboration flag so bookers manage one on/off switch for
-    // collaboration across both events and polls.
-    const ownerDoc = await adminDb.collection("users").doc(userId).get()
+    // enabledCollaboration flag on the poll OWNER's account, since
+    // collaboration is a feature of the owner's poll regardless of which
+    // team member (owner or canAddAdmin member) is doing the adding.
+    const ownerDoc = await adminDb.collection("users").doc(owner).get()
     if (!ownerDoc.data()?.enabledCollaboration) {
-      return fail("You must enable collaboration in your profile settings first", 400)
+      return fail("The poll creator must enable collaboration in their profile settings first", 400)
     }
 
     // Look up the collaborator by email (same lookup /api/whoru performs).
@@ -184,12 +203,23 @@ export async function POST(req: NextRequest) {
       collaboratorId,
       collaboratorEmail: email,
       displayName: recipientName,
-      ownerId: userId,
+      // Always the poll's true creator — not necessarily the requester,
+      // since a member with canAddAdmin can also call this endpoint. The
+      // creator (and only the creator) needs to be able to dismiss anyone
+      // added this way, so DELETE's isOwner check must resolve correctly
+      // regardless of who did the adding.
+      ownerId: owner,
+      // New team members can't add further team members until the creator
+      // explicitly grants it (see PATCH below).
+      canAddAdmin: false,
       isActive: true,
       addedAt: new Date().toISOString(),
     })
 
-    const adderName = ownerDoc.data()?.fullName || ownerDoc.data()?.email || "A Spotix booker"
+    // The person who actually performed the add — the owner themselves, or
+    // a canAddAdmin member acting on their behalf.
+    const requesterDoc = userId === owner ? ownerDoc : await adminDb.collection("users").doc(userId).get()
+    const adderName = requesterDoc.data()?.fullName || requesterDoc.data()?.email || "A Spotix booker"
 
     // Awaited so it fires before the serverless function exits — errors
     // are swallowed inside notifyPollTeamAdded itself, so a failed email
@@ -211,6 +241,46 @@ export async function POST(req: NextRequest) {
     }, 201)
   } catch (e: any) {
     console.error("[POST /api/polls/team]", e)
+    return fail("Internal server error", 500)
+  }
+}
+
+// ── PATCH — grant/revoke a member's canAddAdmin privilege (creator-only) ──────
+export async function PATCH(req: NextRequest) {
+  const auth = await authenticate()
+  if (auth instanceof NextResponse) return auth
+  const { userId } = auth
+
+  let body: Record<string, any>
+  try { body = await req.json() } catch { return fail("Invalid JSON body", 400) }
+
+  const { collaborationId, canAddAdmin } = body
+  if (!collaborationId?.trim())    return fail("collaborationId is required", 400)
+  if (typeof canAddAdmin !== "boolean") return fail("canAddAdmin must be a boolean", 400)
+
+  try {
+    const collabRef  = adminDb.collection("pollCollaborations").doc(collaborationId)
+    const collabSnap = await collabRef.get()
+    if (!collabSnap.exists) return fail("Team membership not found", 404)
+
+    const collab = collabSnap.data()!
+
+    // Only the poll's true creator can grant or revoke this — a member with
+    // canAddAdmin cannot extend that privilege to anyone else, themselves
+    // included, closing off any privilege-escalation path through POST.
+    if (collab.ownerId !== userId) {
+      return fail("Only the poll creator can change this privilege", 403)
+    }
+
+    await collabRef.update({ canAddAdmin })
+
+    return ok({
+      message: canAddAdmin ? "Team member can now add teammates" : "Team member can no longer add teammates",
+      collaborationId,
+      canAddAdmin,
+    })
+  } catch (e: any) {
+    console.error("[PATCH /api/polls/team]", e)
     return fail("Internal server error", 500)
   }
 }

@@ -35,6 +35,12 @@ interface PayoutRecord {
 interface PollPayoutLogProps {
   pollId: string
   userId: string
+  /** False for a poll team member — they can see the full payout log but
+   *  the "Re-run" action on failed payouts stays creator-only (re-queuing
+   *  is a money-moving action, same as initiating a payout in the first
+   *  place). Defaults to true so existing owner-only call sites keep
+   *  working unchanged. */
+  canManagePayouts?: boolean
 }
 
 const STATUS_CONFIG: Record<
@@ -124,7 +130,7 @@ function buildWhatsAppLink(record: PayoutRecord, kind: "pending" | "processing")
   return `https://wa.me/2348123927685?text=${encodeURIComponent(message)}`
 }
 
-export default function PollPayoutLog({ pollId, userId }: PollPayoutLogProps) {
+export default function PollPayoutLog({ pollId, userId, canManagePayouts = true }: PollPayoutLogProps) {
   const [payouts, setPayouts] = useState<PayoutRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -392,7 +398,7 @@ export default function PollPayoutLog({ pollId, userId }: PollPayoutLogProps) {
                   </div>
 
                   <div className="flex flex-col gap-2 items-end flex-shrink-0">
-                    {record.status === "failed" && (
+                    {record.status === "failed" && canManagePayouts && (
                       <button
                         onClick={() => handleRerun(record)}
                         disabled={isRerunning}

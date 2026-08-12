@@ -2,11 +2,14 @@
  * app/api/polls/tiebreaker/route.ts
  *
  * GET  /api/polls/tiebreaker?pollId=xxx
- *   → Returns the poll's current tie-breaker configuration.
+ *   → Returns the poll's current tie-breaker configuration. Readable by
+ *     the poll creator or any active poll team member (see
+ *     app/lib/poll-team-access.ts) — the Settings page shows this panel
+ *     to the whole team, same as everything else there.
  *
  * POST /api/polls/tiebreaker
  *   Body: { pollId, enabledTieBreaker, tieBreakerDuration?, tieBreakerRounds? }
- *   → Saves tie-breaker configuration to voting/{pollId}.
+ *   → Saves tie-breaker configuration to voting/{pollId}. Poll-creator-only.
  *
  * Tie-breaker fields on voting/{pollId}:
  *   enabledTieBreaker   boolean          — whether ties on this poll trigger a tie-breaker
@@ -28,6 +31,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolvePollAccess } from "@/lib/poll-team-access"
 
 const DEV_TAG = "spotix-api-v1"
 function ok(data: object, status = 200) {
@@ -59,11 +63,9 @@ export async function GET(req: NextRequest) {
   if (!pollId) return fail("pollId is required", 400)
 
   try {
-    const pollSnap = await adminDb.collection("voting").doc(pollId).get()
-    if (!pollSnap.exists) return fail("Poll not found", 404)
-    const d = pollSnap.data()!
-    if (d.creatorId !== userId && d.organizerId !== userId)
-      return fail("Forbidden", 403)
+    const access = await resolvePollAccess(pollId, userId)
+    if (!access.ok) return fail(access.error, access.status)
+    const d = access.pollSnap.data()!
 
     return ok({
       pollId,

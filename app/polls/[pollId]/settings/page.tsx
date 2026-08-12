@@ -30,6 +30,8 @@ interface PollLinkInfo {
   pollName:        string
   linkedEventId:   string | null
   linkedEventName: string | null
+  role?:           "owner" | "member"
+  canAddAdmin?:    boolean
 }
 
 export default function PollSettingsPage() {
@@ -71,10 +73,13 @@ export default function PollSettingsPage() {
         authFetch("/api/event/list?action=owned"),
       ])
 
-      // Poll Settings is creator-only — a poll team member gets 403 here
-      // (see app/api/polls/settings/route.ts). Bounce them out instead of
-      // rendering a settings shell they have no business seeing; they
-      // still have full access to the Edit page.
+      // A 403 here means the requester isn't the creator AND isn't an
+      // active team member on this poll at all (see
+      // app/api/polls/settings/route.ts / app/lib/poll-team-access.ts) —
+      // that's the only case worth bouncing out for. An active team
+      // member gets a normal 200 with role: "member" and sees this same
+      // page, just with the event-link controls and the Team panel's
+      // "Add" button gated below.
       if (linkRes.status === 403) { router.replace("/polls"); return }
       if (!linkRes.ok) throw new Error("Failed to load poll settings")
       if (!eventsRes.ok) throw new Error("Failed to load events")
@@ -157,6 +162,8 @@ export default function PollSettingsPage() {
 
   const isLinked   = Boolean(linkInfo?.linkedEventId)
   const linkedName = linkInfo?.linkedEventName ?? ""
+  const isOwner    = (linkInfo?.role ?? "owner") === "owner"
+  const canAddAdmin = linkInfo?.canAddAdmin ?? isOwner
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -190,6 +197,17 @@ export default function PollSettingsPage() {
           </div>
         )}
 
+        {/* Team-member notice */}
+        {!isOwner && (
+          <div className="flex items-start gap-3 p-4 bg-purple-50 border border-purple-200 rounded-2xl">
+            <Link2 className="w-5 h-5 text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-purple-700">
+              You're on this poll's team. You can see everything below, but only the poll creator can
+              link or unlink an event.
+            </p>
+          </div>
+        )}
+
         {/* Current linkage card */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">
@@ -207,92 +225,98 @@ export default function PollSettingsPage() {
                   <p className="text-xs text-slate-400 font-mono">{linkInfo?.linkedEventId}</p>
                 </div>
               </div>
-              <button
-                onClick={handleUnlink}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-semibold transition-colors disabled:opacity-60"
-              >
-                {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Link2Off className="w-4 h-4" />}
-                Unlink
-              </button>
+              {isOwner && (
+                <button
+                  onClick={handleUnlink}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-sm font-semibold transition-colors disabled:opacity-60"
+                >
+                  {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Link2Off className="w-4 h-4" />}
+                  Unlink
+                </button>
+              )}
             </div>
           ) : (
             <p className="text-slate-400 text-sm">No event linked yet.</p>
           )}
         </div>
 
-        {/* Affiliate to event */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-1">
-            Affiliate to an Event
-          </h2>
-          <p className="text-xs text-slate-400 mb-5">
-            Linking a poll to an event shows poll details in the event overview and allows attendees to discover the poll from the event page.
-            {isLinked && " Unlink the current event above before linking a new one."}
-          </p>
+        {/* Affiliate to event — creator-only */}
+        {isOwner && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-1">
+              Affiliate to an Event
+            </h2>
+            <p className="text-xs text-slate-400 mb-5">
+              Linking a poll to an event shows poll details in the event overview and allows attendees to discover the poll from the event page.
+              {isLinked && " Unlink the current event above before linking a new one."}
+            </p>
 
-          {/* Search */}
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search events…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm text-black placeholder:text-slate-400 focus:outline-none focus:border-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20"
-            />
+            {/* Search */}
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search events…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm text-black placeholder:text-slate-400 focus:outline-none focus:border-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20"
+              />
+            </div>
+
+            {/* Event list */}
+            <div className="space-y-2 max-h-72 overflow-y-auto mb-5">
+              {filteredEvents.length === 0 ? (
+                <p className="text-sm text-slate-400 py-4 text-center">No events found.</p>
+              ) : (
+                filteredEvents.map((ev) => (
+                  <label
+                    key={ev.id}
+                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      selected === ev.id
+                        ? "border-[#6b2fa5] bg-[#6b2fa5]/5"
+                        : "border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="event"
+                      value={ev.id}
+                      checked={selected === ev.id}
+                      onChange={() => setSelected(ev.id)}
+                      className="accent-[#6b2fa5]"
+                    />
+                    <CalendarDays className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 truncate">{ev.eventName}</p>
+                      <p className="text-xs text-slate-400 truncate">{ev.eventVenue} · {new Date(ev.eventDate).toLocaleDateString("en-NG", { dateStyle: "medium" })}</p>
+                    </div>
+                    {ev.id === linkInfo?.linkedEventId && (
+                      <span className="text-xs bg-[#6b2fa5]/10 text-[#6b2fa5] px-2 py-0.5 rounded-full font-medium flex-shrink-0">Linked</span>
+                    )}
+                  </label>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={handleLink}
+              disabled={!selected || saving || isLinked}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-[#6b2fa5] hover:bg-[#5a1f8a] text-white rounded-xl font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+              {isLinked ? "Already Linked — Unlink First" : "Link to Selected Event"}
+            </button>
           </div>
-
-          {/* Event list */}
-          <div className="space-y-2 max-h-72 overflow-y-auto mb-5">
-            {filteredEvents.length === 0 ? (
-              <p className="text-sm text-slate-400 py-4 text-center">No events found.</p>
-            ) : (
-              filteredEvents.map((ev) => (
-                <label
-                  key={ev.id}
-                  className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                    selected === ev.id
-                      ? "border-[#6b2fa5] bg-[#6b2fa5]/5"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="event"
-                    value={ev.id}
-                    checked={selected === ev.id}
-                    onChange={() => setSelected(ev.id)}
-                    className="accent-[#6b2fa5]"
-                  />
-                  <CalendarDays className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-900 truncate">{ev.eventName}</p>
-                    <p className="text-xs text-slate-400 truncate">{ev.eventVenue} · {new Date(ev.eventDate).toLocaleDateString("en-NG", { dateStyle: "medium" })}</p>
-                  </div>
-                  {ev.id === linkInfo?.linkedEventId && (
-                    <span className="text-xs bg-[#6b2fa5]/10 text-[#6b2fa5] px-2 py-0.5 rounded-full font-medium flex-shrink-0">Linked</span>
-                  )}
-                </label>
-              ))
-            )}
-          </div>
-
-          <button
-            onClick={handleLink}
-            disabled={!selected || saving || isLinked}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-[#6b2fa5] hover:bg-[#5a1f8a] text-white rounded-xl font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-            {isLinked ? "Already Linked — Unlink First" : "Link to Selected Event"}
-          </button>
-        </div>
+        )}
 
         {/* Tie-Breaker — resolves ties instead of crowning a winner by array order */}
-        <TieBreakerPanel pollId={pollId} />
+        <TieBreakerPanel pollId={pollId} isOwner={isOwner} />
 
-        {/* Poll Team — creator-only, imported per poll settings page */}
-        <PollTeamPanel pollId={pollId} />
+        {/* Poll Team — visible to the creator and to any active team member;
+            the "Add" action and the canAddAdmin toggle are gated inside
+            based on the isOwner/canAddAdmin props below. */}
+        <PollTeamPanel pollId={pollId} isOwner={isOwner} canAddAdmin={canAddAdmin} />
       </div>
     </div>
   )

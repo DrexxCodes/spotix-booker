@@ -4,26 +4,31 @@
  * app/polls/[pollId]/settings/components/PollTeamPanel.tsx
  *
  * Team management for a single poll. Imported into the Poll Settings page
- * (poll creator only — see app/polls/[pollId]/settings/page.tsx) so the
- * creator can add a team mate, see who's on the team, and dismiss anyone
- * whenever they like.
+ * — visible to the poll creator AND to any active team member (see
+ * app/polls/[pollId]/settings/page.tsx), which passes down `isOwner` and
+ * `canAddAdmin` so this panel can gate itself:
  *
- * A poll team member is a single access tier (unlike the event-team
- * feature's admin/checkin/accountant roles): being on the team grants
- * edit-page access — poll info, schedule, contestants/categories, and the
- * vote-stats-visibility toggle — plus read access to vote stats/entries
- * from the Edit page. It never grants access to this Settings page itself
- * or to payouts; those stay with the poll creator.
+ *   - Everyone on the team can see the member list.
+ *   - "Add" is only shown to the creator, or to a member the creator has
+ *     granted the canAddAdmin privilege.
+ *   - Dismissing a team member, and granting/revoking canAddAdmin on a
+ *     member's card, stay creator-only regardless of canAddAdmin — a
+ *     member can never escalate themselves or anyone else.
+ *
+ * Being on the team grants the same read/edit surface as the creator —
+ * command center, edit page, vote stats/entries, and this Settings page —
+ * minus initiating a payout (creator-only, always) and minus adding new
+ * team members (creator, or a member with canAddAdmin).
  *
  * Mirrors the lookup → confirm → add flow in app/teams/page.tsx
- * (AddCollaboratorPanel), simplified for the single-tier poll team model.
+ * (AddCollaboratorPanel), simplified for the poll team model.
  */
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import {
   Users, UserPlus, Search, Loader2, X, Check, AlertCircle,
-  RefreshCw, ShieldOff, Plus,
+  RefreshCw, ShieldOff, Plus, ShieldCheck, Shield,
 } from "lucide-react"
 import { authFetch } from "@/lib/auth-client"
 
@@ -33,6 +38,8 @@ interface PollTeamMember {
   collaboratorEmail: string
   displayName: string
   addedAt: string | null
+  canAddAdmin: boolean
+  isYou: boolean
 }
 
 interface LookedUpUser {
@@ -99,6 +106,8 @@ function AddPollTeamMember({
         collaboratorEmail: email.trim().toLowerCase(),
         displayName: data.displayName,
         addedAt: new Date().toISOString(),
+        canAddAdmin: false,
+        isYou: false,
       })
     } catch {
       setSaveError("Network error. Please try again.")
@@ -161,8 +170,9 @@ function AddPollTeamMember({
 
       {lookedUp && (
         <div className="rounded-xl bg-purple-50 border border-purple-200 p-3.5 text-xs text-purple-700 leading-relaxed">
-          They'll be able to open this poll's Edit page — updating poll info, schedule, contestants/categories,
-          and vote-stats visibility, plus viewing vote stats. They won't get access to this Settings page or to payouts.
+          They'll get the same view as you across the command center, Edit page, Settings, and Payout page —
+          updating poll info, schedule, contestants/categories, and vote-stats visibility. They can't initiate a
+          payout, and can't add further team members unless you grant them that separately.
         </div>
       )}
 
@@ -192,13 +202,21 @@ function AddPollTeamMember({
 // ── Member card ────────────────────────────────────────────────────────────────
 function PollTeamMemberCard({
   member,
+  isOwner,
   onRemove,
+  onToggleCanAddAdmin,
 }: {
   member: PollTeamMember
+  /** Only the poll creator can dismiss a member or toggle their
+   *  canAddAdmin privilege — a member (even one with canAddAdmin) never
+   *  sees these controls on any card, including their own. */
+  isOwner: boolean
   onRemove: (collaborationId: string) => void
+  onToggleCanAddAdmin: (collaborationId: string, next: boolean) => void
 }) {
   const [removing, setRemoving] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [togglingAdmin, setTogglingAdmin] = useState(false)
 
   async function handleRemove() {
     setRemoving(true)
@@ -216,6 +234,24 @@ function PollTeamMemberCard({
       }
     } catch { alert("Network error.") }
     finally { setRemoving(false) }
+  }
+
+  async function handleToggleCanAddAdmin() {
+    const next = !member.canAddAdmin
+    setTogglingAdmin(true)
+    try {
+      const res = await authFetch("/api/polls/team", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collaborationId: member.collaborationId, canAddAdmin: next }),
+      })
+      if (res.ok) { onToggleCanAddAdmin(member.collaborationId, next) }
+      else {
+        const d = await res.json().catch(() => ({}))
+        alert(d.error ?? "Failed to update this privilege.")
+      }
+    } catch { alert("Network error.") }
+    finally { setTogglingAdmin(false) }
   }
 
   if (showConfirm) {
@@ -257,27 +293,68 @@ function PollTeamMemberCard({
         {(member.displayName || member.collaboratorEmail).charAt(0).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-semibold text-slate-900 text-sm truncate">{member.displayName}</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="font-semibold text-slate-900 text-sm truncate">{member.displayName}</p>
+          {member.isYou && (
+            <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">You</span>
+          )}
+          {member.canAddAdmin && (
+            <span className="flex items-center gap-1 text-[10px] bg-purple-100 text-[#6b2fa5] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">
+              <ShieldCheck size={10} /> Can add teammates
+            </span>
+          )}
+        </div>
         <p className="text-xs text-slate-500 truncate">{member.collaboratorEmail}</p>
       </div>
-      <button
-        onClick={() => setShowConfirm(true)}
-        disabled={removing}
-        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50 flex-shrink-0"
-        title="Dismiss from poll team"
-      >
-        <ShieldOff size={15} />
-      </button>
+
+      {isOwner && (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={handleToggleCanAddAdmin}
+            disabled={togglingAdmin}
+            className={`p-1.5 rounded-lg transition-all disabled:opacity-50 ${
+              member.canAddAdmin
+                ? "text-[#6b2fa5] bg-[#6b2fa5]/10 hover:bg-[#6b2fa5]/20"
+                : "text-slate-400 hover:text-[#6b2fa5] hover:bg-[#6b2fa5]/10"
+            }`}
+            title={member.canAddAdmin ? "Revoke ability to add teammates" : "Allow this member to add teammates"}
+          >
+            {togglingAdmin ? <Loader2 size={15} className="animate-spin" /> : member.canAddAdmin ? <ShieldCheck size={15} /> : <Shield size={15} />}
+          </button>
+          <button
+            onClick={() => setShowConfirm(true)}
+            disabled={removing}
+            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50"
+            title="Dismiss from poll team"
+          >
+            <ShieldOff size={15} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Main panel ────────────────────────────────────────────────────────────────
-export default function PollTeamPanel({ pollId }: { pollId: string }) {
+export default function PollTeamPanel({
+  pollId,
+  isOwner,
+  canAddAdmin,
+}: {
+  pollId: string
+  /** True for the poll creator. Gates dismiss + the canAddAdmin toggle on
+   *  every member card, regardless of the requester's own canAddAdmin. */
+  isOwner: boolean
+  /** True for the creator, or for a member the creator has granted the
+   *  privilege to. Gates whether the "Add" button/panel shows at all. */
+  canAddAdmin: boolean
+}) {
   const [members, setMembers]   = useState<PollTeamMember[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState("")
   const [showAdd, setShowAdd]   = useState(false)
+
+  const canAdd = isOwner || canAddAdmin
 
   const fetchMembers = useCallback(async () => {
     setLoading(true); setError("")
@@ -301,6 +378,10 @@ export default function PollTeamPanel({ pollId }: { pollId: string }) {
     setMembers((prev) => prev.filter((m) => m.collaborationId !== collaborationId))
   }
 
+  function handleToggleCanAddAdmin(collaborationId: string, next: boolean) {
+    setMembers((prev) => prev.map((m) => m.collaborationId === collaborationId ? { ...m, canAddAdmin: next } : m))
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
       <div className="flex items-center justify-between mb-1">
@@ -312,19 +393,24 @@ export default function PollTeamPanel({ pollId }: { pollId: string }) {
             <button onClick={fetchMembers} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Refresh">
               <RefreshCw size={14} />
             </button>
-            <button onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#6b2fa5] text-white rounded-lg text-xs font-semibold hover:bg-[#5a2589] transition-colors">
-              <Plus size={13} /> Add
-            </button>
+            {canAdd && (
+              <button onClick={() => setShowAdd(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#6b2fa5] text-white rounded-lg text-xs font-semibold hover:bg-[#5a2589] transition-colors">
+                <Plus size={13} /> Add
+              </button>
+            )}
           </div>
         )}
       </div>
       <p className="text-xs text-slate-400 mb-5">
-        Team members can open this poll's Edit page to update details, contestants/categories, and view vote stats.
-        They can't open this Settings page or initiate payouts — only you can.
+        {isOwner
+          ? "Team members get the same view as you across the command center, Edit, Settings, and Payout pages. They can't initiate a payout, and can't add teammates unless you grant that below."
+          : canAdd
+          ? "You've been given permission to add teammates to this poll. Only the poll creator can dismiss a member or grant/revoke that permission."
+          : "You're on this poll's team. Only the poll creator can add or dismiss teammates, or grant that permission to someone else."}
       </p>
 
-      {showAdd && (
+      {showAdd && canAdd && (
         <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 mb-4">
           <AddPollTeamMember pollId={pollId} onAdded={handleAdded} onCancel={() => setShowAdd(false)} />
         </div>
@@ -352,12 +438,20 @@ export default function PollTeamPanel({ pollId }: { pollId: string }) {
             <Users size={20} className="text-purple-400" />
           </div>
           <p className="text-sm font-semibold text-slate-700">No team members yet</p>
-          <p className="text-xs text-slate-500">Add a team mate to help manage this poll.</p>
+          <p className="text-xs text-slate-500">
+            {canAdd ? "Add a team mate to help manage this poll." : "The poll creator hasn't added any teammates yet."}
+          </p>
         </div>
       ) : (
         <div className="space-y-2.5">
           {members.map((m) => (
-            <PollTeamMemberCard key={m.collaborationId} member={m} onRemove={handleRemoved} />
+            <PollTeamMemberCard
+              key={m.collaborationId}
+              member={m}
+              isOwner={isOwner}
+              onRemove={handleRemoved}
+              onToggleCanAddAdmin={handleToggleCanAddAdmin}
+            />
           ))}
         </div>
       )}

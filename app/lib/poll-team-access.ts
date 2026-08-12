@@ -5,23 +5,39 @@
  * two access tiers (unlike the event-team feature in payout-access.ts,
  * which has admin/checkin/accountant/custom roles):
  *
- *   Poll Creator (owner)   → full access: edit, vote stats, poll settings
- *                             (the standalone /settings page), payouts.
- *   Poll Team Member       → edit page only (poll info, schedule, price,
- *                             contestants/categories, vote-stats visibility
- *                             toggle) and read access to vote stats/entries.
- *                             Cannot open the standalone Poll Settings page
- *                             (event linking) and cannot initiate payouts.
+ *   Poll Creator (owner)   → full access: edit, vote stats, the command
+ *                             center, poll settings (the standalone
+ *                             /settings page), and payouts — including
+ *                             initiating payouts and adding team members.
+ *   Poll Team Member       → the same read surface as the creator (command
+ *                             center, edit page, vote stats/entries, the
+ *                             Settings page, the Payout page) MINUS the
+ *                             ability to initiate a payout and MINUS the
+ *                             ability to add new team members — unless the
+ *                             creator has granted them the `canAddAdmin`
+ *                             privilege on their pollCollaborations doc, in
+ *                             which case they can add teammates too (but
+ *                             still can never initiate a payout, and can
+ *                             never grant/revoke canAddAdmin themselves —
+ *                             that stays creator-only).
  *
  * Used by:
- *   - app/api/polls/one/route.ts     (fetch a single poll — owner or member)
- *   - app/api/polls/update/route.ts  (save edits — owner or member)
- *   - app/api/polls/entries/route.ts (view vote stats — owner or member)
- *   - app/api/polls/team/route.ts    (manage the team — owner only, except
- *                                      DELETE which also allows self-exit)
- *
- * app/api/polls/settings/route.ts and app/api/polls/payout/route.ts
- * intentionally do NOT use this helper — they stay strictly owner-only.
+ *   - app/api/polls/one/route.ts      (fetch a single poll — owner or member)
+ *   - app/api/polls/list/route.ts     (dashboard listing — owner AND member,
+ *                                       queried separately then merged, see
+ *                                       that file for why it doesn't call
+ *                                       this helper directly)
+ *   - app/api/polls/update/route.ts   (save edits — owner or member)
+ *   - app/api/polls/entries/route.ts  (view vote stats — owner or member)
+ *   - app/api/polls/settings/route.ts (GET is owner or member; the
+ *                                       link/unlink POST stays owner-only)
+ *   - app/api/polls/payout/route.ts   (GET — list/status — is owner or
+ *                                       member; POST/PATCH, which create or
+ *                                       re-queue a payout, stay owner-only)
+ *   - app/api/polls/team/route.ts     (GET list is owner or member; POST add
+ *                                       is owner or member-with-canAddAdmin;
+ *                                       DELETE is owner or self-exit; PATCH
+ *                                       canAddAdmin toggle is owner-only)
  */
 
 import { adminDb } from "@/lib/firebase-admin"
@@ -34,6 +50,12 @@ export type PollAccessResult =
       role: PollAccessRole
       ownerId: string
       pollSnap: FirebaseFirestore.DocumentSnapshot
+      /** Only meaningful for role === "member" (owners can always add team
+       *  members). True when the creator has granted this member the
+       *  canAddAdmin privilege on their pollCollaborations doc. */
+      canAddAdmin: boolean
+      /** The member's own pollCollaborations doc id, when role === "member". */
+      collaborationId: string | null
     }
   | {
       ok: false
@@ -53,7 +75,7 @@ export async function resolvePollAccess(
   const ownerId = (d.creatorId ?? d.organizerId ?? null) as string | null
 
   if (ownerId && ownerId === userId) {
-    return { ok: true, role: "owner", ownerId, pollSnap }
+    return { ok: true, role: "owner", ownerId, pollSnap, canAddAdmin: true, collaborationId: null }
   }
 
   const collabSnap = await adminDb
@@ -68,5 +90,14 @@ export async function resolvePollAccess(
     return { ok: false, error: "Forbidden: you do not have access to this poll", status: 403 }
   }
 
-  return { ok: true, role: "member", ownerId: ownerId ?? "", pollSnap }
+  const collabDoc = collabSnap.docs[0]
+
+  return {
+    ok: true,
+    role: "member",
+    ownerId: ownerId ?? "",
+    pollSnap,
+    canAddAdmin: collabDoc.data().canAddAdmin === true,
+    collaborationId: collabDoc.id,
+  }
 }

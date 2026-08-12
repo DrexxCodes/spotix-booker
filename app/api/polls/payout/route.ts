@@ -6,6 +6,12 @@
  * POST /api/polls/payout     — request a payout for one transaction date
  * PATCH /api/polls/payout    — re-queue a failed payout
  *
+ * GET is readable by the poll creator OR any active poll team member — team
+ * members can see the same transaction days and payout history the creator
+ * sees on the Payout page. POST and PATCH (initiating or re-queuing an
+ * actual payout) stay strictly creator-only: team members never get to move
+ * money, no matter what team privileges they hold.
+ *
  * Uses the FLAT voting/{pollId} collection for ownership/flag checks, and the
  * per-day admin/votes/{pollId}/{date} aggregation (written by backend/v1/voting.js)
  * as the source of truth for payout amounts and eligibility — mirroring the
@@ -26,6 +32,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolvePollAccess } from "@/lib/poll-team-access"
 
 const DEV_TAG = "spotix-api-v1"
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -61,7 +68,10 @@ async function resolveOwnedPoll(
   if (!snap.exists) return fail("Poll not found", 404)
   const d     = snap.data()!
   const owner = d.creatorId ?? d.organizerId ?? null
-  if (owner !== userId) return fail("You do not own this poll", 403)
+  // Deliberately stricter than resolvePollAccess — used only by the
+  // money-moving routes below (POST/PATCH), which stay creator-only even
+  // for a team member with canAddAdmin.
+  if (owner !== userId) return fail("Only the poll creator can initiate or manage payouts", 403)
   return { snap, ref }
 }
 
@@ -79,8 +89,10 @@ export async function GET(req: NextRequest) {
 
   if (!pollId?.trim()) return fail("pollId is required", 400)
 
-  const owned = await resolveOwnedPoll(pollId, userId)
-  if (owned instanceof NextResponse) return owned
+  // Read access: creator or any active team member. Actually moving money
+  // (POST/PATCH below) stays gated to resolveOwnedPoll (creator-only).
+  const access = await resolvePollAccess(pollId, userId)
+  if (!access.ok) return fail(access.error, access.status)
 
   // ── action=list ────────────────────────────────────────────────────────────
   if (action === "list") {
@@ -107,10 +119,14 @@ export async function GET(req: NextRequest) {
   // ── action=status ──────────────────────────────────────────────────────────
   if (action === "status") {
     try {
+      // Payout docs are always written with userId == the poll's creator
+      // (only the creator can ever POST one), so a team member viewing
+      // needs access.ownerId here, not their own userId, or they'd always
+      // see an empty log.
       const snap = await adminDb
         .collection("payouts")
         .where("pollId", "==", pollId)
-        .where("userId", "==", userId)
+        .where("userId", "==", access.ownerId)
         .get()
 
       if (snap.empty) return ok({ payouts: [] })

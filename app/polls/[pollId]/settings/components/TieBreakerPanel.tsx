@@ -32,9 +32,13 @@ import { authFetch } from "@/lib/auth-client"
 
 interface TieBreakerPanelProps {
   pollId: string
+  /** True for the poll creator. Team members see the current
+   *  configuration read-only — POST /api/polls/tiebreaker stays
+   *  creator-only, same as the event link/unlink controls. */
+  isOwner?: boolean
 }
 
-export default function TieBreakerPanel({ pollId }: TieBreakerPanelProps) {
+export default function TieBreakerPanel({ pollId, isOwner = true }: TieBreakerPanelProps) {
   const [loading, setLoading]   = useState(true)
   const [saving,  setSaving]    = useState(false)
   const [error,   setError]     = useState("")
@@ -113,10 +117,11 @@ export default function TieBreakerPanel({ pollId }: TieBreakerPanelProps) {
           type="button"
           role="switch"
           aria-checked={enabled}
-          onClick={() => setEnabled((v) => !v)}
+          onClick={() => { if (isOwner) setEnabled((v) => !v) }}
+          disabled={!isOwner}
           className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
             enabled ? "bg-[#6b2fa5]" : "bg-slate-200"
-          }`}
+          } ${!isOwner ? "opacity-60 cursor-not-allowed" : ""}`}
         >
           <span
             className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -145,7 +150,8 @@ export default function TieBreakerPanel({ pollId }: TieBreakerPanelProps) {
               value={duration}
               onChange={(e) => { setDuration(e.target.value); setError(""); setSuccess("") }}
               placeholder="e.g. 24"
-              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm text-black placeholder:text-slate-400 focus:outline-none focus:border-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20"
+              disabled={!isOwner}
+              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm text-black placeholder:text-slate-400 focus:outline-none focus:border-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20 disabled:bg-slate-50 disabled:text-slate-500"
             />
             <p className="text-[11px] text-slate-400 mt-1">How long tied contestants get to compete in each tie-breaker round.</p>
           </div>
@@ -161,7 +167,8 @@ export default function TieBreakerPanel({ pollId }: TieBreakerPanelProps) {
               value={rounds}
               onChange={(e) => { setRounds(e.target.value); setError(""); setSuccess("") }}
               placeholder="Leave blank for 1 round, then first-past-the-post"
-              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm text-black placeholder:text-slate-400 focus:outline-none focus:border-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20"
+              disabled={!isOwner}
+              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm text-black placeholder:text-slate-400 focus:outline-none focus:border-[#6b2fa5] focus:ring-2 focus:ring-[#6b2fa5]/20 disabled:bg-slate-50 disabled:text-slate-500"
             />
             <p className="text-[11px] text-slate-400 mt-1">
               If contestants are still tied after a round, another round opens — up to this many. Leave blank to
@@ -192,14 +199,19 @@ export default function TieBreakerPanel({ pollId }: TieBreakerPanelProps) {
         </div>
       )}
 
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-[#6b2fa5] hover:bg-[#5a1f8a] text-white rounded-xl font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scale className="w-4 h-4" />}
-        Save Tie-Breaker Settings
-      </button>
+      {isOwner && (
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-[#6b2fa5] hover:bg-[#5a1f8a] text-white rounded-xl font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scale className="w-4 h-4" />}
+          Save Tie-Breaker Settings
+        </button>
+      )}
+      {!isOwner && (
+        <p className="text-xs text-slate-400 text-center">Only the poll creator can change tie-breaker settings.</p>
+      )}
     </div>
   )
 }

@@ -36,6 +36,10 @@ interface Poll {
   flagged: boolean
   suspended: boolean
   updatedAt: string | null
+  /** "owner" (the creator) or "member" (an added poll team mate) — from
+   *  /api/polls/list. Team members can view everything on this page but
+   *  can't initiate a payout, so this gates the action buttons below. */
+  role?: "owner" | "member"
 }
 
 interface DailyVoteTransaction {
@@ -179,14 +183,18 @@ interface TxnCardProps {
   hasMethods: boolean
   isSelected?: boolean
   onToggleSelect?: (date: string) => void
+  /** False for a poll team member — they can see everything on this card
+   *  but the action button becomes a disabled "View only" state instead
+   *  of a working Payout button, and the bulk-select checkbox is hidden. */
+  canPayout: boolean
 }
 
-function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelected, onToggleSelect }: TxnCardProps) {
+function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelected, onToggleSelect, canPayout }: TxnCardProps) {
   const canWithdraw = isWithdrawable(txn.lastUpdated)
   const timeLeft = timeUntilWithdrawable(txn.lastUpdated)
   const progress = unlockProgress(txn.lastUpdated)
   const badge = payoutStatus ? (STATUS_BADGE[payoutStatus] ?? STATUS_BADGE.pending) : null
-  const isEligibleForBulk = !payoutStatus && canWithdraw
+  const isEligibleForBulk = !payoutStatus && canWithdraw && canPayout
 
   return (
     <div className={`bg-white border rounded-xl p-5 hover:shadow-md transition-all space-y-4 ${
@@ -246,6 +254,14 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
             >
               {badge?.icon}
               {badge?.label ?? payoutStatus}
+            </button>
+          ) : !canPayout ? (
+            <button
+              disabled
+              title="Only the poll creator can initiate a payout"
+              className="px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-not-allowed bg-gray-100 text-gray-400"
+            >
+              View only
             </button>
           ) : (
             <button
@@ -455,6 +471,10 @@ export default function PollPayoutPage() {
   const hasMethods  = methods.length > 0
   const available   = Math.max(0, (poll.pollAmount ?? 0) - (poll.totalPaidOut ?? 0))
   const isLocked    = poll.flagged || poll.suspended
+  // A poll team member sees everything on this page but can't initiate a
+  // payout — the server enforces this too (POST /api/polls/payout stays
+  // creator-only), this just keeps the buttons honest about it.
+  const canPayout   = poll.role !== "member"
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -507,13 +527,24 @@ export default function PollPayoutPage() {
         )}
 
         {/* Info notice */}
-        {!isLocked && (
+        {!isLocked && canPayout && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3 mb-6">
             <AlertCircle size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-blue-700">
               Payouts are available per transaction day. Withdrawals unlock{" "}
               <strong>30 hours</strong> after the last vote on that day. Make sure you have a
               payout method set before requesting.
+            </p>
+          </div>
+        )}
+
+        {/* Team-member notice — view only */}
+        {!canPayout && (
+          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 flex gap-3 mb-6">
+            <Shield size={16} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-purple-700">
+              You're on this poll's team, so you can see all transactions and payout history below —
+              only the poll creator can initiate a payout.
             </p>
           </div>
         )}
@@ -629,7 +660,7 @@ export default function PollPayoutPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {hasMethods && !isLocked && (
+                {hasMethods && !isLocked && canPayout && (
                   <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-purple-900">Bulk Payout</p>
@@ -657,7 +688,8 @@ export default function PollPayoutPage() {
                     txn={txn}
                     payoutStatus={payoutStatuses[txn.date] ?? null}
                     hasMethods={hasMethods && !isLocked}
-                    onPayout={(t) => { if (!isLocked) setDialogTxn(t) }}
+                    canPayout={canPayout}
+                    onPayout={(t) => { if (!isLocked && canPayout) setDialogTxn(t) }}
                     onAddMethod={() => router.push("/profile")}
                     isSelected={selectedDates.has(txn.date)}
                     onToggleSelect={(date) => {
@@ -675,7 +707,7 @@ export default function PollPayoutPage() {
 
         {/* ── Payout Logs view ──────────────────────────────────────────── */}
         {activeView === "logs" && (
-          <PollPayoutLog pollId={pollId} userId={currentUid} />
+          <PollPayoutLog pollId={pollId} userId={currentUid} canManagePayouts={canPayout} />
         )}
 
       </div>
