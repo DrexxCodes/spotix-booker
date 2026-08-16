@@ -14,6 +14,8 @@ import PayoutLog from "./helper/payout-log"
 import VaultPanel from "./helper/vault-panel"
 import VaultSignoffs from "./helper/vault-signoffs"
 import VaultKeyEnterOnPayoutDialog from "./helper/vault-key-enter-onPayout"
+import PayoutStateDialog from "@/components/payout/PayoutStateDialog"
+import type { PayoutLiveState } from "@/components/payout/use-payout-stream"
 
 interface DailyTransaction {
   date: string
@@ -203,6 +205,12 @@ const STATUS_BADGE: Record<
     text: "text-amber-700",
     icon: <Clock size={11} />,
   },
+  initializing: {
+    label: "Initializing",
+    bg: "bg-amber-100",
+    text: "text-amber-700",
+    icon: <Loader2 size={11} className="animate-spin" />,
+  },
   processing: {
     label: "Processing",
     bg: "bg-blue-100",
@@ -246,7 +254,12 @@ interface TxnCardProps {
   txn: DailyTransaction
   /** null = no payout record exists for this date yet */
   payoutStatus: string | null
+  /** The Supabase payout reference for this date, if one exists — lets an
+   *  in-flight badge (initializing/processing) reopen the live dialog. */
+  payoutReference?: string | null
   onPayout: (txn: DailyTransaction) => void
+  /** Reopens the live PayoutStateDialog for an in-flight payout. */
+  onReopen: (reference: string) => void
   onAddMethod: () => void
   hasMethods: boolean
   isSelected?: boolean
@@ -257,12 +270,23 @@ interface TxnCardProps {
   canInitiate?: boolean
 }
 
-function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelected, onToggleSelect, vaultReady = true, canInitiate = true }: TxnCardProps) {
+function TxnCard({ txn, payoutStatus, payoutReference, onPayout, onReopen, onAddMethod, hasMethods, isSelected, onToggleSelect, vaultReady = true, canInitiate = true }: TxnCardProps) {
   const canWithdraw = isWithdrawable(txn.updatedAt) && vaultReady
   const timeLeft = timeUntilWithdrawable(txn.updatedAt)
   const progress = unlockProgress(txn.updatedAt)
   const badge = payoutStatus ? (STATUS_BADGE[payoutStatus] ?? STATUS_BADGE.pending) : null
-  const isEligibleForBulk = !payoutStatus && canWithdraw && canInitiate
+  // A "failed" payout is a dead end, not a reservation — the date is free
+  // to request again (server enforces the same rule; see
+  // hasActiveOrSuccessfulPayout in lib/payout-db.ts). Every other status
+  // (initializing/processing/successful/vault_pending) blocks a new
+  // request for this date.
+  const blockingStatus = Boolean(payoutStatus) && payoutStatus !== "failed"
+  const isEligibleForBulk = !blockingStatus && canWithdraw && canInitiate
+  // Still in flight and we know its Supabase reference — vault_pending has
+  // no reference yet (no Supabase row exists until it's released), so only
+  // initializing/processing are reopenable.
+  const isReopenable =
+    blockingStatus && (payoutStatus === "initializing" || payoutStatus === "processing") && Boolean(payoutReference)
 
   return (
     <div className={`bg-white border rounded-xl p-5 hover:shadow-md transition-all space-y-4 ${
@@ -294,8 +318,8 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
               </span>
             )}
 
-            {/* Ready badge — only when no payout exists and lock cleared */}
-            {!payoutStatus && canWithdraw && (
+            {/* Ready badge — only when no active/successful payout exists and lock cleared */}
+            {!blockingStatus && canWithdraw && (
               <span className="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
                 <Shield size={11} />
                 Ready
@@ -319,11 +343,17 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
 
         {/* Action button */}
         <div className="flex-shrink-0">
-          {payoutStatus ? (
-            // Payout record exists — show status chip, not the payout button
+          {blockingStatus ? (
+            // An active or successful payout record exists — show status chip.
+            // If it's still in flight and we have its reference, clicking
+            // reopens the live progress dialog instead of doing nothing.
             <button
-              disabled
-              className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-not-allowed ${
+              onClick={isReopenable ? () => onReopen(payoutReference as string) : undefined}
+              disabled={!isReopenable}
+              title={isReopenable ? "View live payout progress" : undefined}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 ${
+                isReopenable ? "cursor-pointer hover:opacity-80" : "cursor-not-allowed"
+              } ${
                 badge ? `${badge.bg} ${badge.text}` : "bg-gray-100 text-gray-500"
               }`}
             >
@@ -368,7 +398,7 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
       </div>
 
       {/* Countdown + progress bar — only when not submitted and still locked */}
-      {!payoutStatus && !canWithdraw && txn.updatedAt && (
+      {!blockingStatus && !canWithdraw && txn.updatedAt && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-amber-600 font-semibold flex items-center gap-1">
@@ -421,6 +451,9 @@ export default function PayoutsTab({
 
   // date → payout status, seeded from the status API on mount
   const [payoutStatuses, setPayoutStatuses] = useState<Record<string, string>>({})
+  // date → Supabase payout reference, so an in-flight badge can reopen the
+  // live dialog. Populated from the status fetch and from fresh submissions.
+  const [payoutRefs, setPayoutRefs] = useState<Record<string, string>>({})
 
   // Vault readiness — reported up by VaultPanel. Payouts are blocked for
   // every date on this event until every assigned Vault participant
@@ -441,10 +474,14 @@ export default function PayoutsTab({
   // user's own payout request comes back vault-locked. Only meaningful for
   // roles that can actually be Vault participants (Creator/Admin — see
   // /api/payout/vault addParticipant, which only accepts admin collaborators).
-  const [vaultKeyPrompt, setVaultKeyPrompt] = useState<{ payoutIds: string[]; amount: number; dates: string[] } | null>(null)
+  const [vaultKeyPrompt, setVaultKeyPrompt] = useState<{ holdIds: string[]; amount: number; dates: string[] } | null>(null)
   // Bumped whenever the requester enters their key immediately, to force
   // VaultSignoffs (the "awaiting your sign-off" section up top) to refetch.
   const [vaultSignoffsRefreshKey, setVaultSignoffsRefreshKey] = useState(0)
+
+  // Live payout dialog — opened the moment a non-Vault payout begins, or
+  // the moment a Vault-locked one is released by the last sign-off.
+  const [liveReferences, setLiveReferences] = useState<string[] | null>(null)
 
   const [activeView, setActiveView] = useState<ActiveView>("transactions")
   const [dialogTxn, setDialogTxn] = useState<DailyTransaction | null>(null)
@@ -490,23 +527,37 @@ export default function PayoutsTab({
     }
   }, [eventId])
 
-  // Seeds the payoutStatuses map from existing payout records.
-  // Runs silently — a failure here doesn't block the UI.
+  // Seeds the payoutStatuses map from Supabase payout records + any
+  // still-open Vault holds (which live separately in Firestore — see
+  // lib/payout-firestore.ts). Runs silently — a failure here doesn't
+  // block the UI.
   const fetchPayoutStatuses = useCallback(async () => {
     try {
-      const res = await fetch(`/api/payout?eventId=${eventId}&action=status`)
-      const data = await res.json()
-      if (!res.ok) return
-      const records: Array<{ date: string; status: string }> = data.payouts ?? []
+      const [statusRes, vaultRes] = await Promise.all([
+        fetch(`/api/payout?eventId=${eventId}&action=status`),
+        fetch(`/api/payout?eventId=${eventId}&action=vaultPending`),
+      ])
+      const statusData = await statusRes.json()
+      const vaultData = await vaultRes.json()
+
       const map: Record<string, string> = {}
-      for (const r of records) {
-        // A cancelled or rejected payout shouldn't block a fresh request for
-        // that date — treat it as if no payout exists yet on the
-        // Transactions view.
-        if (r.status === "cancelled" || r.status === "rejected") continue
-        map[r.date] = r.status
+      const refMap: Record<string, string> = {}
+
+      if (vaultRes.ok) {
+        const holds: Array<{ date: string }> = vaultData.payouts ?? []
+        for (const h of holds) map[h.date] = "vault_pending"
       }
+
+      if (statusRes.ok) {
+        const records: Array<{ date: string; status: string; reference?: string }> = statusData.payouts ?? []
+        for (const r of records) {
+          map[r.date] = r.status
+          if (r.reference) refMap[r.date] = r.reference
+        }
+      }
+
       setPayoutStatuses(map)
+      setPayoutRefs((prev) => ({ ...prev, ...refMap }))
     } catch {
       // Non-critical — button just stays visible until next load
     }
@@ -534,17 +585,27 @@ export default function PayoutsTab({
     fetchMethods()
   }, [fetchTransactions, fetchPayoutStatuses, fetchMethods])
 
-  // Ready count excludes dates that already have any payout record
+  // Ready count excludes dates that already have an active or successful
+  // payout record — a "failed" one doesn't block a fresh request.
   const readyCount = transactions.filter(
-    (t) => isWithdrawable(t.updatedAt) && !payoutStatuses[t.date]
+    (t) => isWithdrawable(t.updatedAt) && (!payoutStatuses[t.date] || payoutStatuses[t.date] === "failed")
   ).length
 
-  function handlePayoutSuccess(date: string, vaultLocked?: boolean, payoutIds?: string[], totalAmount?: number) {
-    // Optimistically mark status; next status fetch will confirm
-    setPayoutStatuses((prev) => ({ ...prev, [date]: vaultLocked ? "vault_pending" : "pending" }))
+  // Non-Vault payout — already began the moment POST /api/payout returned.
+  // Open the live dialog immediately; the "pending" optimistic status text
+  // used to show here is gone since the real status now streams live.
+  function handlePayoutSuccess(date: string, references: string[]) {
+    setPayoutStatuses((prev) => ({ ...prev, [date]: "initializing" }))
+    if (references[0]) setPayoutRefs((prev) => ({ ...prev, [date]: references[0] }))
+    if (references.length) setLiveReferences(references)
+  }
 
-    if (vaultLocked && canManageOwnMethods && payoutIds?.length) {
-      setVaultKeyPrompt({ payoutIds, amount: totalAmount ?? 0, dates: [date] })
+  function handleVaultLocked(dates: string[], holdIds: string[], totalAmount: number) {
+    dates.forEach((date) => {
+      setPayoutStatuses((prev) => ({ ...prev, [date]: "vault_pending" }))
+    })
+    if (canManageOwnMethods && holdIds.length) {
+      setVaultKeyPrompt({ holdIds, amount: totalAmount, dates })
     }
   }
 
@@ -559,39 +620,86 @@ export default function PayoutsTab({
     setDialogTxn(null) // Clear single transaction if any
   }
 
-  function handleBulkPayoutSuccess(dates: string | string[], vaultLocked?: boolean, payoutIds?: string[], totalAmount?: number) {
-    const datesToUpdate = Array.isArray(dates) ? dates : [dates]
-    datesToUpdate.forEach((date) => {
-      setPayoutStatuses((prev) => ({ ...prev, [date]: vaultLocked ? "vault_pending" : "pending" }))
+  function handleBulkPayoutSuccess(dates: string[], references: string[]) {
+    dates.forEach((date, i) => {
+      setPayoutStatuses((prev) => ({ ...prev, [date]: "initializing" }))
+      if (references[i]) setPayoutRefs((prev) => ({ ...prev, [date]: references[i] }))
     })
     setSelectedDates(new Set())
     setBulkPayoutTxns([])
+    if (references.length) setLiveReferences(references)
+  }
 
-    if (vaultLocked && canManageOwnMethods && payoutIds?.length) {
-      setVaultKeyPrompt({ payoutIds, amount: totalAmount ?? 0, dates: datesToUpdate })
+  function handleBulkVaultLocked(dates: string[], holdIds: string[], totalAmount: number) {
+    dates.forEach((date) => {
+      setPayoutStatuses((prev) => ({ ...prev, [date]: "vault_pending" }))
+    })
+    setSelectedDates(new Set())
+    setBulkPayoutTxns([])
+    if (canManageOwnMethods && holdIds.length) {
+      setVaultKeyPrompt({ holdIds, amount: totalAmount, dates })
     }
   }
 
   // Called once the requester submits their own Vault Key immediately from
-  // vault-key-enter.tsx's "Enter Now" path.
-  function handleVaultKeyEntered() {
+  // vault-key-enter.tsx's "Enter Now" path. If that submission happened to
+  // be the last one needed, releasedReferences carries the freshly-created
+  // Supabase reference(s) — open the live dialog right away.
+  function handleVaultKeyEntered(releasedReferences: string[]) {
     fetchPayoutStatuses()
     setVaultSignoffsRefreshKey((k) => k + 1)
+    if (releasedReferences.length) setLiveReferences(releasedReferences)
+  }
+
+  // Called from VaultSignoffs when ANOTHER participant's sign-off is the
+  // one that released the payout — the person watching this tab (who may
+  // not be the original requester) still deserves to see it go live.
+  function handleVaultSignoffResolved(releasedReference?: string) {
+    fetchPayoutStatuses()
+    if (releasedReference) setLiveReferences([releasedReference])
+  }
+
+  // Fires on every live SSE event for any reference currently shown in the
+  // dialog — mirrors that status onto the Transaction Days list instantly,
+  // so a card resolving to successful/failed shows up there without the
+  // person needing to refresh or even keep the dialog open.
+  function handleLiveStatusChange(state: PayoutLiveState) {
+    setPayoutStatuses((prev) => {
+      const date = Object.keys(payoutRefs).find((d) => payoutRefs[d] === state.reference)
+      if (!date || prev[date] === state.status) return prev
+      return { ...prev, [date]: state.status }
+    })
+  }
+
+  function handleReopenPayout(reference: string) {
+    setLiveReferences([reference])
   }
 
   return (
     <div className="space-y-6">
+      {/* Live payout progress — SSE-backed, survives closing/reopening */}
+      {liveReferences && (
+        <PayoutStateDialog references={liveReferences} onClose={() => setLiveReferences(null)} onStatusChange={handleLiveStatusChange} />
+      )}
+
       {/* Payout Confirmation Dialog */}
       {(dialogTxn || bulkPayoutTxns.length > 0) && (
         <PayoutConfirmation
           txns={bulkPayoutTxns.length > 0 ? bulkPayoutTxns : dialogTxn!}
           methods={methods}
           eventId={eventId}
-          onSuccess={(dates, vaultLocked, payoutIds, totalAmount) => {
+          onSuccess={(references) => {
             if (bulkPayoutTxns.length > 0) {
-              handleBulkPayoutSuccess(dates, vaultLocked, payoutIds, totalAmount)
+              handleBulkPayoutSuccess(bulkPayoutTxns.map((t) => t.date), references)
             } else if (dialogTxn) {
-              handlePayoutSuccess(dialogTxn.date, vaultLocked, payoutIds, totalAmount)
+              handlePayoutSuccess(dialogTxn.date, references)
+            }
+          }}
+          onVaultLocked={(dates, holdIds, totalAmount) => {
+            if (bulkPayoutTxns.length > 0) {
+              handleBulkVaultLocked(dates, holdIds, totalAmount)
+            } else if (dialogTxn) {
+              handleVaultLocked(dates, holdIds, totalAmount)
             }
           }}
           onError={(msg) => {
@@ -615,7 +723,7 @@ export default function PayoutsTab({
           requester's own payout request comes back vault-locked */}
       {vaultKeyPrompt && (
         <VaultKeyEnterOnPayoutDialog
-          payoutIds={vaultKeyPrompt.payoutIds}
+          holdIds={vaultKeyPrompt.holdIds}
           amount={vaultKeyPrompt.amount}
           dates={vaultKeyPrompt.dates}
           onClose={() => setVaultKeyPrompt(null)}
@@ -628,7 +736,7 @@ export default function PayoutsTab({
         key={vaultSignoffsRefreshKey}
         eventId={eventId}
         currentUserId={currentUserId}
-        onResolved={fetchPayoutStatuses}
+        onResolved={handleVaultSignoffResolved}
       />
 
       {/* Info Alert */}
@@ -844,8 +952,10 @@ export default function PayoutsTab({
                   key={txn.date}
                   txn={txn}
                   payoutStatus={payoutStatuses[txn.date] ?? null}
+                  payoutReference={payoutRefs[txn.date] ?? null}
                   hasMethods={methods.length > 0}
                   onPayout={(t) => setDialogTxn(t)}
+                  onReopen={handleReopenPayout}
                   onAddMethod={() => setActiveView("methods")}
                   vaultReady={vaultStatus.ready}
                   canInitiate={canInitiatePayout}

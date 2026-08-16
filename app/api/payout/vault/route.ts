@@ -43,6 +43,11 @@ import bcrypt from "bcryptjs"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { createInitializingPayout, getPayoutsForEvent } from "@/lib/payout-db"
+import { writePayoutReferenceOnDateDoc } from "@/lib/payout-firestore"
+import { triggerPayoutProcessing } from "@/lib/payout-backend"
+import { requirePayoutAccessKey } from "@/lib/payout-access-gate"
+import { DuplicateRequestError } from "@/lib/payout-idempotency"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -67,6 +72,9 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
 
 // ── GET ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
+  const gate = requirePayoutAccessKey(req)
+  if (gate) return gate
+
   const auth = await authenticate()
   if (auth instanceof NextResponse) return auth
   const { userId } = auth
@@ -113,6 +121,9 @@ export async function GET(req: NextRequest) {
 
 // ── POST ─────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  const gate = requirePayoutAccessKey(req)
+  if (gate) return gate
+
   const auth = await authenticate()
   if (auth instanceof NextResponse) return auth
   const { userId } = auth
@@ -256,7 +267,19 @@ export async function POST(req: NextRequest) {
 }
 
 // ── PATCH — submit a Vault Key against a pending payout hold ─────────────────
+// Body: { holdId, vaultKey }  (holdId = a Firestore vaultHolds/{id})
+//
+// Once every assigned participant has submitted, this is the moment
+// "the payout" actually begins: a Supabase `payouts` row is created
+// (status "initializing"), its reference is stamped onto the Firestore
+// date doc, and spotix-backend is asked to start processing it — all
+// synchronously, right here, so the caller (whoever submitted the LAST
+// key — the original requester or another participant) gets the fresh
+// `reference` back and can open the live payout dialog immediately.
 export async function PATCH(req: NextRequest) {
+  const gate = requirePayoutAccessKey(req)
+  if (gate) return gate
+
   const auth = await authenticate()
   if (auth instanceof NextResponse) return auth
   const { userId } = auth
@@ -268,20 +291,20 @@ export async function PATCH(req: NextRequest) {
     return fail("Invalid JSON body", 400)
   }
 
-  const { payoutId, vaultKey } = body
-  if (!payoutId?.trim()) return fail("payoutId is required", 400)
+  const { holdId, vaultKey } = body
+  if (!holdId?.trim()) return fail("holdId is required", 400)
   if (!vaultKey?.trim()) return fail("vaultKey is required", 400)
 
-  const payoutRef = adminDb.collection("payouts").doc(payoutId)
-  const payoutSnap = await payoutRef.get()
-  if (!payoutSnap.exists) return fail("Payout record not found", 404)
-  const payout = payoutSnap.data()!
+  const holdRef = adminDb.collection("vaultHolds").doc(holdId)
+  const holdSnap = await holdRef.get()
+  if (!holdSnap.exists) return fail("Payout hold not found", 404)
+  const hold = holdSnap.data()!
 
-  if (payout.status !== "vault_pending") {
-    return fail(`This payout is not awaiting Vault sign-off (status: ${payout.status})`, 400)
+  if (hold.status !== "vault_pending") {
+    return fail(`This payout is not awaiting Vault sign-off (status: ${hold.status})`, 400)
   }
 
-  const vaultSnap = await adminDb.collection("vaults").doc(payout.eventId).get()
+  const vaultSnap = await adminDb.collection("vaults").doc(hold.eventId).get()
   if (!vaultSnap.exists) return fail("Vault configuration not found for this event", 404)
   const participants: any[] = vaultSnap.data()!.participants ?? []
 
@@ -303,36 +326,102 @@ export async function PATCH(req: NextRequest) {
     message: `${participant.email || "A Vault participant"} verified their Vault Key`,
   }
 
-  const submissions: Record<string, boolean> = { ...(payout.vaultSubmissions ?? {}), [userId]: true }
-  const submissionLog = { ...(payout.vaultSubmissionLog ?? {}), [userId]: submittedAt }
-  const requiredUids: string[] = payout.vaultParticipants ?? participants.map((p) => p.uid)
+  const submissions: Record<string, boolean> = { ...(hold.vaultSubmissions ?? {}), [userId]: true }
+  const submissionLog = { ...(hold.vaultSubmissionLog ?? {}), [userId]: submittedAt }
+  const requiredUids: string[] = hold.vaultParticipants ?? participants.map((p) => p.uid)
   const allSubmitted = requiredUids.every((uid) => submissions[uid])
 
-  if (allSubmitted) {
+  if (!allSubmitted) {
+    await holdRef.update({
+      vaultSubmissions: submissions,
+      vaultSubmissionLog: submissionLog,
+      logs: FieldValue.arrayUnion(signOffLog),
+    })
+    return ok({
+      message: "Vault Key accepted. Waiting on remaining participants.",
+      released: false,
+      remaining: requiredUids.filter((uid) => !submissions[uid]).length,
+    })
+  }
+
+  // ── Every participant has signed off — release into a real payout ────────
+  try {
+    const row = await createInitializingPayout({
+      isEvent: true,
+      isPoll: false,
+      eventId: hold.eventId,
+      eventName: hold.eventName,
+      payDate: hold.date,
+      userId: hold.userId,
+      amount: hold.amount,
+      method: {
+        methodId: hold.methodId,
+        bankName: hold.bankName ?? "",
+        bankCode: hold.bankCode ?? "",
+        accountNumber: hold.accountNumber ?? "",
+        accountName: hold.accountName ?? "",
+        recipientCode: hold.recipientCode ?? null,
+      },
+      vaultLocked: true,
+    })
+
+    await writePayoutReferenceOnDateDoc({ eventId: hold.eventId }, hold.date, row.reference)
+    triggerPayoutProcessing(row.reference)
+
     const releasedLog = {
       type: "vault_completed",
       at: new Date().toISOString(),
-      message: "All Vault participants signed off — payout released for processing",
+      message: `All Vault participants signed off — payout released for processing under reference ${row.reference}`,
     }
-    await payoutRef.update({
+
+    await holdRef.update({
       vaultSubmissions: submissions,
       vaultSubmissionLog: submissionLog,
-      status: "pending", // released into the normal payout queue
+      status: "released",
+      releasedReference: row.reference,
       vaultClearedAt: FieldValue.serverTimestamp(),
-      pendingAt: FieldValue.serverTimestamp(),
       logs: FieldValue.arrayUnion(signOffLog, releasedLog),
     })
-    return ok({ message: "All Vault Keys submitted. Payout released for processing.", released: true })
-  }
 
-  await payoutRef.update({
-    vaultSubmissions: submissions,
-    vaultSubmissionLog: submissionLog,
-    logs: FieldValue.arrayUnion(signOffLog),
-  })
-  return ok({
-    message: "Vault Key accepted. Waiting on remaining participants.",
-    released: false,
-    remaining: requiredUids.filter((uid) => !submissions[uid]).length,
-  })
+    return ok({
+      message: "All Vault Keys submitted. Payout released for processing.",
+      released: true,
+      reference: row.reference,
+    })
+  } catch (err: any) {
+    // Two participants racing to submit the last required key can both
+    // compute allSubmitted=true and both reach this block — the unique
+    // index on (event_id, pay_date) in Supabase (see
+    // /supabase/payout-schema.sql) means only ONE of those concurrent
+    // createInitializingPayout() calls actually inserts a row; the other
+    // gets DuplicateRequestError here. That's not a failure — the payout
+    // WAS released (by the other caller), so this caller should see the
+    // same success, not an error.
+    if (err instanceof DuplicateRequestError) {
+      await holdRef.update({
+        vaultSubmissions: submissions,
+        vaultSubmissionLog: submissionLog,
+        logs: FieldValue.arrayUnion(signOffLog),
+      })
+      const rows = await getPayoutsForEvent(hold.eventId)
+      const released = rows.find((r) => r.pay_date === hold.date && r.vault_locked)
+      return ok({
+        message: "All Vault Keys submitted. Payout released for processing.",
+        released: true,
+        reference: released?.reference ?? null,
+      })
+    }
+
+    console.error("[PATCH /api/payout/vault] release error:", err)
+    // The sign-off itself is still valid — record it even though the
+    // release failed, so the participant isn't asked to re-enter their
+    // key. Whoever's watching (or the next GET) will see status is still
+    // "vault_pending" and can retry the release path.
+    await holdRef.update({
+      vaultSubmissions: submissions,
+      vaultSubmissionLog: submissionLog,
+      logs: FieldValue.arrayUnion(signOffLog),
+    })
+    return fail("All Vault Keys were verified, but releasing the payout failed. Please try again.", 500)
+  }
 }

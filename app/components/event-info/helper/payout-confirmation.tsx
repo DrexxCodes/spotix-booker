@@ -1,7 +1,7 @@
 "use client"
 
 import { X, Loader2, AlertCircle, Star } from "lucide-react"
-import { useState } from "react"
+import { useState, useRef } from "react"
 
 interface DailyTransaction {
   date: string
@@ -27,12 +27,10 @@ interface PayoutConfirmationProps {
   txns: DailyTransaction | DailyTransaction[]
   methods: PayoutMethod[]
   eventId: string
-  /**
-   * payoutIds is every payout doc created in this request (one per date —
-   * more than one on a bulk request) — the parent needs these to open the
-   * "enter your own Vault Key now" prompt against the right records.
-   */
-  onSuccess: (dates: string | string[], vaultLocked?: boolean, payoutIds?: string[], totalAmount?: number) => void
+  /** Not Vault-locked — payouts already began. Open the live PayoutStateDialog with these references. */
+  onSuccess: (references: string[]) => void
+  /** Vault-locked — nothing has moved yet. Parent shows the "enter your Vault Key" prompt. */
+  onVaultLocked: (dates: string[], holdIds: string[], totalAmount: number) => void
   onError: (message: string) => void
   onClose: () => void
 }
@@ -42,6 +40,7 @@ export default function PayoutConfirmation({
   methods,
   eventId,
   onSuccess,
+  onVaultLocked,
   onError,
   onClose,
 }: PayoutConfirmationProps) {
@@ -54,18 +53,35 @@ export default function PayoutConfirmation({
   const totalAmount = transactions.reduce((sum, t) => sum + t.ticketSales, 0)
   const totalTickets = transactions.reduce((sum, t) => sum + t.ticketCount, 0)
 
+  // One Idempotency-Key PER DATE, all derived from a single per-click base
+  // (idempotencyKeyRef) — so 5 rapid clicks of this button send the SAME
+  // set of keys and collide correctly (only the first request per date
+  // wins), while different dates WITHIN one legitimate bulk request get
+  // distinct keys and don't falsely collide with each other. A single
+  // global key for the whole batch was a real bug (fixed): it made every
+  // date after the first in a bulk request 409 against the first date's
+  // already-claimed key.
+  const idempotencyKeyRef = useRef<string>(crypto.randomUUID())
+
   async function handleConfirm() {
     if (!selectedMethod) return
     setProcessing(true)
     const successDates: string[] = []
-    const successPayoutIds: string[] = []
+    const references: string[] = []
+    const holdIds: string[] = []
     let anyVaultLocked = false
 
     try {
       for (const txn of transactions) {
         const res = await fetch("/api/payout", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          // Scoped per-date: identical clicks of the WHOLE batch reuse the
+          // same set of keys (correctly deduped), but different dates
+          // WITHIN one legitimate batch get distinct keys and don't
+          // falsely collide with each other. A single global key here was
+          // a real bug — it made date #2+ in any bulk request 409 against
+          // date #1's already-claimed key.
+          headers: { "Content-Type": "application/json", "Idempotency-Key": `${idempotencyKeyRef.current}:${txn.date}` },
           body: JSON.stringify({
             eventId,
             date: txn.date,
@@ -79,8 +95,12 @@ export default function PayoutConfirmation({
           onError(data.error || "Payout request failed")
           return
         }
-        if (data.vaultLocked) anyVaultLocked = true
-        if (data.payoutId) successPayoutIds.push(data.payoutId)
+        if (data.vaultLocked) {
+          anyVaultLocked = true
+          if (data.holdId) holdIds.push(data.holdId)
+        } else if (data.reference) {
+          references.push(data.reference)
+        }
         successDates.push(txn.date)
       }
 
@@ -96,15 +116,18 @@ export default function PayoutConfirmation({
             eventId,
             dates: successDates,
             amount: totalAmount,
-            payoutIds: successPayoutIds,
+            payoutIds: holdIds,
           }),
         }).catch(() => {
           // Non-critical — Vault participants can still see the pending
           // sign-off in-app even if the email failed to send.
         })
+
+        onVaultLocked(successDates, holdIds, totalAmount)
+      } else {
+        onSuccess(references)
       }
 
-      onSuccess(successDates.length === 1 ? successDates[0] : successDates, anyVaultLocked, successPayoutIds, totalAmount)
       onClose()
     } catch {
       onClose()

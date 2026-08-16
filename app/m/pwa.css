@@ -1,0 +1,421 @@
+/* ---------------------------------------------------------------------
+   Spotix Booker — PWA glass shell styles.
+   Scoped entirely to app/m (imported only from app/m/layout.tsx) so the
+   normal web dashboard is completely unaffected.
+
+   Light theme: white base (matching the web app's bg-slate-50 / white
+   card language), #6b2fa5 purple used only as an accent — the "glass"
+   distinctiveness comes from frosted blur + soft depth, not from a dark
+   background.
+---------------------------------------------------------------------- */
+
+.pwa-shell {
+  --pwa-primary: #6b2fa5;
+  --pwa-primary-light: #8b5cf6;
+  --pwa-rail-w: 88px;
+  --pwa-rail-w-lg: 240px;
+  min-height: 100dvh;
+  min-height: 100svh;
+  background: #fbfaff;
+  color: #1e1330;
+  position: relative;
+  isolation: isolate;
+}
+
+/* Fixed ambient blobs — the thing glass cards actually blur against.
+   isolation:isolate on .pwa-shell keeps this local instead of blending
+   with content underneath in weird ways. */
+.pwa-bg-orbs {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.pwa-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(60px);
+  opacity: 0.55;
+  will-change: transform;
+}
+.pwa-orb--a {
+  top: -10%;
+  left: -8%;
+  width: 46vw;
+  height: 46vw;
+  max-width: 520px;
+  max-height: 520px;
+  background: radial-gradient(circle, #a855f7, transparent 70%);
+  animation: pwa-orb-drift-a 22s ease-in-out infinite;
+}
+.pwa-orb--b {
+  top: 5%;
+  right: -12%;
+  width: 38vw;
+  height: 38vw;
+  max-width: 460px;
+  max-height: 460px;
+  background: radial-gradient(circle, #f0abfc, transparent 70%);
+  animation: pwa-orb-drift-b 26s ease-in-out infinite;
+}
+.pwa-orb--c {
+  bottom: -12%;
+  left: 12%;
+  width: 40vw;
+  height: 40vw;
+  max-width: 480px;
+  max-height: 480px;
+  background: radial-gradient(circle, #6b2fa5, transparent 70%);
+  animation: pwa-orb-drift-c 30s ease-in-out infinite;
+}
+.pwa-orb--d {
+  bottom: 8%;
+  right: 6%;
+  width: 26vw;
+  height: 26vw;
+  max-width: 320px;
+  max-height: 320px;
+  background: radial-gradient(circle, #93c5fd, transparent 70%);
+  animation: pwa-orb-drift-d 24s ease-in-out infinite;
+}
+@keyframes pwa-orb-drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(4%, 5%) scale(1.06); }
+}
+@keyframes pwa-orb-drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-5%, 4%) scale(1.05); }
+}
+@keyframes pwa-orb-drift-c {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(3%, -4%) scale(1.08); }
+}
+@keyframes pwa-orb-drift-d {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-4%, -3%) scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pwa-orb { animation: none; }
+}
+
+/* Glass primitives — frosted white, purple-tinted shadow.
+   Lower opacity than a typical card so the ambient orbs actually show
+   through the blur — this is the visible "glass" signal. */
+.pwa-glass {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 24px rgba(107, 47, 165, 0.1);
+}
+
+.pwa-glass-strong {
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(26px) saturate(1.7);
+  -webkit-backdrop-filter: blur(26px) saturate(1.7);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 32px rgba(107, 47, 165, 0.12);
+}
+
+.pwa-glass-header {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(22px) saturate(1.6);
+  -webkit-backdrop-filter: blur(22px) saturate(1.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.pwa-glass-nav {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  box-shadow: 0 -4px 24px rgba(107, 47, 165, 0.1);
+}
+
+.pwa-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.pwa-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.pwa-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(107, 47, 165, 0.35);
+  border-radius: 9999px;
+}
+
+.pwa-no-scrollbar::-webkit-scrollbar { display: none; }
+.pwa-no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Skeleton shimmer */
+.pwa-skel {
+  position: relative;
+  overflow: hidden;
+  background: rgba(107, 47, 165, 0.08);
+  border-radius: 0.9rem;
+}
+.pwa-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.8),
+    transparent
+  );
+  animation: pwa-shimmer 1.6s infinite;
+}
+@keyframes pwa-shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* Splash screen — blank white, purple spinner */
+.pwa-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  background: #ffffff;
+  transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+.pwa-splash[data-hidden="true"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.pwa-splash-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 9999px;
+  border: 3px solid rgba(107, 47, 165, 0.15);
+  border-top-color: var(--pwa-primary);
+  animation: pwa-spin 0.8s linear infinite;
+}
+@keyframes pwa-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Page transition loader */
+.pwa-page-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+}
+.pwa-page-loader[data-active="true"] {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ---------------------------------------------------------------------
+   Nav — bottom bar on mobile, side rail from lg+.
+   Active state = small purple pointer dot/bar, not a rolling transform.
+------------------------------------------------------------------------ */
+
+.pwa-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  color: #8a7a9c;
+  transition: color 0.2s ease;
+}
+.pwa-nav-item[data-active="true"] {
+  color: var(--pwa-primary);
+}
+
+/* Bottom bar layout (mobile / tablet) */
+.pwa-nav-item--bottom {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  flex: 1;
+  padding-top: 0.4rem;
+}
+.pwa-nav-item--bottom .pwa-nav-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+.pwa-nav-item--bottom[data-active="true"] .pwa-nav-icon-wrap {
+  background: rgba(107, 47, 165, 0.1);
+}
+.pwa-nav-item--bottom .pwa-nav-label {
+  font-size: 0.64rem;
+  font-weight: 500;
+}
+.pwa-nav-item--bottom[data-active="true"] .pwa-nav-label {
+  font-weight: 700;
+}
+.pwa-nav-pointer--bottom {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  width: 1.5rem;
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--pwa-primary);
+  transform: translateX(-50%) scaleX(0);
+  transition: transform 0.25s ease;
+}
+.pwa-nav-item--bottom[data-active="true"] .pwa-nav-pointer--bottom {
+  transform: translateX(-50%) scaleX(1);
+}
+
+/* Side rail layout (desktop, lg+) */
+.pwa-nav-item--rail {
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  border-radius: 0.9rem;
+}
+.pwa-nav-item--rail[data-active="true"] {
+  background: rgba(107, 47, 165, 0.08);
+}
+.pwa-nav-item--rail .pwa-nav-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 0.7rem;
+  flex-shrink: 0;
+}
+.pwa-nav-item--rail[data-active="true"] .pwa-nav-icon-wrap {
+  background: rgba(107, 47, 165, 0.12);
+}
+.pwa-nav-item--rail .pwa-nav-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.pwa-nav-item--rail[data-active="true"] .pwa-nav-label {
+  font-weight: 700;
+}
+.pwa-nav-pointer--rail {
+  position: absolute;
+  left: -0.9rem;
+  top: 50%;
+  width: 3px;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: var(--pwa-primary);
+  transform: translateY(-50%) scaleY(0);
+  transition: transform 0.25s ease;
+}
+.pwa-nav-item--rail[data-active="true"] .pwa-nav-pointer--rail {
+  transform: translateY(-50%) scaleY(1);
+}
+
+/* Create button — permanently slightly elevated, not a roll-up state */
+.pwa-create-btn {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--pwa-primary-light), var(--pwa-primary));
+  box-shadow: 0 10px 22px rgba(107, 47, 165, 0.38);
+  transform: translateY(-10px) rotate(0deg);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pwa-create-btn[data-open="true"] {
+  transform: translateY(-10px) rotate(45deg);
+}
+.pwa-create-btn--rail {
+  transform: rotate(0deg);
+}
+.pwa-create-btn--rail[data-open="true"] {
+  transform: rotate(45deg);
+}
+
+/* Fan-out popup — bottom bar (opens upward) */
+.pwa-fan-item {
+  position: absolute;
+  bottom: 4.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  opacity: 0;
+  transform: translateY(10px) scale(0.6);
+  pointer-events: none;
+  transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.22s ease;
+}
+.pwa-fan-item[data-open="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.pwa-fan-item[data-side="left"] { left: calc(50% - 92px); transition-delay: 0.02s; }
+.pwa-fan-item[data-side="center"] { left: calc(50% - 26px); bottom: 5.4rem; transition-delay: 0.08s; }
+.pwa-fan-item[data-side="right"] { left: calc(50% + 40px); transition-delay: 0.05s; }
+
+/* Fan-out popup — rail (opens rightward) */
+.pwa-fan-item--rail {
+  position: absolute;
+  left: calc(100% + 0.6rem);
+  bottom: auto;
+  flex-direction: row;
+  gap: 0.6rem;
+  transform: translateX(-8px) scale(0.85);
+}
+.pwa-fan-item--rail[data-open="true"] {
+  transform: translateX(0) scale(1);
+}
+.pwa-fan-item--rail[data-side="left"] { top: -2.6rem; left: calc(100% + 0.6rem); transition-delay: 0.02s; }
+.pwa-fan-item--rail[data-side="center"] { top: 0; transition-delay: 0.08s; }
+.pwa-fan-item--rail[data-side="right"] { top: 2.6rem; transition-delay: 0.05s; }
+
+.pwa-fan-bubble {
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pwa-primary);
+}
+.pwa-fan-label {
+  border-radius: 9999px;
+  background: rgba(30, 19, 48, 0.85);
+  padding: 0.1rem 0.5rem;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------
+   Content offset for the side rail (desktop, lg+).
+   Written as plain CSS (not a Tailwind arbitrary value) so the shift is
+   guaranteed to apply regardless of JIT scanning of var() in brackets.
+------------------------------------------------------------------------ */
+.pwa-content-area {
+  padding-left: 0;
+  min-width: 0;
+}
+@media (min-width: 1024px) {
+  .pwa-content-area {
+    padding-left: var(--pwa-rail-w-lg);
+  }
+}
+.pwa-dropdown-enter {
+  animation: pwa-dropdown-in 0.18s ease-out both;
+}
+@keyframes pwa-dropdown-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

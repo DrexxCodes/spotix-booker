@@ -1,5 +1,22 @@
 "use client"
 
+/**
+ * app/components/event-info/helper/payout-log.tsx
+ *
+ * Merges two sources into one timeline:
+ *   1. Supabase `payouts` — real money-movement attempts (GET
+ *      /api/payout?action=status). initializing/processing/successful/failed.
+ *   2. Firestore `vaultHolds` — pre-payout Vault sign-off state (GET
+ *      /api/payout?action=vaultPending). vault_pending only; a released
+ *      hold graduates into a payouts row and disappears from this list on
+ *      the next refresh (it's now represented by its Supabase row instead).
+ *
+ * No retry, anywhere, ever — a failed payout is a dead end; the only
+ * action offered is "Contact Spotix" with the reference. Cancel/Reject
+ * only ever applies to a still-open Vault hold, since that's the only
+ * state left where money hasn't moved yet.
+ */
+
 import {
   Loader2,
   AlertCircle,
@@ -10,67 +27,52 @@ import {
   MessageCircle,
   Filter,
   ReceiptText,
-  ScrollText,
   Ban,
   Lock,
+  Copy,
+  Check,
 } from "lucide-react"
 import { useState, useCallback, useEffect } from "react"
-import PayoutTimelineModal from "./payout-timeline-modal"
 
-type PayoutStatus = "pending" | "processing" | "failed" | "successful" | "vault_pending" | "cancelled" | "rejected"
+type DisplayStatus = "initializing" | "processing" | "successful" | "failed" | "vault_pending" | "cancelled" | "rejected"
 
-interface LogEntry {
-  type: string
-  at: string
-  byUid?: string
-  byName?: string
-  byEmail?: string
-  message: string
-  meta?: { maskedAccountNumber?: string; bankName?: string }
-}
-
-interface PayoutRecord {
-  id: string
-  eventId: string
-  userId: string
+interface DisplayRecord {
+  id: string // reference (Supabase) or holdId (Firestore vaultHold)
+  source: "payout" | "vaultHold"
   date: string
   amount: number
   bankName: string
-  bankCode: string
   accountNumber: string
   accountName: string
-  status: PayoutStatus
-  createdAt: string | null
-  updatedAt: string | null
-  pendingAt: string | null
-  processingAt: string | null
+  status: DisplayStatus
+  failureReason?: string | null
+  narration?: string | null
+  userId: string
   initiatedByName?: string
-  initiatedByEmail?: string
-  cancelledByName?: string
-  logs?: LogEntry[]
+  createdAt: string | null
+  resolvedAt?: string | null
+  durationSeconds?: number
 }
 
 interface PayoutLogProps {
   eventId: string
   userId: string
-  /** Can this viewer cancel/reject any active payout on the event (not just their own)? */
+  /** Can this viewer cancel/reject any active Vault hold on the event (not just their own)? */
   canManage?: boolean
-  /** Fired after a payout is successfully cancelled or rejected, so a parent
-   *  can refresh anything derived from payout status (e.g. the Vault
-   *  sign-off panel, which must drop a rejected/cancelled payout instantly). */
+  /** Fired after a Vault hold is successfully cancelled or rejected. */
   onCancelled?: () => void
 }
 
 const STATUS_CONFIG: Record<
-  PayoutStatus,
+  DisplayStatus,
   { label: string; bg: string; text: string; border: string; icon: React.ReactNode }
 > = {
-  pending: {
-    label: "Pending",
+  initializing: {
+    label: "Initializing",
     bg: "bg-amber-50",
     text: "text-amber-700",
     border: "border-amber-200",
-    icon: <Clock size={13} className="text-amber-500" />,
+    icon: <Loader2 size={13} className="text-amber-500 animate-spin" />,
   },
   processing: {
     label: "Processing",
@@ -116,85 +118,84 @@ const STATUS_CONFIG: Record<
   },
 }
 
-const ALL_STATUSES: PayoutStatus[] = ["pending", "processing", "vault_pending", "failed", "successful", "cancelled", "rejected"]
-const STALE_HOURS = 2
+const ALL_STATUSES: DisplayStatus[] = [
+  "initializing", "processing", "vault_pending", "failed", "successful", "cancelled", "rejected",
+]
 
-function hoursElapsed(iso: string | null): number {
-  if (!iso) return 0
-  return (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60)
-}
-
-function isPendingStale(record: PayoutRecord): boolean {
-  if (record.status !== "pending") return false
-  const ref = record.pendingAt ?? record.createdAt
-  return hoursElapsed(ref) >= STALE_HOURS
-}
-
-function isProcessingStale(record: PayoutRecord): boolean {
-  return record.status === "processing" && hoursElapsed(record.processingAt) >= STALE_HOURS
-}
-
-function buildWhatsAppLink(record: PayoutRecord, kind: "pending" | "processing"): string {
-  const submittedStr = record.createdAt
-    ? new Date(record.createdAt).toLocaleString()
-    : "Unknown"
-
-  const statusTimestampLabel = kind === "pending" ? "Pending since" : "Processing since"
-  const statusTimestamp =
-    kind === "pending"
-      ? record.pendingAt
-        ? new Date(record.pendingAt).toLocaleString()
-        : "Unknown"
-      : record.processingAt
-        ? new Date(record.processingAt).toLocaleString()
-        : "Unknown"
-
-  const intro =
-    kind === "pending"
-      ? "My payout has been pending for more than 2 hours."
-      : "My payout has been processing for more than 2 hours."
-
+function buildSupportLink(record: DisplayRecord): string {
   const message =
-    `${intro} Here are my payout details:\n\n` +
-    `Event ID: ${record.eventId}\n` +
-    `Transaction Date: ${record.date}\n` +
+    `Hi Spotix, my payout failed and I need help.\n\n` +
+    `Reference: ${record.id}\n` +
+    `Date: ${record.date}\n` +
     `Amount: ₦${Number(record.amount).toLocaleString()}\n` +
-    `Bank: ${record.bankName}\n` +
-    `Account: ${record.accountName} (•••• ${record.accountNumber.slice(-4)})\n` +
-    `Payout ID: ${record.id}\n` +
-    `Submitted: ${submittedStr}\n` +
-    `${statusTimestampLabel}: ${statusTimestamp}\n\n` +
-    `Thank you`
-
+    `Reason shown: ${record.failureReason || "Not specified"}\n\n` +
+    `Please advise.`
   return `https://wa.me/2348123927685?text=${encodeURIComponent(message)}`
 }
 
 export default function PayoutLog({ eventId, userId, canManage = false, onCancelled }: PayoutLogProps) {
-  const [payouts, setPayouts] = useState<PayoutRecord[]>([])
+  const [records, setRecords] = useState<DisplayRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeFilter, setActiveFilter] = useState<PayoutStatus | "all">("all")
-  const [rerunning, setRerunning] = useState<Set<string>>(new Set())
-  const [rerunErrors, setRerunErrors] = useState<Record<string, string>>({})
+  const [activeFilter, setActiveFilter] = useState<DisplayStatus | "all">("all")
+
   const [cancelling, setCancelling] = useState<Set<string>>(new Set())
   const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({})
-  const [confirmCancel, setConfirmCancel] = useState<PayoutRecord | null>(null)
-  const [timelineRecord, setTimelineRecord] = useState<PayoutRecord | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState<DisplayRecord | null>(null)
+  const [copiedRef, setCopiedRef] = useState<string | null>(null)
 
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const interval = setInterval(() => setTick((t) => t + 1), 60_000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const fetchPayouts = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`/api/payout?eventId=${eventId}&action=status`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Failed to fetch payout logs")
-      setPayouts(data.payouts ?? [])
+      const [statusRes, vaultRes] = await Promise.all([
+        fetch(`/api/payout?eventId=${eventId}&action=status`),
+        fetch(`/api/payout?eventId=${eventId}&action=vaultPending`),
+      ])
+      const statusData = await statusRes.json()
+      const vaultData = await vaultRes.json()
+      if (!statusRes.ok) throw new Error(statusData.error || "Failed to fetch payout logs")
+
+      const payoutRecords: DisplayRecord[] = (statusData.payouts ?? []).map((p: any) => ({
+        id: p.reference,
+        source: "payout" as const,
+        date: p.date,
+        amount: p.amount,
+        bankName: p.bankName,
+        accountNumber: p.accountNumber,
+        accountName: p.accountName,
+        status: p.status as DisplayStatus,
+        failureReason: p.failureReason,
+        narration: p.narration,
+        userId: p.userId,
+        createdAt: p.createdAt,
+        resolvedAt: p.resolvedAt,
+        durationSeconds: p.durationSeconds,
+      }))
+
+      const holdRecords: DisplayRecord[] = vaultRes.ok
+        ? (vaultData.payouts ?? []).map((h: any) => ({
+            id: h.id,
+            source: "vaultHold" as const,
+            date: h.date,
+            amount: h.amount,
+            bankName: h.bankName,
+            accountNumber: h.accountNumber,
+            accountName: h.accountName,
+            status: "vault_pending" as const,
+            userId: h.userId,
+            initiatedByName: h.initiatedByName,
+            createdAt: h.createdAt?._seconds ? new Date(h.createdAt._seconds * 1000).toISOString() : h.createdAt ?? null,
+          }))
+        : []
+
+      const merged = [...holdRecords, ...payoutRecords].sort((a, b) => {
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0
+        return bTime - aTime
+      })
+
+      setRecords(merged)
     } catch (err: any) {
       setError(err.message || "Failed to load payout logs")
     } finally {
@@ -202,83 +203,40 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
     }
   }, [eventId])
 
-  // Initial fetch
   useEffect(() => {
-    fetchPayouts()
-  }, [fetchPayouts])
+    fetchAll()
+  }, [fetchAll])
 
-  // Poll every 30s while any payout is pending, processing, or awaiting Vault sign-off
+  // Poll every 15s while anything is still in flight (initializing/processing/vault_pending)
   useEffect(() => {
-    const hasInFlight = payouts.some(
-      (p) => p.status === "pending" || p.status === "processing" || p.status === "vault_pending"
+    const hasInFlight = records.some(
+      (r) => r.status === "initializing" || r.status === "processing" || r.status === "vault_pending"
     )
     if (!hasInFlight) return
-
-    const id = setInterval(fetchPayouts, 30_000)
+    const id = setInterval(fetchAll, 15_000)
     return () => clearInterval(id)
-  }, [payouts, fetchPayouts])
+  }, [records, fetchAll])
 
-  async function handleRerun(record: PayoutRecord) {
-    setRerunning((prev) => new Set([...prev, record.id]))
-    setRerunErrors((prev) => {
-      const next = { ...prev }
-      delete next[record.id]
-      return next
-    })
-
-    try {
-      const res = await fetch("/api/payout", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payoutId: record.id }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Failed to re-run payout")
-      setPayouts((prev) =>
-        prev.map((p) =>
-          p.id === record.id
-            ? { ...p, status: "pending", pendingAt: new Date().toISOString() }
-            : p
-        )
-      )
-    } catch (err: any) {
-      setRerunErrors((prev) => ({
-        ...prev,
-        [record.id]: err.message || "Re-run failed",
-      }))
-    } finally {
-      setRerunning((prev) => {
-        const next = new Set(prev)
-        next.delete(record.id)
-        return next
-      })
-    }
-  }
-
-  async function handleCancel(record: PayoutRecord) {
+  async function handleCancel(record: DisplayRecord) {
     setCancelling((prev) => new Set([...prev, record.id]))
     setCancelErrors((prev) => {
       const next = { ...prev }
       delete next[record.id]
       return next
     })
-
     try {
       const res = await fetch("/api/payout", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payoutId: record.id }),
+        body: JSON.stringify({ holdId: record.id }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to cancel/reject payout")
       setConfirmCancel(null)
-      await fetchPayouts()
+      await fetchAll()
       onCancelled?.()
     } catch (err: any) {
-      setCancelErrors((prev) => ({
-        ...prev,
-        [record.id]: err.message || "Action failed",
-      }))
+      setCancelErrors((prev) => ({ ...prev, [record.id]: err.message || "Action failed" }))
     } finally {
       setCancelling((prev) => {
         const next = new Set(prev)
@@ -288,17 +246,21 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
     }
   }
 
-  // Same set of statuses is actionable whether the outcome is a self-cancel
-  // or a reject by someone else — the server decides which based on who's
-  // calling (see DELETE /api/payout).
-  const ACTIONABLE: PayoutStatus[] = ["pending", "processing", "vault_pending"]
+  function copyReference(id: string) {
+    navigator.clipboard.writeText(id).then(() => {
+      setCopiedRef(id)
+      setTimeout(() => setCopiedRef(null), 1500)
+    })
+  }
 
-  const filtered =
-    activeFilter === "all" ? payouts : payouts.filter((p) => p.status === activeFilter)
+  // Only a still-open Vault hold can be cancelled/rejected — money hasn't
+  // moved yet at that stage. Everything past that point is irreversible.
+  const canAct = (r: DisplayRecord) => canManage && r.source === "vaultHold" && r.status === "vault_pending"
 
+  const filtered = activeFilter === "all" ? records : records.filter((r) => r.status === activeFilter)
   const countsByStatus = ALL_STATUSES.reduce(
-    (acc, s) => ({ ...acc, [s]: payouts.filter((p) => p.status === s).length }),
-    {} as Record<PayoutStatus, number>
+    (acc, s) => ({ ...acc, [s]: records.filter((r) => r.status === s).length }),
+    {} as Record<DisplayStatus, number>
   )
 
   if (loading) {
@@ -319,10 +281,7 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
         <div>
           <p className="text-sm font-semibold text-red-700">Failed to load payout logs</p>
           <p className="text-sm text-red-600 mt-0.5">{error}</p>
-          <button
-            onClick={fetchPayouts}
-            className="text-xs text-red-600 underline mt-2 font-medium"
-          >
+          <button onClick={fetchAll} className="text-xs text-red-600 underline mt-2 font-medium">
             Try again
           </button>
         </div>
@@ -330,16 +289,14 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
     )
   }
 
-  if (payouts.length === 0) {
+  if (records.length === 0) {
     return (
       <div className="bg-gray-50 border border-gray-200 rounded-xl p-10 text-center">
         <div className="p-3 bg-gray-100 rounded-full w-fit mx-auto mb-3">
           <ReceiptText size={28} className="text-gray-400" />
         </div>
         <p className="text-gray-600 font-semibold">No payout requests yet</p>
-        <p className="text-sm text-gray-400 mt-1">
-          Submitted payout requests for this event will appear here.
-        </p>
+        <p className="text-sm text-gray-400 mt-1">Submitted payout requests for this event will appear here.</p>
       </div>
     )
   }
@@ -348,10 +305,10 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-gray-700">
-          {payouts.length} payout request{payouts.length !== 1 ? "s" : ""}
+          {records.length} payout request{records.length !== 1 ? "s" : ""}
         </p>
         <button
-          onClick={fetchPayouts}
+          onClick={fetchAll}
           className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-[#6b2fa5] transition-colors font-medium"
         >
           <RefreshCw size={13} />
@@ -363,19 +320,13 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
         <button
           onClick={() => setActiveFilter("all")}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-            activeFilter === "all"
-              ? "bg-[#6b2fa5] text-white border-[#6b2fa5]"
-              : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
+            activeFilter === "all" ? "bg-[#6b2fa5] text-white border-[#6b2fa5]" : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
           }`}
         >
           <Filter size={11} />
           All
-          <span
-            className={`rounded-full px-1.5 py-0.5 leading-none text-[10px] font-bold ${
-              activeFilter === "all" ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"
-            }`}
-          >
-            {payouts.length}
+          <span className={`rounded-full px-1.5 py-0.5 leading-none text-[10px] font-bold ${activeFilter === "all" ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
+            {records.length}
           </span>
         </button>
 
@@ -388,18 +339,12 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
               key={s}
               onClick={() => setActiveFilter(s)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-                activeFilter === s
-                  ? `${cfg.bg} ${cfg.text} ${cfg.border}`
-                  : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
+                activeFilter === s ? `${cfg.bg} ${cfg.text} ${cfg.border}` : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
               }`}
             >
               {cfg.icon}
               {cfg.label}
-              <span
-                className={`rounded-full px-1.5 py-0.5 leading-none text-[10px] font-bold ${cfg.bg} ${cfg.text}`}
-              >
-                {count}
-              </span>
+              <span className={`rounded-full px-1.5 py-0.5 leading-none text-[10px] font-bold ${cfg.bg} ${cfg.text}`}>{count}</span>
             </button>
           )
         })}
@@ -408,66 +353,41 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
       {filtered.length === 0 ? (
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-8 text-center">
           <p className="text-sm text-gray-500">
-            No{" "}
-            {activeFilter !== "all"
-              ? STATUS_CONFIG[activeFilter as PayoutStatus].label.toLowerCase()
-              : ""}{" "}
-            payouts found.
+            No {activeFilter !== "all" ? STATUS_CONFIG[activeFilter as DisplayStatus].label.toLowerCase() : ""} payouts found.
           </p>
         </div>
       ) : (
         <div className="space-y-3">
           {filtered.map((record) => {
             const cfg = STATUS_CONFIG[record.status]
-            const pendingStale = isPendingStale(record)
-            const processingStale = isProcessingStale(record)
-            const isRerunning = rerunning.has(record.id)
-            const rerunError = rerunErrors[record.id]
             const isCancelling = cancelling.has(record.id)
             const cancelError = cancelErrors[record.id]
             const isInitiator = record.userId === userId
-            const canAct = canManage && ACTIONABLE.includes(record.status)
-            const canCancel = canAct && isInitiator
-            const canReject = canAct && !isInitiator
+            const actionable = canAct(record)
 
             return (
-              <div
-                key={record.id}
-                className="bg-white border border-gray-200 rounded-xl p-5 space-y-3 hover:shadow-sm transition-shadow"
-              >
+              <div key={record.id} className="bg-white border border-gray-200 rounded-xl p-5 space-y-3 hover:shadow-sm transition-shadow">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-gray-900 text-base">{record.date}</span>
-                      <span
-                        className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg.bg} ${cfg.text} ${cfg.border}`}
-                      >
+                      <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg.bg} ${cfg.text} ${cfg.border}`}>
                         {cfg.icon}
                         {cfg.label}
                       </span>
-                      {(pendingStale || processingStale) && (
-                        <span className="inline-flex items-center gap-1 text-xs bg-orange-100 text-orange-600 border border-orange-200 px-2 py-0.5 rounded-full font-semibold">
-                          <Clock size={11} />
-                          Overdue
-                        </span>
-                      )}
                     </div>
 
                     <div className="flex flex-wrap gap-4 text-sm text-gray-600">
                       <span>
-                        Amount:{" "}
-                        <span className="font-semibold text-gray-800">
-                          ₦{Number(record.amount).toLocaleString()}
-                        </span>
+                        Amount: <span className="font-semibold text-gray-800">₦{Number(record.amount).toLocaleString()}</span>
                       </span>
                       <span>
-                        Bank:{" "}
-                        <span className="font-semibold text-gray-800">{record.bankName}</span>
+                        Bank: <span className="font-semibold text-gray-800">{record.bankName}</span>
                       </span>
                     </div>
 
                     <p className="text-xs text-gray-400">
-                      {record.accountName} · •••• {record.accountNumber.slice(-4)}
+                      {record.accountName} · •••• {record.accountNumber?.slice(-4)}
                     </p>
 
                     {record.initiatedByName && (
@@ -477,123 +397,58 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
                     )}
 
                     {record.createdAt && (
-                      <p className="text-xs text-gray-400">
-                        Submitted: {new Date(record.createdAt).toLocaleString()}
-                      </p>
+                      <p className="text-xs text-gray-400">Submitted: {new Date(record.createdAt).toLocaleString()}</p>
                     )}
-                    {record.pendingAt && (
-                      <p className="text-xs text-gray-400">
-                        Pending since: {new Date(record.pendingAt).toLocaleString()}
-                      </p>
+
+                    {record.source === "payout" && (
+                      <button
+                        onClick={() => copyReference(record.id)}
+                        className="flex items-center gap-1.5 text-xs font-mono text-gray-500 hover:text-gray-700 transition-colors"
+                      >
+                        {copiedRef === record.id ? <Check size={11} className="text-green-600" /> : <Copy size={11} />}
+                        {record.id}
+                      </button>
                     )}
-                    {record.processingAt && (
-                      <p className="text-xs text-gray-400">
-                        Processing since: {new Date(record.processingAt).toLocaleString()}
-                      </p>
+
+                    {record.status === "failed" && record.failureReason && (
+                      <p className="text-xs text-red-600 mt-1">{record.failureReason}</p>
                     )}
                   </div>
 
                   <div className="flex flex-col gap-2 items-end flex-shrink-0">
-                    <button
-                      onClick={() => setTimelineRecord(record)}
-                      className="flex items-center gap-1.5 text-xs font-semibold text-[#6b2fa5] hover:text-[#5a2589] transition-colors"
-                    >
-                      <ScrollText size={12} />
-                      Logs
-                    </button>
-
-                    {canCancel && (
+                    {actionable && isInitiator && (
                       <button
                         onClick={() => setConfirmCancel(record)}
                         disabled={isCancelling}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 transition-colors disabled:opacity-50"
                       >
-                        {isCancelling ? (
-                          <>
-                            <Loader2 size={13} className="animate-spin" />
-                            Stopping...
-                          </>
-                        ) : (
-                          <>
-                            <Ban size={13} />
-                            Stop Payout
-                          </>
-                        )}
+                        {isCancelling ? <><Loader2 size={13} className="animate-spin" />Stopping...</> : <><Ban size={13} />Stop Payout</>}
                       </button>
                     )}
 
-                    {canReject && (
+                    {actionable && !isInitiator && (
                       <button
                         onClick={() => setConfirmCancel(record)}
                         disabled={isCancelling}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
                       >
-                        {isCancelling ? (
-                          <>
-                            <Loader2 size={13} className="animate-spin" />
-                            Rejecting...
-                          </>
-                        ) : (
-                          <>
-                            <XCircle size={13} />
-                            Reject
-                          </>
-                        )}
+                        {isCancelling ? <><Loader2 size={13} className="animate-spin" />Rejecting...</> : <><XCircle size={13} />Reject</>}
                       </button>
                     )}
 
                     {record.status === "failed" && (
-                      <button
-                        onClick={() => handleRerun(record)}
-                        disabled={isRerunning}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
-                      >
-                        {isRerunning ? (
-                          <>
-                            <Loader2 size={13} className="animate-spin" />
-                            Re-running...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw size={13} />
-                            Re-run
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    {pendingStale && (
                       <a
-                        href={buildWhatsAppLink(record, "pending")}
+                        href={buildSupportLink(record)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors"
                       >
                         <MessageCircle size={13} />
-                        Report — Pending too long
-                      </a>
-                    )}
-
-                    {processingStale && (
-                      <a
-                        href={buildWhatsAppLink(record, "processing")}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
-                      >
-                        <MessageCircle size={13} />
-                        Report — Processing too long
+                        Contact Spotix
                       </a>
                     )}
                   </div>
                 </div>
-
-                {rerunError && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 flex gap-2 items-start">
-                    <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-red-600">{rerunError}</p>
-                  </div>
-                )}
 
                 {cancelError && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 flex gap-2 items-start">
@@ -607,10 +462,6 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
         </div>
       )}
 
-      {timelineRecord && (
-        <PayoutTimelineModal record={timelineRecord} onClose={() => setTimelineRecord(null)} />
-      )}
-
       {confirmCancel && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
@@ -619,31 +470,26 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <div className="flex justify-center">
               <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
-                {confirmCancel.userId === userId ? (
-                  <Ban size={22} className="text-red-600" />
-                ) : (
-                  <XCircle size={22} className="text-red-600" />
-                )}
+                {confirmCancel.userId === userId ? <Ban size={22} className="text-red-600" /> : <XCircle size={22} className="text-red-600" />}
               </div>
             </div>
             {confirmCancel.userId === userId ? (
               <div className="text-center space-y-1">
                 <h3 className="text-base font-bold text-gray-900">Stop this payout?</h3>
                 <p className="text-sm text-gray-600">
-                  The payout for <span className="font-semibold">{confirmCancel.date}</span> (₦
-                  {Number(confirmCancel.amount).toLocaleString()}) will be marked as cancelled. This
-                  stays visible in the logs and can't be undone. If it's already processing, funds
-                  already sent won't be reversed by this action.
+                  The Vault hold for <span className="font-semibold">{confirmCancel.date}</span> (₦
+                  {Number(confirmCancel.amount).toLocaleString()}) will be marked as cancelled — nothing has moved yet, so
+                  this fully stops it. This stays visible in the logs and can&apos;t be undone.
                 </p>
               </div>
             ) : (
               <div className="text-center space-y-1">
                 <h3 className="text-base font-bold text-gray-900">Reject this payout?</h3>
                 <p className="text-sm text-gray-600">
-                  The payout for <span className="font-semibold">{confirmCancel.date}</span> (₦
+                  The Vault hold for <span className="font-semibold">{confirmCancel.date}</span> (₦
                   {Number(confirmCancel.amount).toLocaleString()}), requested by{" "}
-                  <span className="font-semibold">{confirmCancel.initiatedByName ?? "another team member"}</span>,
-                  will be permanently rejected. The whole team will see you rejected it.
+                  <span className="font-semibold">{confirmCancel.initiatedByName ?? "another team member"}</span>, will be
+                  permanently rejected. The whole team will see you rejected it.
                 </p>
               </div>
             )}

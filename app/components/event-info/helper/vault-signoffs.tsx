@@ -16,8 +16,8 @@ interface VaultPendingPayout {
 interface VaultSignoffsProps {
   eventId: string
   currentUserId: string
-  /** Called after a key is successfully submitted so the parent can refresh statuses */
-  onResolved?: () => void
+  /** Called after a key is successfully submitted so the parent can refresh statuses. If THIS submission was the one that released the payout, releasedReference carries the new Supabase reference so the parent can open the live payout dialog. */
+  onResolved?: (releasedReference?: string) => void
 }
 
 function KeyEntryModal({
@@ -188,13 +188,13 @@ export default function VaultSignoffs({ eventId, currentUserId, onResolved }: Va
       const res = await fetch("/api/payout/vault", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payoutId: activePayout.id, vaultKey: key }),
+        body: JSON.stringify({ holdId: activePayout.id, vaultKey: key }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Incorrect Vault Key")
       setActivePayout(null)
       await fetchPending()
-      onResolved?.()
+      onResolved?.(data.released && data.reference ? data.reference : undefined)
     } catch (err: any) {
       setModalError(err.message || "Incorrect Vault Key")
     } finally {
@@ -210,7 +210,7 @@ export default function VaultSignoffs({ eventId, currentUserId, onResolved }: Va
       const res = await fetch("/api/payout", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payoutId: rejectPayout.id }),
+        body: JSON.stringify({ holdId: rejectPayout.id }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to reject payout")

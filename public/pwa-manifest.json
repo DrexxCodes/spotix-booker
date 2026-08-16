@@ -1,0 +1,30 @@
+{
+  "name": "Spotix Booker Mobile",
+  "short_name": "Spotix Booker",
+  "description": "Manage your Spotix events, polls, and payouts on the go.",
+  "start_url": "/m/dashboard",
+  "scope": "/m/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/logo-full.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-full.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-full.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  *
  * Authentication + role-based access control for all non-public routes.
  *
- * ── How it works ──────────────────────────────────────────────────────────────
+ * How this works:
  *
  * The access token (JWT, 15 min) is stored in an `httpOnly` cookie called
  * `spotix_at` — set by /api/auth on login and /api/auth/refresh on rotation.
@@ -14,7 +14,7 @@
  * the next navigation (handled by auth-client.ts). If it hasn't, the user is
  * redirected to /login with their intended path preserved.
  *
- * ── Cookie responsibilities ────────────────────────────────────────────────────
+ * ── Cookie responsibilities
  *
  *   spotix_at   httpOnly, Secure, SameSite=Lax, Max-Age=15min  ← JWT access token
  *               Set by: POST /api/auth, POST /api/auth/refresh
@@ -28,18 +28,29 @@
  * NOTE: refresh token cookies are httpOnly so the client JS never sees the raw
  * value. The client asks /api/auth/refresh which reads them server-side.
  *
- * ── Route rules ───────────────────────────────────────────────────────────────
+ * ── Route rules 
  *
  *   Public          /login                     Always accessible
  *   Non-booker      /not-booker                Accessible only when authenticated
  *   Protected       Everything else            Requires auth + isBooker === true
+ *
+ * ── Payout API routes 
+ *
+ *   /api/payout/*        and /api/polls/payout/*  are otherwise excluded from
+ *   this proxy like every other /api route (they verify the `spotix_at` cookie
+ *   themselves via verifyAccessToken() in each route handler) — but they're
+ *   pulled back into the matcher specifically so this proxy can attach
+ *   PAYOUT_ACCESS_SECRET server-side (see lib/payout-access-gate.ts). That
+ *   secret has no NEXT_PUBLIC_ prefix and must never exist in client JS; this
+ *   is the only place it's allowed to be attached to a request.
  */
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { verifyAccessTokenEdge } from "@/lib/auth-edge";
+import { PAYOUT_ACCESS_HEADER } from "@/lib/payout-access-gate";
 
-// ── Route classification ───────────────────────────────────────────────────────
+// ── Route classification 
 
 /** Completely public — no token required, no redirect for unauthenticated users */
 const PUBLIC_ROUTES = new Set(["/login"]);
@@ -50,7 +61,7 @@ const PUBLIC_ROUTES = new Set(["/login"]);
  */
 const NON_BOOKER_ROUTES = new Set(["/not-booker"]);
 
-// ── Cookie name (must match what /api/auth sets) ───────────────────────────────
+// ── Cookie name (must match what /api/auth sets) 
 const ACCESS_TOKEN_COOKIE = "spotix_at";
 
 /**
@@ -77,6 +88,22 @@ function noStore(response: NextResponse): NextResponse {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // ── 0. Payout API routes — inject the server-only access secret 
+  // These bypass the booker page-auth flow below entirely: they're API
+  // routes, they verify the `spotix_at` cookie themselves (same convention
+  // as every other /api route per the matcher note), and a redirect-to-
+  // /login response would be wrong for a fetch() caller anyway. This
+  // proxy's only job for these paths is to attach PAYOUT_ACCESS_SECRET —
+  // stripping any client-forged copy first — before the request reaches
+  // the route handler.
+  if (pathname.startsWith("/api/payout") || pathname.startsWith("/api/polls/payout")) {
+    const secret = process.env.PAYOUT_ACCESS_SECRET;
+    const headers = new Headers(request.headers);
+    headers.delete(PAYOUT_ACCESS_HEADER); // strip any forged copy
+    if (secret) headers.set(PAYOUT_ACCESS_HEADER, secret);
+    return noStore(NextResponse.next({ request: { headers } }));
+  }
 
   // ── 1. Fully public routes ───────────────────────────────────────────────────
   if (PUBLIC_ROUTES.has(pathname)) {
@@ -166,5 +193,9 @@ export const config = {
      *   - Any file with an image/media extension
      */
     "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf)).*)",
+    // Pulled back in specifically so PAYOUT_ACCESS_SECRET can be attached
+    // server-side — see the branch 0 comment above.
+    "/api/payout/:path*",
+    "/api/polls/payout/:path*",
   ],
 };

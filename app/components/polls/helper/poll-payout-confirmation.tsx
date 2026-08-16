@@ -1,7 +1,7 @@
 "use client"
 
 import { X, Loader2, AlertCircle, Star } from "lucide-react"
-import { useState } from "react"
+import { useState, useRef } from "react"
 
 interface DailyVoteTransaction {
   date: string
@@ -27,7 +27,8 @@ interface PollPayoutConfirmationProps {
   txns: DailyVoteTransaction | DailyVoteTransaction[]
   methods: PayoutMethod[]
   pollId: string
-  onSuccess: (dates: string | string[]) => void
+  /** Opens the live PayoutStateDialog with these references. */
+  onSuccess: (references: string[]) => void
   onError: (message: string) => void
   onClose: () => void
 }
@@ -48,17 +49,20 @@ export default function PollPayoutConfirmation({
   const selectedMethod = methods.find((m) => m.id === selectedMethodId) ?? null
   const totalAmount = transactions.reduce((sum, t) => sum + t.voteSales, 0)
   const totalVotes = transactions.reduce((sum, t) => sum + t.voteCount, 0)
+  const idempotencyKeyRef = useRef<string>(crypto.randomUUID())
 
   async function handleConfirm() {
     if (!selectedMethod) return
     setProcessing(true)
-    const successDates: string[] = []
+    const references: string[] = []
 
     try {
       for (const txn of transactions) {
         const res = await fetch("/api/polls/payout", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          // See event-side payout-confirmation.tsx for why this is scoped
+          // per-date rather than one key for the whole batch.
+          headers: { "Content-Type": "application/json", "Idempotency-Key": `${idempotencyKeyRef.current}:${txn.date}` },
           body: JSON.stringify({
             pollId,
             date: txn.date,
@@ -72,9 +76,9 @@ export default function PollPayoutConfirmation({
           onError(data.error || "Payout request failed")
           return
         }
-        successDates.push(txn.date)
+        if (data.reference) references.push(data.reference)
       }
-      onSuccess(successDates.length === 1 ? successDates[0] : successDates)
+      onSuccess(references)
       onClose()
     } catch {
       onClose()

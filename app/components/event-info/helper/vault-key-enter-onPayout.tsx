@@ -14,25 +14,30 @@
  * before the payout can clear at all.
  *
  * Submitting here calls the same PATCH /api/payout/vault route used by
- * vault-signoffs.tsx. That route marks the CURRENT user's key as verified
- * against every payoutId passed in — a bulk request creates one payout doc
- * per day, so the requester signs all of them with a single key entry here.
+ * vault-signoffs.tsx, now against Firestore `vaultHolds/{id}` documents
+ * (holdIds) rather than the old `payouts` docs. If the requester happens
+ * to be the LAST signer needed (e.g. a single-participant Vault, or every
+ * other participant already signed off first), the route releases the
+ * payout right here and hands back a fresh Supabase reference — which is
+ * passed up via onEntered() so the parent can open the live payout dialog
+ * immediately instead of leaving the requester wondering what happened.
  */
 
 import { useState } from "react"
 import { ShieldCheck, KeyRound, Loader2, AlertCircle, X, Users } from "lucide-react"
 
 interface VaultKeyEnterOnPayoutDialogProps {
-  payoutIds: string[]
+  /** Firestore vaultHolds/{id} document IDs — one per date on this request. */
+  holdIds: string[]
   amount: number
   dates: string[]
   onClose: () => void
-  /** Fired once the current user's key has been accepted for every payoutId */
-  onEntered: () => void
+  /** Fired once the current user's key has been accepted for every hold — carries any references released as a direct result. */
+  onEntered: (releasedReferences: string[]) => void
 }
 
 export default function VaultKeyEnterOnPayoutDialog({
-  payoutIds,
+  holdIds,
   amount,
   dates,
   onClose,
@@ -56,17 +61,19 @@ export default function VaultKeyEnterOnPayoutDialog({
     if (!key) return
     setSubmitting(true)
     setError(null)
+    const releasedReferences: string[] = []
     try {
-      for (const payoutId of payoutIds) {
+      for (const holdId of holdIds) {
         const res = await fetch("/api/payout/vault", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ payoutId, vaultKey: key }),
+          body: JSON.stringify({ holdId, vaultKey: key }),
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || "Incorrect Vault Key")
+        if (data.released && data.reference) releasedReferences.push(data.reference)
       }
-      onEntered()
+      onEntered(releasedReferences)
       onClose()
     } catch (err: any) {
       setError(err.message || "Failed to submit Vault Key")

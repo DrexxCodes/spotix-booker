@@ -23,6 +23,8 @@ import {
 } from "lucide-react"
 import PollPayoutConfirmation from "@/components/polls/helper/poll-payout-confirmation"
 import PollPayoutLog from "@/components/polls/helper/poll-payout-log"
+import PayoutStateDialog from "@/components/payout/PayoutStateDialog"
+import type { PayoutLiveState } from "@/components/payout/use-payout-stream"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -121,11 +123,12 @@ function classifyPayoutError(rawMessage: string, txnDate: string): PayoutError {
 // ─── Status badge config ──────────────────────────────────────────────────────
 
 const STATUS_BADGE: Record<string, { label: string; bg: string; text: string; icon: React.ReactNode }> = {
-  pending:    { label: "Pending",    bg: "bg-amber-100", text: "text-amber-700",  icon: <Clock size={11} /> },
-  processing: { label: "Processing", bg: "bg-blue-100",  text: "text-blue-700",   icon: <Loader2 size={11} className="animate-spin" /> },
-  failed:     { label: "Failed",     bg: "bg-red-100",   text: "text-red-700",    icon: <AlertCircle size={11} /> },
-  successful: { label: "Successful", bg: "bg-green-100", text: "text-green-700",  icon: <CheckCircle size={11} /> },
-  reversed:   { label: "Reversed",   bg: "bg-gray-100",  text: "text-gray-600",   icon: <X size={11} /> },
+  pending:      { label: "Pending",      bg: "bg-amber-100", text: "text-amber-700",  icon: <Clock size={11} /> },
+  initializing: { label: "Initializing", bg: "bg-amber-100", text: "text-amber-700",  icon: <Loader2 size={11} className="animate-spin" /> },
+  processing:   { label: "Processing",   bg: "bg-blue-100",  text: "text-blue-700",   icon: <Loader2 size={11} className="animate-spin" /> },
+  failed:       { label: "Failed",       bg: "bg-red-100",   text: "text-red-700",    icon: <AlertCircle size={11} /> },
+  successful:   { label: "Successful",   bg: "bg-green-100", text: "text-green-700",  icon: <CheckCircle size={11} /> },
+  reversed:     { label: "Reversed",     bg: "bg-gray-100",  text: "text-gray-600",   icon: <X size={11} /> },
 }
 
 // ─── Error Banner ─────────────────────────────────────────────────────────────
@@ -178,7 +181,13 @@ function PayoutErrorBanner({ error, onDismiss }: { error: PayoutError; onDismiss
 interface TxnCardProps {
   txn: DailyVoteTransaction
   payoutStatus: string | null
+  /** The Supabase payout reference for this date, if one exists — lets the
+   *  badge be clicked to reopen the live progress dialog while a payout
+   *  is still in flight (initializing/processing). */
+  payoutReference?: string | null
   onPayout: (txn: DailyVoteTransaction) => void
+  /** Reopens the live PayoutStateDialog for an in-flight payout. */
+  onReopen: (reference: string) => void
   onAddMethod: () => void
   hasMethods: boolean
   isSelected?: boolean
@@ -189,12 +198,18 @@ interface TxnCardProps {
   canPayout: boolean
 }
 
-function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelected, onToggleSelect, canPayout }: TxnCardProps) {
+function TxnCard({ txn, payoutStatus, payoutReference, onPayout, onReopen, onAddMethod, hasMethods, isSelected, onToggleSelect, canPayout }: TxnCardProps) {
   const canWithdraw = isWithdrawable(txn.lastUpdated)
   const timeLeft = timeUntilWithdrawable(txn.lastUpdated)
   const progress = unlockProgress(txn.lastUpdated)
   const badge = payoutStatus ? (STATUS_BADGE[payoutStatus] ?? STATUS_BADGE.pending) : null
-  const isEligibleForBulk = !payoutStatus && canWithdraw && canPayout
+  // A "failed" payout doesn't reserve this date — see hasActiveOrSuccessfulPayout in lib/payout-db.ts.
+  const blockingStatus = Boolean(payoutStatus) && payoutStatus !== "failed"
+  const isEligibleForBulk = !blockingStatus && canWithdraw && canPayout
+  // Still in flight and we know its reference — the badge can reopen the
+  // live progress dialog instead of just sitting there disabled.
+  const isReopenable =
+    blockingStatus && (payoutStatus === "initializing" || payoutStatus === "processing") && Boolean(payoutReference)
 
   return (
     <div className={`bg-white border rounded-xl p-5 hover:shadow-md transition-all space-y-4 ${
@@ -222,7 +237,7 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
               </span>
             )}
 
-            {!payoutStatus && canWithdraw && (
+            {!blockingStatus && canWithdraw && (
               <span className="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
                 <Shield size={11} />
                 Ready
@@ -245,10 +260,14 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
         </div>
 
         <div className="flex-shrink-0">
-          {payoutStatus ? (
+          {blockingStatus ? (
             <button
-              disabled
-              className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-not-allowed ${
+              onClick={isReopenable ? () => onReopen(payoutReference as string) : undefined}
+              disabled={!isReopenable}
+              title={isReopenable ? "View live payout progress" : undefined}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 ${
+                isReopenable ? "cursor-pointer hover:opacity-80" : "cursor-not-allowed"
+              } ${
                 badge ? `${badge.bg} ${badge.text}` : "bg-gray-100 text-gray-500"
               }`}
             >
@@ -286,7 +305,7 @@ function TxnCard({ txn, payoutStatus, onPayout, onAddMethod, hasMethods, isSelec
         </div>
       </div>
 
-      {!payoutStatus && !canWithdraw && txn.lastUpdated && (
+      {!blockingStatus && !canWithdraw && txn.lastUpdated && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-amber-600 font-semibold flex items-center gap-1">
@@ -333,15 +352,20 @@ export default function PollPayoutPage() {
   const [txnError,     setTxnError]     = useState<string | null>(null)
 
   const [payoutStatuses, setPayoutStatuses] = useState<Record<string, string>>({})
+  // date → Supabase payout reference, so an in-flight badge can reopen the
+  // live dialog. Populated from the status fetch and from a fresh submission.
+  const [payoutRefs, setPayoutRefs] = useState<Record<string, string>>({})
   const [methods,        setMethods]        = useState<PayoutMethod[]>([])
   const [methodsLoading, setMethodsLoading] = useState(true)
 
   const [activeView,   setActiveView]   = useState<ActiveView>("transactions")
   const [dialogTxn,    setDialogTxn]    = useState<DailyVoteTransaction | null>(null)
   const [payoutError,  setPayoutError]  = useState<PayoutError | null>(null)
-  const [payoutSuccess, setPayoutSuccess] = useState("")
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [bulkPayoutTxns, setBulkPayoutTxns] = useState<DailyVoteTransaction[]>([])
+
+  // Live payout progress dialog — opened the moment a payout begins.
+  const [liveReferences, setLiveReferences] = useState<string[] | null>(null)
 
   // Live ticker for countdown
   const [, setTick] = useState(0)
@@ -400,10 +424,19 @@ export default function PollPayoutPage() {
       const res = await authFetch(`/api/polls/payout?pollId=${pollId}&action=status`)
       const data = await res.json()
       if (!res.ok) return
-      const records: Array<{ date: string; status: string }> = data.payouts ?? []
-      const map: Record<string, string> = {}
-      for (const r of records) map[r.date] = r.status
-      setPayoutStatuses(map)
+      const records: Array<{ date: string; status: string; reference?: string }> = data.payouts ?? []
+      const statusMap: Record<string, string> = {}
+      const refMap: Record<string, string> = {}
+      // Kept in the map (including "failed") so the badge still shows —
+      // gating on whether a NEW request is allowed uses blockingStatus in
+      // TxnCard, not presence in this map, since a failed attempt doesn't
+      // reserve the date (see hasActiveOrSuccessfulPayout).
+      for (const r of records) {
+        statusMap[r.date] = r.status
+        if (r.reference) refMap[r.date] = r.reference
+      }
+      setPayoutStatuses(statusMap)
+      setPayoutRefs((prev) => ({ ...prev, ...refMap }))
     } catch {
       // Non-critical
     }
@@ -430,21 +463,44 @@ export default function PollPayoutPage() {
     }
   }, [loading, fetchTransactions, fetchPayoutStatuses, fetchMethods])
 
-  // Ready count excludes dates that already have a payout record
+  // Ready count excludes dates with an active or successful payout — a
+  // "failed" one doesn't block a fresh request for that date.
   const readyCount = transactions.filter(
-    (t) => isWithdrawable(t.lastUpdated) && !payoutStatuses[t.date]
+    (t) => isWithdrawable(t.lastUpdated) && (!payoutStatuses[t.date] || payoutStatuses[t.date] === "failed")
   ).length
 
-  function handlePayoutSuccess(dates: string | string[]) {
-    const list = Array.isArray(dates) ? dates : [dates]
-    setPayoutStatuses((prev) => {
-      const next = { ...prev }
-      list.forEach((d) => { next[d] = "pending" })
-      return next
-    })
+  function handlePayoutSuccess(references: string[]) {
+    // Same order as the transactions array PollPayoutConfirmation was given
+    // (bulk selection or the single dialogTxn) — it only calls onSuccess
+    // once every request in that loop succeeded, so the two arrays line up.
+    const submittedTxns = bulkPayoutTxns.length > 0 ? bulkPayoutTxns : dialogTxn ? [dialogTxn] : []
+    if (submittedTxns.length === references.length) {
+      setPayoutRefs((prev) => {
+        const next = { ...prev }
+        submittedTxns.forEach((t, i) => { next[t.date] = references[i] })
+        return next
+      })
+    }
     setSelectedDates(new Set())
     setBulkPayoutTxns([])
-    setPayoutSuccess(list.length === 1 ? "Payout request submitted successfully!" : `${list.length} payout requests submitted successfully!`)
+    fetchPayoutStatuses()
+    if (references.length) setLiveReferences(references)
+  }
+
+  // Fires on every live SSE event for any reference currently shown in the
+  // dialog — mirrors that status onto the Transaction Days list instantly,
+  // so a card resolving to successful/failed shows up there without the
+  // person needing to refresh or even keep the dialog open.
+  function handleLiveStatusChange(state: PayoutLiveState) {
+    setPayoutStatuses((prev) => {
+      const date = Object.keys(payoutRefs).find((d) => payoutRefs[d] === state.reference)
+      if (!date || prev[date] === state.status) return prev
+      return { ...prev, [date]: state.status }
+    })
+  }
+
+  function handleReopenPayout(reference: string) {
+    setLiveReferences([reference])
   }
 
   function handlePayoutError(rawMessage: string, txnDate: string) {
@@ -479,6 +535,11 @@ export default function PollPayoutPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 py-8">
+
+        {/* Live payout progress — SSE-backed */}
+        {liveReferences && (
+          <PayoutStateDialog references={liveReferences} onClose={() => setLiveReferences(null)} onStatusChange={handleLiveStatusChange} />
+        )}
 
         {/* Payout Confirmation Dialog */}
         {(dialogTxn || bulkPayoutTxns.length > 0) && (
@@ -581,17 +642,6 @@ export default function PollPayoutPage() {
         {/* ── Payout Error Banner ────────────────────────────────────────── */}
         {payoutError && <div className="mb-5"><PayoutErrorBanner error={payoutError} onDismiss={() => setPayoutError(null)} /></div>}
 
-        {/* ── Success banner ─────────────────────────────────────────────── */}
-        {payoutSuccess && (
-          <div className="mb-5 p-4 bg-green-50 border border-green-200 rounded-xl flex items-start gap-3">
-            <CheckCircle size={16} className="text-green-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-green-800">{payoutSuccess}</p>
-            </div>
-            <button onClick={() => setPayoutSuccess("")}><X size={14} className="text-green-500" /></button>
-          </div>
-        )}
-
         {/* ── Sub-tabs ───────────────────────────────────────────────────── */}
         <div className="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto overflow-y-hidden">
           <button
@@ -687,9 +737,11 @@ export default function PollPayoutPage() {
                     key={txn.date}
                     txn={txn}
                     payoutStatus={payoutStatuses[txn.date] ?? null}
+                    payoutReference={payoutRefs[txn.date] ?? null}
                     hasMethods={hasMethods && !isLocked}
                     canPayout={canPayout}
                     onPayout={(t) => { if (!isLocked && canPayout) setDialogTxn(t) }}
+                    onReopen={handleReopenPayout}
                     onAddMethod={() => router.push("/profile")}
                     isSelected={selectedDates.has(txn.date)}
                     onToggleSelect={(date) => {

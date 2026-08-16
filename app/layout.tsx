@@ -3,8 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import { AuthProvider } from "@/hooks/useAuth"
 // import { MaintenanceProvider } from "@/components/MaintenanceProvider"
 import "./globals.css"
-import { Nav } from "@/components/nav"
-import { Footer } from "@/components/footer"
+import { WebChrome } from "@/components/web-chrome"
 
 // Every route in this app renders differently depending on the spotix_at
 // cookie (via proxy.ts + AuthProvider), so nothing here is safe to
@@ -102,9 +101,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="min-h-screen flex flex-col">
           <AuthProvider>
             {/* <MaintenanceProvider> */}
-              <Nav />
-              {children}
-              <Footer />
+              <WebChrome>{children}</WebChrome>
             {/* </MaintenanceProvider> */}
           </AuthProvider>
         </div>
