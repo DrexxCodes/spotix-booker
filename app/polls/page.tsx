@@ -179,7 +179,18 @@ export default function PollsPage() {
       }
 
       if (poll.pollType === "group") {
-        body.categories = regenerateCategoryTree(poll.categories)
+        // poll.categories from /api/polls/list is always [] now — categories
+        // live in a subcollection and aren't fetched for the whole list for
+        // performance (see api/polls/list/route.ts). Pull the real tree for
+        // just this one poll before duplicating it.
+        const catRes = await authFetch(`/api/polls/one?pollId=${poll.id}`)
+        const catData = await catRes.json()
+        if (!catRes.ok) {
+          alert(catData.error || "Failed to load this poll's categories for duplication.")
+          setDuplicating((prev) => ({ ...prev, [poll.id]: false }))
+          return
+        }
+        body.categories = regenerateCategoryTree(catData.poll.categories ?? [])
       } else {
         body.pollPrice = poll.pollPrice
         body.contestants = (poll.contestants ?? []).map((c) => ({

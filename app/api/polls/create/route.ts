@@ -18,6 +18,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { writeCategoryTree } from "@/lib/poll-categories"
 import {
   validateVotePrice,
   MAX_SINGLE_CONTESTANTS,
@@ -234,7 +235,6 @@ export async function POST(req: NextRequest) {
       // empty regardless of what was sent.
       doc.pollPrice   = pollType === "single" ? Number(pollPrice ?? 0) : 0
       doc.contestants = []
-      doc.categories  = []
     } else if (pollType === "single") {
       doc.pollPrice   = Number(pollPrice ?? 0)
       doc.contestants = contestants.map((c: any) => ({
@@ -245,14 +245,19 @@ export async function POST(req: NextRequest) {
         imageSeed:    c.imageType === "generated" ? (c.imageSeed || c.contestantId) : null,
         votes:        0,
       }))
-      doc.categories  = []
     } else if (pollType === "group") {
       doc.pollPrice   = 0
       doc.contestants = []
-      doc.categories  = sanitizeCategoryTree(categories)
+      // categories live in the voting/{pollId}/categories SUBCOLLECTION,
+      // not on this doc — written below, once pollRef actually exists.
+      // See lib/poll-categories.ts for why.
     }
 
     await pollRef.set(doc)
+
+    if (pollType === "group" && !contestantsTBD) {
+      await writeCategoryTree(pollRef.id, sanitizeCategoryTree(categories))
+    }
 
     try {
       await adminDb.collection("users").doc(userId).update({

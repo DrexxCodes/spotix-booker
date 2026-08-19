@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { resolvePollAccess } from "@/lib/poll-team-access"
+import { fetchCategoryTree } from "@/lib/poll-categories"
 import { Timestamp } from "firebase-admin/firestore"
 
 const DEV_TAG = "spotix-api-v1"
@@ -67,6 +68,16 @@ export async function GET(req: NextRequest) {
 
     const d = access.pollSnap.data()!
 
+    // Categories live in the voting/{pollId}/categories subcollection —
+    // see lib/poll-categories.ts. skipCache: true because this is the
+    // edit page's data source; an organiser editing right after a vote
+    // came in should see the real current vote counts, not up to an
+    // hour-old cached ones.
+    const categories =
+      (d.pollType ?? "single") === "group"
+        ? await fetchCategoryTree(pollId, { legacyCategories: d.categories ?? [], skipCache: true })
+        : []
+
     return ok({
       access: access.role,
       poll: {
@@ -86,7 +97,7 @@ export async function GET(req: NextRequest) {
         linkedEventName: d.linkedEventName ?? null,
         contestants:     d.contestants     ?? [],
         pollType:        d.pollType        ?? "single",
-        categories:      d.categories      ?? [],
+        categories,
         statsVisible:    d.statsVisible    ?? true,
         contestantsTBD:  d.contestantsTBD  ?? false,
         creatorId:       d.creatorId       ?? d.organizerId ?? "",

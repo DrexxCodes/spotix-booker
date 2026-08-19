@@ -81,8 +81,16 @@ function shapePoll(
     // Group-poll fields — previously omitted here, which meant every poll
     // silently fell back to pollType "single" on the booker side and
     // categories/statsVisible were never available to the edit/detail pages.
+    //
+    // categories is deliberately NOT populated here: it now lives in the
+    // voting/{pollId}/categories subcollection (see lib/poll-categories.ts),
+    // and this route can return dozens of polls in one call — fetching each
+    // one's full category tree here would mean a subcollection read per
+    // group poll on every dashboard load. Callers that need the real tree
+    // (the edit page, and the dashboard's "Duplicate" action) fetch it
+    // on-demand from /api/polls/one instead.
     pollType:        d.pollType        ?? "single",
-    categories:      d.categories      ?? [],
+    categories:      [] as any[],
     statsVisible:    d.statsVisible    ?? true,
     creatorId:       d.creatorId       ?? d.organizerId ?? "",
     organizerId:     d.organizerId     ?? d.creatorId   ?? "",

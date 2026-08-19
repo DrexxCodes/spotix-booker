@@ -25,6 +25,10 @@
  * field (an older edit UI, for instance) don't need to explicitly unset
  * it — see the effectiveTBD computation below.
  *
+ * Categories (group polls) live in the voting/{pollId}/categories
+ * SUBCOLLECTION, not a `categories` array field — see lib/poll-categories.ts
+ * for why and for the flatten/rebuild helpers this route uses.
+ *
  * All structural limits come from lib/poll-config.ts.
  */
 
@@ -34,6 +38,7 @@ import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
 import { resolvePollAccess } from "@/lib/poll-team-access"
+import { fetchCategoryTree, flattenTreeToMap, writeCategoryTree } from "@/lib/poll-categories"
 import {
   validateVotePrice,
   MAX_SINGLE_CONTESTANTS,
@@ -76,14 +81,10 @@ function countDescendantCategories(cats: any[]): number {
   return total
 }
 
-/** Build a flat map of {categoryId → category} for the entire tree. */
-function flattenCategoryMap(cats: any[], map: Map<string, any> = new Map()): Map<string, any> {
-  for (const cat of cats) {
-    map.set(cat.categoryId, cat)
-    if (Array.isArray(cat.subcategories)) flattenCategoryMap(cat.subcategories, map)
-  }
-  return map
-}
+/** Build a flat map of {categoryId → category} for the entire tree.
+ *  (Thin wrapper so the rest of this file didn't need renaming — same
+ *  behaviour as before, now shared with lib/poll-categories.ts.) */
+const flattenCategoryMap = flattenTreeToMap
 
 /**
  * Validate + merge a category tree.
@@ -322,8 +323,15 @@ export async function PATCH(req: NextRequest) {
   }
 
   // ── Group poll ──────────────────────────────────────────────────────────────
+  // Categories for a group poll write to the subcollection (see
+  // lib/poll-categories.ts), not a field on updatePayload — this stays
+  // null unless one of the two branches below sets it, so a single poll
+  // (or a group poll whose category branch didn't run for some reason)
+  // never triggers a subcollection write.
+  let categoryTreeToWrite: any[] | null = null
+
   if (pollType === "group" && effectiveTBD) {
-    updatePayload.categories = []
+    categoryTreeToWrite = []
   } else if (pollType === "group") {
     if (!Array.isArray(categories) || categories.length < 1)
       return fail("At least 1 top-level category is required", 400)
@@ -334,9 +342,14 @@ export async function PATCH(req: NextRequest) {
     if (totalSubs > MAX_GROUP_TOTAL_SUBCATEGORIES)
       return fail(`Total sub-categories cannot exceed ${MAX_GROUP_TOTAL_SUBCATEGORIES}`, 400)
 
-    // Build flat map of existing categories from DB tree
-    const existingCats: any[] = existingData.categories ?? []
-    const existingMap         = flattenCategoryMap(existingCats)
+    // Existing tree, straight from Firestore (skipCache: true) — about to
+    // check live vote counts below, so a stale cached read here could
+    // let a just-voted contestant look safe to delete.
+    const existingCats: any[] = await fetchCategoryTree(pollId, {
+      legacyCategories: existingData.categories ?? [],
+      skipCache: true,
+    })
+    const existingMap = flattenCategoryMap(existingCats)
 
     // Check for voted category deletions
     const incomingIds = collectAllIds(categories)
@@ -347,12 +360,15 @@ export async function PATCH(req: NextRequest) {
     const result = validateAndMergeCategoryTree(categories, existingMap, "Poll")
     if ("error" in result) return fail(result.error, 400)
 
-    updatePayload.categories = result.merged
+    categoryTreeToWrite = result.merged
   }
 
   // ── Write ───────────────────────────────────────────────────────────────────
   try {
     await pollRef.update(updatePayload)
+    if (categoryTreeToWrite !== null) {
+      await writeCategoryTree(pollId, categoryTreeToWrite)
+    }
     return ok({ message: "Poll updated successfully", pollId })
   } catch (err: any) {
     console.error("[PATCH /api/polls/update] Firestore error:", err)
