@@ -62,7 +62,7 @@
  */
 
 import { adminDb } from "@/lib/firebase-admin"
-import { redis } from "@/lib/redis"
+import { redis, getOrSetSingleFlight } from "@/lib/redis"
 import { FieldValue } from "firebase-admin/firestore"
 
 const CATEGORY_TREE_CACHE_TTL_SECONDS = 60 * 60 // 1 hour safety-net TTL
@@ -155,10 +155,17 @@ export function flattenTreeToMap(tree: any[]): Map<string, any> {
  * @param opts.legacyCategories - the poll doc's old `categories` array
  *   field, if any — used as a fallback ONLY when the subcollection is
  *   still empty (poll hasn't been migrated/re-saved yet).
- * @param opts.skipCache - bypass Redis and read Firestore directly.
- *   Callers that are about to VALIDATE against live data (the update
- *   route's vote-preservation checks) should always pass this, since a
- *   stale cache could let a just-voted contestant look removable.
+ * @param opts.skipCache - bypass Redis (and single-flight) and read Firestore
+ *   directly. Callers that are about to VALIDATE against live data (the
+ *   update route's vote-preservation checks) should always pass this, since
+ *   a stale cache could let a just-voted contestant look removable.
+ *
+ * Single-flight on miss: this key is busted on EVERY credited vote (see
+ * spotix-backend's allocate-vote.js), so during a vote spike it goes cold
+ * repeatedly right when concurrent traffic is highest. A plain get/set
+ * would mean every request racing through that gap pays for the full
+ * subcollection query independently — see getOrSetSingleFlight in
+ * @/lib/redis for the leader/follower lock that prevents that.
  */
 export async function fetchCategoryTree(
   pollId: string,
@@ -166,34 +173,25 @@ export async function fetchCategoryTree(
 ): Promise<any[]> {
   const cacheKey = categoryTreeCacheKey(pollId)
 
-  if (!opts.skipCache) {
-    try {
-      const cached = await redis.get<any[]>(cacheKey)
-      if (cached) return cached
-    } catch {
-      /* cache miss/err — fall through to Firestore */
+  const fetchFromFirestore = async (): Promise<any[]> => {
+    const snap = await adminDb.collection("voting").doc(pollId).collection("categories").get()
+    if (snap.empty) {
+      // Not migrated yet — serve straight from the legacy array field so
+      // nothing breaks before this poll's next edit or a bulk migration.
+      return opts.legacyCategories ?? []
     }
-  }
-
-  const snap = await adminDb.collection("voting").doc(pollId).collection("categories").get()
-
-  let tree: any[]
-  if (snap.empty) {
-    // Not migrated yet — serve straight from the legacy array field so
-    // nothing breaks before this poll's next edit or a bulk migration.
-    tree = opts.legacyCategories ?? []
-  } else {
     const docs = snap.docs.map((d) => d.data() as CategoryDoc)
-    tree = buildCategoryTree(docs)
+    return buildCategoryTree(docs)
   }
 
-  try {
-    await redis.set(cacheKey, tree, { ex: CATEGORY_TREE_CACHE_TTL_SECONDS })
-  } catch {
-    /* non-fatal — just means the next read re-hits Firestore */
-  }
+  if (opts.skipCache) return fetchFromFirestore()
 
-  return tree
+  const tree = await getOrSetSingleFlight<any[]>(
+    cacheKey,
+    CATEGORY_TREE_CACHE_TTL_SECONDS,
+    fetchFromFirestore,
+  )
+  return tree ?? opts.legacyCategories ?? []
 }
 
 export async function invalidateCategoryTreeCache(pollId: string): Promise<void> {

@@ -474,7 +474,7 @@ export default function PollManagePage() {
   const [showEventMenu, setShowEventMenu] = useState(false)
 
   const handleShare = async () => {
-    const url = `https://polls.spotix.com.ng/polls/${encodeURIComponent(poll?.id ?? "")}`
+    const url = `https://polls.spotix.com.ng/poll/${encodeURIComponent(poll?.id ?? "")}`
     try {
       if (navigator.share) {
         await navigator.share({ title: poll?.pollName, text: `Vote on: ${poll?.pollName}`, url })
