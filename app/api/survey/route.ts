@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
+import { verifyAccessToken } from "@/lib/auth-tokens"
+import { resolveEventAccess, hasTab } from "@/lib/event-access"
 
 // NOTE: Firestore paths here are FLAT — events/{eventId}/questions and
 // events/{eventId}/formSettings/ticketSettings — matching the structure
@@ -12,15 +15,58 @@ import { adminDb } from "@/lib/firebase-admin"
 // completely different Firestore location. `userId` is kept as a required
 // param (the caller still sends it, and it's useful for future ownership
 // checks) but it is no longer part of the storage path.
+//
+// SECURITY: this route previously trusted the `userId`/`eventId` params
+// as-is with no session check at all — any caller who knew (or guessed)
+// an eventId could read, overwrite, or delete another organizer's form.
+// Every handler below now authenticates via the spotix_at cookie and
+// resolves real access through resolveEventAccess(), gated on the "form"
+// tab (see app/lib/team-tabs.ts). The `userId` query/body param is no
+// longer trusted for authorization — the session's own uid is used.
+
+const DEV_TAG = "spotix-api-v1"
+
+function fail(message: string, status: number) {
+  return NextResponse.json({ success: false, error: message, developer: DEV_TAG }, { status })
+}
+
+async function authenticate(): Promise<{ userId: string } | NextResponse> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("spotix_at")?.value
+  if (!token) return fail("No access token", 401)
+  try {
+    const payload = await verifyAccessToken(token, "spotix-booker")
+    return { userId: payload.uid }
+  } catch {
+    return fail("Invalid or expired access token", 401)
+  }
+}
+
+// Creator, Admin, or any collaborator (built-in or custom) granted the
+// "form" tab.
+async function resolveFormAccess(eventId: string, userId: string) {
+  const access = await resolveEventAccess(eventId, userId)
+  if (!access.ok) return fail(access.error, access.status)
+  if (!hasTab(access, "form")) {
+    return fail("Forbidden: your role does not have access to the Form on this event", 403)
+  }
+  return access
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { userId, eventId, questions, ticketSettings } = body
+    const auth = await authenticate()
+    if (auth instanceof NextResponse) return auth
 
-    if (!userId || !eventId) {
-      return NextResponse.json({ error: "Missing required fields: userId, eventId" }, { status: 400 })
+    const body = await request.json()
+    const { eventId, questions, ticketSettings } = body
+
+    if (!eventId) {
+      return fail("Missing required field: eventId", 400)
     }
+
+    const access = await resolveFormAccess(eventId, auth.userId)
+    if (access instanceof NextResponse) return access
 
     if (!questions || !Array.isArray(questions)) {
       return NextResponse.json({ error: "Questions must be an array" }, { status: 400 })
@@ -104,13 +150,18 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticate()
+    if (auth instanceof NextResponse) return auth
+
     const { searchParams } = new URL(request.url)
-    const userId = searchParams.get("userId")
     const eventId = searchParams.get("eventId")
 
-    if (!userId || !eventId) {
-      return NextResponse.json({ error: "Missing required parameters: userId, eventId" }, { status: 400 })
+    if (!eventId) {
+      return fail("Missing required parameter: eventId", 400)
     }
+
+    const access = await resolveFormAccess(eventId, auth.userId)
+    if (access instanceof NextResponse) return access
 
     // Get questions — flat structure
     const questionsCollectionRef = adminDb
@@ -147,13 +198,18 @@ export async function GET(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const auth = await authenticate()
+    if (auth instanceof NextResponse) return auth
+
     const { searchParams } = new URL(request.url)
-    const userId = searchParams.get("userId")
     const eventId = searchParams.get("eventId")
 
-    if (!userId || !eventId) {
-      return NextResponse.json({ error: "Missing required parameters: userId, eventId" }, { status: 400 })
+    if (!eventId) {
+      return fail("Missing required parameter: eventId", 400)
     }
+
+    const access = await resolveFormAccess(eventId, auth.userId)
+    if (access instanceof NextResponse) return access
 
     // Delete all questions — flat structure
     const questionsCollectionRef = adminDb

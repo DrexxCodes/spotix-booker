@@ -27,6 +27,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { resolveEventAccess } from "@/lib/event-access"
+import { buildEventBundle } from "@/lib/event-bundle"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -123,122 +125,34 @@ export async function GET(req: NextRequest) {
 
   if (!eventId?.trim()) return fail("eventId is required", 400)
 
-  // ── myAccess: called by a collaborator opening an event they don't own ──────
+  // ── myAccess: called by a collaborator (or Admin, for parity) opening
+  // an event they don't own ────────────────────────────────────────────────
   if (action === "myAccess") {
     try {
-      // Find their collab record for this event.
-      // Query on two equality fields only — filter isActive in memory
-      // to avoid requiring a composite Firestore index.
-      const collabSnap = await adminDb
-        .collection("collaborations")
-        .where("eventId", "==", eventId)
-        .where("collaboratorId", "==", userId)
-        .get()
-
-      const activeDoc = collabSnap.docs.find((d) => d.data().isActive === true) ?? null
-
-      if (!activeDoc) {
-        return fail("You are not a collaborator on this event", 403)
-      }
-      // Re-alias so the rest of the handler is unchanged
-      const collabSnap_active = { docs: [activeDoc], empty: false }
-
-      const collabDoc  = collabSnap_active.docs[0]
-      const collabData = collabDoc.data()
-
-      // Fetch the event doc (no ownership check needed — collab grants read)
-      const eventDoc = await adminDb.collection("events").doc(eventId).get()
-      if (!eventDoc.exists) return fail("Event not found", 404)
-
-      const ev = eventDoc.data()!
-
-      // Fetch attendees so the checkin role can see them
-      const attendeesSnap = await adminDb
-        .collection("events")
-        .doc(eventId)
-        .collection("attendees")
-        .get()
-
-      const attendees = attendeesSnap.docs.map((d) => {
-        const a = d.data()
-        return {
-          id: d.id,
-          fullName: a.fullName ?? "Unknown",
-          email: a.email ?? "",
-          ticketType: a.ticketType ?? "Standard",
-          verified: a.verified ?? false,
-          purchaseDate: a.purchaseDate ?? "",
-          purchaseTime: a.purchaseTime ?? "",
-          ticketReference: a.ticketReference ?? "",
-          facialEnroll: a.faceEmbedding ? "enrolled" : "unenrolled",
-        }
-      })
-
-      // ── Financial figures (mirrors app/api/event/list/[eventId]/route.ts) ──────
-      // Calculate totalRevenue from ticketPrices and ticket sales if not stored
-      let calculatedRevenue = 0
-      if (attendees.length > 0 && ev.ticketPrices && ev.ticketPrices.length > 0) {
-        for (const attendee of attendees) {
-          const ticketType = ev.ticketPrices.find((t: any) => t.policy === attendee.ticketType)
-          if (ticketType) {
-            calculatedRevenue += Number(ticketType.price)
-          }
-        }
+      const access = await resolveEventAccess(eventId, userId)
+      if (!access.ok) return fail(access.error, access.status)
+      if (access.isOwner) {
+        // Owners use GET /api/event/list/[eventId] directly — this branch
+        // exists so myAccess never 403s an owner who ends up here anyway.
+        return fail("You are the event owner — use /api/event/list/[eventId] instead", 400)
       }
 
-      // Same "agent/booker payouts" subcollection event/list/[eventId] sums —
-      // NOT the organizer withdrawal `payouts` top-level collection (see
-      // app/api/payout/route.ts). Kept consistent with that route so the
-      // figures a collaborator sees here always match what the Creator sees.
-      const payoutsSnap = await adminDb.collection("events").doc(eventId).collection("payouts").get()
-      let calculatedTotalPaidOut = 0
-      payoutsSnap.docs.forEach((d) => {
-        const p = d.data()
-        if (p.status === "Confirmed") calculatedTotalPaidOut += p.payoutAmount ?? 0
-      })
-
-      const totalRevenue = ev.totalRevenue ?? ev.revenue ?? calculatedRevenue ?? 0
-      const totalPaidOut = ev.totalPaidOut ?? calculatedTotalPaidOut
-      const availableRevenue = ev.availableRevenue ?? (totalRevenue - totalPaidOut)
+      // Full bundle — same shaping as the Creator's own dashboard, per
+      // the "Admin sees everything the Creator sees" requirement. For
+      // checkin/accountant/custom roles this is also correct: the client
+      // only renders the tabs resolveVisibleTabs() allows, so seeing the
+      // full bundle here does not leak UI, it just means the underlying
+      // data is finally consistent regardless of role.
+      const bundle = await buildEventBundle(access.eventRef, access.eventSnap, access.organizerId)
 
       return ok({
         collaboration: {
-          collaborationId: collabDoc.id,
-          role: collabData.role,
-          ownerId: collabData.ownerId,
-          addedAt: collabData.addedAt ?? null,
-          // permissions array — present for custom roles, null for built-in
-          permissions: collabData.permissions ?? null,
+          collaborationId: access.collaborationId,
+          role: access.rawRole,
+          ownerId: access.organizerId,
+          permissions: access.permissions,
         },
-        eventData: {
-          id: eventDoc.id,
-          eventName: ev.eventName ?? "",
-          eventVenue: ev.eventVenue ?? "",
-          eventDate: ev.eventDate ? (ev.eventDate.toDate?.() ?? new Date(ev.eventDate)).toISOString() : "",
-          eventType: ev.eventType ?? "",
-          eventDescription: ev.eventDescription ?? "",
-          isFree: ev.isFree ?? true,
-          ticketPrices: ev.ticketPrices ?? [],
-          createdBy: ev.organizerId ?? "",
-          totalCapacity: ev.totalCapacity ?? 0,
-          ticketsSold: ev.ticketsSold ?? 0,
-          totalRevenue,
-          totalPaidOut,
-          availableRevenue,
-          status: ev.status ?? "active",
-          eventStart: ev.eventStart ?? "",
-          eventEnd: ev.eventEnd ?? "",
-          eventEndDate: ev.eventEndDate ?? "",
-          enableMaxSize: ev.enableMaxSize ?? false,
-          maxSize: ev.maxSize ?? "",
-          enableColorCode: ev.enableColorCode ?? false,
-          colorCode: ev.colorCode ?? "",
-          enableStopDate: ev.enableStopDate ?? false,
-          stopDate: ev.stopDate ?? "",
-          payId: ev.payId ?? "",
-          eventImage: ev.eventImage ?? "",
-        },
-        attendees,
+        ...bundle,
       })
     } catch (e: any) {
       console.error("[GET /api/teams myAccess]", e)

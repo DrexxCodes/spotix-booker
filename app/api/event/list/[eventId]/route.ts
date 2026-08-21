@@ -31,6 +31,8 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolveEventAccess, isOwnerOrAdmin, EventAccessResult } from "@/lib/event-access"
+import { buildEventBundle } from "@/lib/event-bundle"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -58,8 +60,11 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
   }
 }
 
-// ─── Ownership guard ──────────────────────────────────────────────────────────
-// Returns the event snapshot if the user owns it, or a fail response.
+// ─── Ownership guard (STRICT — Creator only) ─────────────────────────────────
+// Kept for the "edit" action specifically: Admin gets full-parity access
+// to everything else on this route, but editing the event's core fields
+// stays Creator-only (see BUILT_IN_ROLE_TABS.admin in lib/team-tabs.ts —
+// "edit" is deliberately excluded from Admin's tab list).
 async function resolveOwnedEvent(
   eventId: string,
   userId: string
@@ -74,18 +79,21 @@ async function resolveOwnedEvent(
   return { snap, ref }
 }
 
-// ─── Timestamp helpers ────────────────────────────────────────────────────────
-function tsToDateString(ts: FirebaseFirestore.Timestamp | string | null | undefined): string {
-  if (!ts) return "Unknown"
-  // Handle string dates (already formatted)
-  if (typeof ts === "string") return ts
-  // Handle Firestore Timestamp objects
-  try { return ts.toDate().toLocaleDateString() } catch { return "Unknown" }
-}
-
-function tsToTimeString(ts: FirebaseFirestore.Timestamp | null | undefined): string {
-  if (!ts) return ""
-  try { return ts.toDate().toLocaleTimeString() } catch { return "" }
+// ─── Full-parity guard (Creator OR Admin) ────────────────────────────────────
+// Used by GET (the full dashboard bundle) and every mutation that Admin is
+// allowed to perform. Other collaborator roles (checkin/accountant/custom)
+// keep using GET /api/teams?action=myAccess for their (tab-scoped) view —
+// see app/api/teams/route.ts.
+async function resolveParityAccess(
+  eventId: string,
+  userId: string
+): Promise<Extract<EventAccessResult, { ok: true }> | NextResponse> {
+  const access = await resolveEventAccess(eventId, userId)
+  if (!access.ok) return fail(access.error, access.status)
+  if (!isOwnerOrAdmin(access)) {
+    return fail("Forbidden: use /api/teams?action=myAccess for your role's view of this event", 403)
+  }
+  return access
 }
 
 // ─── GET ──────────────────────────────────────────────────────────────────────
@@ -100,202 +108,18 @@ export async function GET(
   const { eventId } = await params
   if (!eventId?.trim()) return fail("eventId is required", 400)
 
-  const owned = await resolveOwnedEvent(eventId, userId)
-  if (owned instanceof NextResponse) return owned
-  const { snap: eventSnap, ref: eventRef } = owned
-  const ev = eventSnap.data()!
+  // Creator OR Admin — full parity bundle either way. Other collaborator
+  // roles are routed to /api/teams?action=myAccess by the client when this
+  // 403s (see loadPage() in app/event-info/[eventId]/page.tsx).
+  const access = await resolveParityAccess(eventId, userId)
+  if (access instanceof NextResponse) return access
 
-  // ── Fetch user doc (bookerBVT) ─────────────────────────────────────────────
-  let bookerBVT = ""
-  try {
-    const userSnap = await adminDb.collection("users").doc(userId).get()
-    if (userSnap.exists) bookerBVT = userSnap.data()?.bvt ?? ""
-  } catch (e) {
-    console.error("[GET eventId] user fetch failed", e)
-  }
-
-  // ── Subcollections in parallel ─────────────────────────────────────────────
-  const [attendeesSnap, discountsSnap, payoutsSnap] = await Promise.all([
-    eventRef.collection("attendees").get(),
-    eventRef.collection("discounts").get(),
-    eventRef.collection("payouts").orderBy("createdAt", "desc").get(),
-  ])
-
-  // ── Shape attendees ────────────────────────────────────────────────────────
-  const attendees = attendeesSnap.docs.map((d) => {
-    const a = d.data()
-    return {
-      id: d.id,
-      fullName: a.fullName ?? "Unknown",
-      email: a.email ?? "no-email@example.com",
-      ticketType: a.ticketType ?? "Standard",
-      verified: a.verified ?? false,
-      purchaseDate: tsToDateString(a.purchaseDate),
-      purchaseTime: a.purchaseTime ?? tsToTimeString(a.purchaseDate),
-      ticketReference: a.ticketReference ?? "Unknown",
-      facialEnroll: a.faceEmbedding ? "enrolled" : "unenrolled",
-      faceEmbedding: a.faceEmbedding ?? null,
-    }
-  })
-
-  // ── Shape discounts ────────────────────────────────────────────────────────
-  const discounts = discountsSnap.docs.map((d) => {
-    const dc = d.data()
-    return {
-      id: d.id, // included so toggle can target the doc without a re-scan
-      code: dc.code ?? "",
-      type: dc.type ?? "percentage",
-      value: dc.value ?? 0,
-      maxUses: dc.maxUses ?? 1,
-      usedCount: dc.usedCount ?? 0,
-      active: dc.active !== false,
-    }
-  })
-
-  // ── Shape payouts ──────────────────────────────────────────────────────────
-  let calculatedTotalPaidOut = 0
-  const payouts = payoutsSnap.docs.map((d) => {
-    const p = d.data()
-    const payoutAmount = p.payoutAmount ?? 0
-    if (p.status === "Confirmed") calculatedTotalPaidOut += payoutAmount
-    return {
-      id: d.id,
-      date: tsToDateString(p.createdAt),
-      amount: payoutAmount,
-      status: p.status ?? "Pending",
-      actionCode: p.actionCode ?? "",
-      reference: p.reference ?? "",
-      payoutAmount,
-      payableAmount: p.payableAmount ?? 0,
-      agentName: p.agentName ?? "",
-      transactionTime: p.transactionTime ?? tsToTimeString(p.createdAt),
-    }
-  })
-
-  // ── Financial figures ──────────────────────────────────────────────────────
-  // Calculate totalRevenue from ticketPrices and ticket sales if not stored
-  let calculatedRevenue = 0
-  if (attendees.length > 0 && ev.ticketPrices && ev.ticketPrices.length > 0) {
-    for (const attendee of attendees) {
-      const ticketType = ev.ticketPrices.find((t: any) => t.policy === attendee.ticketType)
-      if (ticketType) {
-        calculatedRevenue += Number(ticketType.price)
-      }
-    }
-  }
-  
-  const totalRevenue = ev.totalRevenue ?? ev.revenue ?? calculatedRevenue ?? 0
-  const totalPaidOut = ev.totalPaidOut ?? calculatedTotalPaidOut
-  const availableRevenue = ev.availableRevenue ?? (totalRevenue - totalPaidOut)
-
-  // ── Shape event data ───────────────────────────────────────────────────────
-  const eventDate: Date = ev.eventDate?.toDate?.() ?? new Date(ev.eventDate)
-
-  const eventData = {
-    id: eventSnap.id,
-    eventName: ev.eventName ?? "",
-    eventImage: ev.eventImage ?? "/placeholder.svg",
-    eventImages: ev.eventImages ?? [],
-    eventDate: eventDate.toISOString(),
-    eventType: ev.eventType ?? "",
-    eventDescription: ev.eventDescription ?? "",
-    isFree: ev.isFree ?? false,
-    ticketPrices: ev.ticketPrices ?? [],
-    createdBy: ev.organizerId ?? userId,
-    eventVenue: ev.eventVenue ?? "",
-    totalCapacity: ev.enableMaxSize ? parseInt(ev.maxSize, 10) : 100,
-    ticketsSold: ev.ticketsSold ?? 0,
-    totalRevenue,
-    eventEndDate: ev.eventEndDate ?? "",
-    eventStart: ev.eventStart ?? "",
-    eventEnd: ev.eventEnd ?? "",
-    enableMaxSize: ev.enableMaxSize ?? false,
-    maxSize: ev.maxSize ?? "",
-    enableColorCode: ev.enableColorCode ?? false,
-    colorCode: ev.colorCode ?? "",
-    enableStopDate: ev.enableStopDate ?? ev.hasStopDate ?? false,
-    stopDate: ev.stopDate
-      ? (ev.stopDate.toDate?.() ?? new Date(ev.stopDate)).toISOString()
-      : "",
-    payId: ev.payId ?? "",
-    availableRevenue,
-    totalPaidOut,
-    status: ev.status ?? "active",
-    enabledCollaboration: ev.enabledCollaboration ?? false,
-    allowAgents: ev.allowAgents ?? false,
-    agentIncentive: ev.agentIncentive ?? null,
-    votingId:       ev.votingId       ?? null,
-    votingPollName: ev.votingPollName ?? null,
-    allowAPIAccess: ev.allowAPIAccess ?? false,
-    widgetLength: ev.widgetLength ?? 320,
-    widgetHeight: ev.widgetHeight ?? 420,
-    widgetColour: ev.widgetColour ?? "#6b2fa5",
-  }
-
-  // ── Chart data ─────────────────────────────────────────────────────────────
-  // Build sales by day chart with actual purchase timestamps
-  const salesByDayMap: Record<string, { count: number; revenue: number }> = {}
-  for (const doc of attendeesSnap.docs) {
-    const a = doc.data()
-    const purchaseDate = a.purchaseDate?.toDate?.() ?? new Date(a.purchaseDate)
-    
-    if (purchaseDate) {
-      const dateStr = purchaseDate.toLocaleDateString("en-US", { 
-        year: "numeric", 
-        month: "short", 
-        day: "numeric" 
-      })
-      
-      const ticketType = ev.ticketPrices?.find((t: any) => t.policy === a.ticketType)
-      const price = Number(ticketType?.price ?? 0)
-      
-      if (!salesByDayMap[dateStr]) {
-        salesByDayMap[dateStr] = { count: 0, revenue: 0 }
-      }
-      salesByDayMap[dateStr].count += 1
-      salesByDayMap[dateStr].revenue += price
-    }
-  }
-  
-  const ticketSalesByDay = Object.entries(salesByDayMap)
-    .map(([date, data]) => ({ date, count: data.count, revenue: data.revenue }))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-
-  // Build sales by type chart
-  const salesByTypeMap: Record<string, { count: number; revenue: number }> = {}
-  for (const doc of attendeesSnap.docs) {
-    const a = doc.data()
-    const ticketType = a.ticketType ?? "Standard"
-    const price = ev.ticketPrices?.find((t: any) => t.policy === ticketType)?.price ?? 0
-    
-    if (!salesByTypeMap[ticketType]) {
-      salesByTypeMap[ticketType] = { count: 0, revenue: 0 }
-    }
-    salesByTypeMap[ticketType].count += 1
-    salesByTypeMap[ticketType].revenue += Number(price)
-  }
-  
-  const ticketSalesByType = Object.entries(salesByTypeMap).map(([type, data]) => ({ 
-    type, 
-    count: data.count, 
-    revenue: data.revenue 
-  }))
+  const bundle = await buildEventBundle(access.eventRef, access.eventSnap, access.organizerId)
 
   // Note: forecast is intentionally excluded here.
   // WeatherTab fetches /api/forecast on demand when the tab is selected.
 
-  return ok({
-    eventData,
-    bookerBVT,
-    attendees,
-    discounts,
-    payouts,
-    ticketSalesByDay,
-    ticketSalesByType,
-    ticketTypeData: ticketSalesByType,
-    availableBalance: availableRevenue,
-    totalPaidOut,
-  })
+  return ok(bundle)
 }
 
 // ─── PATCH ────────────────────────────────────────────────────────────────────
@@ -318,12 +142,14 @@ export async function PATCH(
   const { action } = body
   if (!action) return fail("action is required", 400)
 
-  const owned = await resolveOwnedEvent(eventId, userId)
-  if (owned instanceof NextResponse) return owned
-  const { ref: eventRef } = owned
-
-  // ── action: edit ──────────────────────────────────────────────────────────
+  // "edit" stays Creator-only (Admin's tab list excludes "edit" — see
+  // lib/team-tabs.ts). Every other action here is full-parity (Creator or
+  // Admin), resolved just below inside each action branch.
   if (action === "edit") {
+    const owned = await resolveOwnedEvent(eventId, userId)
+    if (owned instanceof NextResponse) return owned
+    const { ref: eventRef } = owned
+
     const {
       eventName, eventDescription, eventDate, eventEndDate,
       eventVenue, eventStart, eventEnd, eventType,
@@ -371,7 +197,12 @@ export async function PATCH(
     }
   }
 
-  // ── action: toggleDiscount ──���──────────────────────────────────────���──────
+  // Every remaining action (apiAccess, toggleAgentActivity, setAgentIncentive,
+  // toggleDiscount) is full-parity — Creator or Admin.
+  const access = await resolveParityAccess(eventId, userId)
+  if (access instanceof NextResponse) return access
+  const eventRef = access.eventRef
+
   // -- action: apiAccess ---------------------------------------------------
   // Toggles allowAPIAccess and sets widget display options for this event.
   // Consumed by app/components/event-info/apiAccess.tsx. Location and event
@@ -421,7 +252,7 @@ export async function PATCH(
   // only on the ON transition; turning OFF doesn't touch it, so re-enabling
   // later remembers the last value as a convenience.
   if (action === "toggleAgentActivity") {
-    const currentValue = owned.snap.data()!.allowAgents === true
+    const currentValue = access.eventSnap.data()!.allowAgents === true
     const turningOn = !currentValue
 
     if (turningOn) {
@@ -525,9 +356,9 @@ export async function POST(
   const { action } = body
   if (action !== "addDiscount") return fail(`Unknown action: ${action}`, 400)
 
-  const owned = await resolveOwnedEvent(eventId, userId)
-  if (owned instanceof NextResponse) return owned
-  const { ref: eventRef } = owned
+  const access = await resolveParityAccess(eventId, userId)
+  if (access instanceof NextResponse) return access
+  const eventRef = access.eventRef
 
   const { code, type, value, maxUses, usedCount, active } = body
 

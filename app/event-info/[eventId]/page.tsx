@@ -24,6 +24,13 @@ import AgentActivityToggle from "@/components/event-info/agent-activity-toggle"
 import AgentRequestsTab from "@/components/event-info/agent-requests-tab"
 import ApiAccessTab from "@/components/event-info/apiAccess"
 import { Suspense } from "react"
+import {
+  ALL_TABS as SHARED_ALL_TABS,
+  BUILT_IN_ROLE_TABS,
+  PERMISSION_TO_TAB,
+  resolveVisibleTabs,
+  type TabId,
+} from "@/lib/team-tabs"
 
 // Types 
 interface EventData {
@@ -84,37 +91,8 @@ interface CollabInfo {
   permissions: string[] | null // null = built-in role; array = custom role tabs
 }
 
-// ── Built-in role → allowed tab IDs ───────────────────────────────────────────
-const BUILT_IN_ROLE_TABS: Record<string, TabId[]> = {
-  admin:      ["overview", "eventlink", "payouts", "attendees", "discounts", "merch", "referrals", "form", "responses", "weather", "transfer", "apiAccess"],
-  checkin:    ["attendees", "eventlink", "weather", "form", "responses"],
-  accountant: ["overview", "eventlink", "payouts", "discounts", "merch"],
-}
-
-// Maps permission IDs (stored in Firestore for custom roles) → TabId
-const PERMISSION_TO_TAB: Record<string, TabId> = {
-  overview:  "overview",
-  attendees: "attendees",
-  payouts:   "payouts",
-  discounts: "discounts",
-  merch:     "merch",
-  referrals: "referrals",
-  form:      "form",
-  responses: "responses",
-  weather:   "weather",
-  share:     "eventlink",
-  transfer:  "transfer",
-  apiAccess: "apiAccess",
-}
-
-// ── All tabs ───────────────────────────────────────────────────────────────────
-const ALL_TABS = [
-  "overview", "eventlink", "payouts", "attendees",
-  "discounts", "merch", "referrals", "form", "responses",
-  "weather", "transfer", "edit", "teams", "agentRequests", "apiAccess",
-] as const
-
-type TabId = typeof ALL_TABS[number]
+// ── All tabs (shared with the server — see app/lib/team-tabs.ts) ─────────────
+const ALL_TABS = SHARED_ALL_TABS
 
 const TAB_LABELS: Record<TabId, string> = {
   overview:  "Overview",   eventlink: "Share Event", attendees: "Attendees",
@@ -125,23 +103,8 @@ const TAB_LABELS: Record<TabId, string> = {
   apiAccess: "API Access",
 }
 
-// ── Resolve which tabs a user can see ─────────────────────────────────────────
-function resolveVisibleTabs(isOwner: boolean, collab: CollabInfo | null): TabId[] {
-  if (isOwner) return [...ALL_TABS] as TabId[]
-  if (!collab) return []
-
-  if (collab.role in BUILT_IN_ROLE_TABS) {
-    return BUILT_IN_ROLE_TABS[collab.role]
-  }
-
-  if (Array.isArray(collab.permissions) && collab.permissions.length > 0) {
-    return collab.permissions
-      .map((p) => PERMISSION_TO_TAB[p.toLowerCase()])
-      .filter((t): t is TabId => Boolean(t))
-  }
-
-  return []
-}
+// ── (resolveVisibleTabs now imported from @/lib/team-tabs — shared with
+// the server so UI tab visibility and API access checks never drift) ────────
 
 // ── Role badge ─────────────────────────────────────────────────────────────────
 function RoleBadge({ role }: { role: string }) {
@@ -239,7 +202,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   const [exitLoading, setExitLoading]     = useState(false)
 
   const visibleTabs = useMemo(
-    () => resolveVisibleTabs(isOwner, collabInfo),
+    () => resolveVisibleTabs(isOwner, collabInfo?.role ?? null, collabInfo?.permissions ?? null),
     [isOwner, collabInfo]
   )
 
@@ -320,12 +283,12 @@ function EventInfoInner({ eventId }: { eventId: string }) {
       populateEventData({
         eventData:        data.eventData,
         attendees:        data.attendees ?? [],
-        discounts:        [],
-        payouts:          [],
-        ticketSalesByDay: [],
-        ticketSalesByType: [],
-        availableBalance: 0,
-        totalPaidOut:     0,
+        discounts:        data.discounts ?? [],
+        payouts:          data.payouts ?? [],
+        ticketSalesByDay: data.ticketSalesByDay ?? [],
+        ticketSalesByType: data.ticketSalesByType ?? [],
+        availableBalance: data.availableBalance ?? 0,
+        totalPaidOut:     data.totalPaidOut ?? 0,
       })
 
       setActiveTab(defaultTab)

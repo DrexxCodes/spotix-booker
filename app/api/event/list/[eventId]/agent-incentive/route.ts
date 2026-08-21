@@ -30,8 +30,8 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { resolveEventAccess, isOwnerOrAdmin } from "@/lib/event-access"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -54,12 +54,16 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
   }
 }
 
+// Same as agent-requests: Creator or Admin only, no custom-role path
+// (agent activity/incentive management lives under the Teams tab, which
+// custom roles can never be granted — see app/lib/team-tabs.ts).
 async function resolveOwnedEvent(eventId: string, userId: string) {
-  const ref = adminDb.collection("events").doc(eventId)
-  const snap = await ref.get()
-  if (!snap.exists) return fail("Event not found", 404)
-  if (snap.data()!.organizerId !== userId) return fail("Forbidden: you do not own this event", 403)
-  return { snap, ref }
+  const access = await resolveEventAccess(eventId, userId)
+  if (!access.ok) return fail(access.error, access.status)
+  if (!isOwnerOrAdmin(access)) {
+    return fail("Forbidden: only the Event Creator or an Admin can manage agent incentives", 403)
+  }
+  return { snap: access.eventSnap, ref: access.eventRef }
 }
 
 // -- GET ------------------------------------------------------------------------

@@ -23,6 +23,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolveEventAccess, isOwnerOrAdmin } from "@/lib/event-access"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -45,12 +46,17 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
   }
 }
 
+// Agent requests aren't a grantable custom-role tab (see
+// app/lib/team-tabs.ts — "agentRequests" only appears in the Admin
+// built-in role's tab list). So access here is Creator OR Admin, full
+// stop — no custom-permission path, unlike referrals/merch/etc.
 async function resolveOwnedEvent(eventId: string, userId: string) {
-  const ref = adminDb.collection("events").doc(eventId)
-  const snap = await ref.get()
-  if (!snap.exists) return fail("Event not found", 404)
-  if (snap.data()!.organizerId !== userId) return fail("Forbidden: you do not own this event", 403)
-  return { snap, ref }
+  const access = await resolveEventAccess(eventId, userId)
+  if (!access.ok) return fail(access.error, access.status)
+  if (!isOwnerOrAdmin(access)) {
+    return fail("Forbidden: only the Event Creator or an Admin can manage agent requests", 403)
+  }
+  return { snap: access.eventSnap, ref: access.eventRef }
 }
 
 // -- GET ------------------------------------------------------------------------

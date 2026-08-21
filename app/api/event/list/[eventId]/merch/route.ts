@@ -27,6 +27,7 @@ import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { FieldValue } from "firebase-admin/firestore"
+import { resolveEventAccess, hasTab } from "@/lib/event-access"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -51,16 +52,18 @@ async function authenticate(): Promise<{ userId: string } | NextResponse> {
   }
 }
 
-// ─── Ownership guard ───────────────────────────────────────────────────────────
-async function resolveOwnedEvent(
+// ─── Access guard — Creator, Admin, or any collaborator (built-in or custom)
+// granted the "merch" tab ────────────────────────────────────────────────────
+async function resolveMerchAccess(
   eventId: string,
   userId: string
 ): Promise<{ ref: FirebaseFirestore.DocumentReference } | NextResponse> {
-  const ref = adminDb.collection("events").doc(eventId)
-  const snap = await ref.get()
-  if (!snap.exists) return fail("Event not found", 404)
-  if (snap.data()!.organizerId !== userId) return fail("Forbidden: you do not own this event", 403)
-  return { ref }
+  const access = await resolveEventAccess(eventId, userId)
+  if (!access.ok) return fail(access.error, access.status)
+  if (!hasTab(access, "merch")) {
+    return fail("Forbidden: your role does not have access to Merch on this event", 403)
+  }
+  return { ref: access.eventRef }
 }
 
 // ─── GET ───────────────────────────────────────────────────────────────────────
@@ -75,7 +78,7 @@ export async function GET(
   const { eventId } = await params
   if (!eventId?.trim()) return fail("eventId is required", 400)
 
-  const owned = await resolveOwnedEvent(eventId, userId)
+  const owned = await resolveMerchAccess(eventId, userId)
   if (owned instanceof NextResponse) return owned
   const { ref: eventRef } = owned
 
@@ -140,7 +143,7 @@ export async function POST(
   if (!currentUserId?.trim()) return fail("currentUserId is required", 400)
   if (!eventName?.trim()) return fail("eventName is required", 400)
 
-  const owned = await resolveOwnedEvent(eventId, userId)
+  const owned = await resolveMerchAccess(eventId, userId)
   if (owned instanceof NextResponse) return owned
   const { ref: eventRef } = owned
 
@@ -215,7 +218,7 @@ export async function DELETE(
   if (!firestoreId?.trim()) return fail("firestoreId is required", 400)
   if (!eventName?.trim()) return fail("eventName is required", 400)
 
-  const owned = await resolveOwnedEvent(eventId, userId)
+  const owned = await resolveMerchAccess(eventId, userId)
   if (owned instanceof NextResponse) return owned
   const { ref: eventRef } = owned
 
