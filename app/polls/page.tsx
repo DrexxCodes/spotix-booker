@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
+import { toContestantArray, contestantCount, type ContestantsField } from "@/lib/contestants"
 import {
   Loader, Plus, Vote, TrendingUp, Clock, CheckCircle,
   XCircle, BarChart2, AlertTriangle, RefreshCw, Shuffle, Settings2,
@@ -16,7 +17,10 @@ interface Category {
   categoryId: string
   name: string
   pollPrice: number
-  contestants: Contestant[]
+  // Contestants can come back as an array OR a map keyed by contestantId —
+  // always read through toContestantArray()/contestantCount(), never off
+  // this field directly. See @/lib/contestants.
+  contestants: ContestantsField
   subcategories: Category[]
 }
 
@@ -32,7 +36,9 @@ interface Poll {
   pollPrice: number
   pollAmount: number
   pollCount: number
-  contestants: Contestant[]
+  // Same story as Category.contestants above — array or map, always
+  // normalized through @/lib/contestants before being read.
+  contestants: ContestantsField
   pollType: "single" | "group"
   categories: Category[]
   buyerBearsBurden: boolean
@@ -57,7 +63,7 @@ function regenerateCategoryTree(cats: Category[]): any[] {
     categoryId: genId("sp-cat-"),
     name: cat.name,
     pollPrice: cat.pollPrice,
-    contestants: (cat.contestants ?? []).map((c) => ({
+    contestants: toContestantArray(cat.contestants).map((c) => ({
       contestantId: genId("sp-cont-"),
       name: c.name,
       image: c.image,
@@ -193,7 +199,7 @@ export default function PollsPage() {
         body.categories = regenerateCategoryTree(catData.poll.categories ?? [])
       } else {
         body.pollPrice = poll.pollPrice
-        body.contestants = (poll.contestants ?? []).map((c) => ({
+        body.contestants = toContestantArray(poll.contestants).map((c) => ({
           contestantId: genId("sp-cont-"),
           name: c.name,
           image: c.image,
@@ -379,7 +385,7 @@ export default function PollsPage() {
                         <p className="text-xs text-gray-400">Votes</p>
                       </div>
                       <div className="text-center p-2 bg-gray-50 rounded-lg">
-                        <p className="text-xs font-bold text-gray-900">{poll.contestants?.length ?? 0}</p>
+                        <p className="text-xs font-bold text-gray-900">{contestantCount(poll.contestants)}</p>
                         <p className="text-xs text-gray-400">Entrants</p>
                       </div>
                       <div className="text-center p-2 bg-gray-50 rounded-lg">

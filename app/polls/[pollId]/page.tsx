@@ -5,6 +5,14 @@ import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
 import {
+  toContestantArray,
+  contestantCount as countContestantsField,
+  sumVotes as sumContestantVotes,
+  computeStandings,
+  type ContestantsField,
+  type ContestantRecord,
+} from "@/lib/contestants"
+import {
   Loader,
   ArrowLeft,
   Users,
@@ -33,22 +41,25 @@ import {
   Sparkles,
   Ban,
   Scale,
+  FileDown,
+  X,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Contestant {
-  contestantId: string
-  name: string
-  image: string
-  votes: number
-}
+/** @deprecated kept as an alias so existing prop/type references below still
+ *  read naturally — use ContestantRecord from @/lib/contestants directly in
+ *  new code. */
+type Contestant = ContestantRecord
 
 interface CategoryNode {
   categoryId: string
   name: string
   pollPrice: number
-  contestants: Contestant[]
+  // Contestants can come back as an array OR a map keyed by contestantId —
+  // always read through toContestantArray()/countContestantsField(), never
+  // off this field directly. See @/lib/contestants.
+  contestants: ContestantsField
   subcategories: CategoryNode[]
 }
 
@@ -67,7 +78,8 @@ interface Poll {
   pollType: "single" | "group"
   categories: CategoryNode[]
   statsVisible: boolean
-  contestants: Contestant[]
+  // Array or map keyed by contestantId — see @/lib/contestants.
+  contestants: ContestantsField
   updatedAt: string | null
   linkedEventId: string | null
   linkedEventName: string | null
@@ -149,7 +161,7 @@ function StandingsList({
   tieBreaker,
   liveState,
 }: {
-  contestants: Contestant[]
+  contestants: ContestantsField
   status: PollStatus
   emptyMessage?: string
   /** Poll-level tie-breaker config, only relevant once status === "ended". */
@@ -157,24 +169,24 @@ function StandingsList({
   /** Live round state for this scope, if a tie-breaker has ever kicked in — see TieBreakerLiveState. */
   liveState?: TieBreakerLiveState
 }) {
-  const sorted     = [...contestants].sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0))
-  const totalVotes = sorted.reduce((s, c) => s + (c.votes ?? 0), 0)
-  const topScore   = sorted[0]?.votes ?? 0
+  // Normalize once, up front — contestants may arrive as an array or a
+  // map keyed by contestantId (see @/lib/contestants), everything below
+  // reads off the flat, sorted array.
+  const { sorted, totalVotes, noVotes: noVotesRaw, tied: tiedTop, isTie: rawIsTie } = computeStandings(contestants)
+  const topScore = sorted[0]?.votes ?? 0
 
   const ended   = status === "ended"
   // Edge case 1: nobody voted — never crown a winner off a 0-0 "lead".
-  const noVotes = ended && totalVotes === 0
+  const noVotes = ended && noVotesRaw
   // Edge case 2: 2+ contestants share the top score — sorted[0] is just
   // array order at that point, not a real winner, so don't crown it either.
   // If a tie-breaker round already resolved this scope, its winnerId is
   // authoritative — trust it over the raw vote tally (a stray late vote
   // landing after resolution shouldn't flip the displayed winner).
-  const tiedTop = ended && !noVotes ? sorted.filter((c) => (c.votes ?? 0) === topScore) : []
-  const rawIsTie = tiedTop.length > 1
   const tieBreakerLive = liveState?.status === "active" || liveState?.status === "fptp"
   const resolvedByTieBreaker = liveState?.status === "resolved" ? liveState.winnerId : null
 
-  const isTie    = (rawIsTie || tieBreakerLive) && !resolvedByTieBreaker
+  const isTie    = ended && (rawIsTie || tieBreakerLive) && !resolvedByTieBreaker
   const winnerId = resolvedByTieBreaker ?? (ended && !noVotes && !rawIsTie ? sorted[0]?.contestantId ?? null : null)
   const tiedIds  = tieBreakerLive ? (liveState?.contestantIds ?? []) : tiedTop.map((c) => c.contestantId)
 
@@ -296,9 +308,8 @@ function CategoryStandingsPanel({
   const [open, setOpen] = useState(depth === 0)
   const hasSubcategories = (category.subcategories ?? []).length > 0
   const isLeaf = !hasSubcategories
-  const totalVotes = isLeaf
-    ? (category.contestants ?? []).reduce((s, c) => s + (c.votes ?? 0), 0)
-    : 0
+  const leafContestants = isLeaf ? toContestantArray(category.contestants) : []
+  const totalVotes = isLeaf ? sumContestantVotes(category.contestants) : 0
 
   const bgClass = depth === 0
     ? "bg-white border-gray-200"
@@ -321,7 +332,7 @@ function CategoryStandingsPanel({
             <p className="text-xs text-gray-400 mt-0.5">
               {hasSubcategories
                 ? `${category.subcategories.length} sub-categor${category.subcategories.length === 1 ? "y" : "ies"}`
-                : `${category.contestants.length} contestant${category.contestants.length !== 1 ? "s" : ""} · ${category.pollPrice > 0 ? `₦${category.pollPrice.toLocaleString()}/vote` : "Free"} · ${totalVotes.toLocaleString()} votes`}
+                : `${leafContestants.length} contestant${leafContestants.length !== 1 ? "s" : ""} · ${category.pollPrice > 0 ? `₦${category.pollPrice.toLocaleString()}/vote` : "Free"} · ${totalVotes.toLocaleString()} votes`}
             </p>
           </div>
         </div>
@@ -473,6 +484,32 @@ export default function PollManagePage() {
   const [copied,        setCopied]        = useState(false)
   const [showEventMenu, setShowEventMenu] = useState(false)
 
+  // ── Download Result (results PDF) ───────────────────────────────────────
+  const [resultStatus, setResultStatus]   = useState<"idle" | "preparing" | "ready" | "error">("idle")
+  const [resultUrl,    setResultUrl]      = useState<string | null>(null)
+  const [resultError,  setResultError]    = useState<string | null>(null)
+  const [showResultDialog, setShowResultDialog] = useState(false)
+
+  const handleDownloadResult = async () => {
+    setShowResultDialog(true)
+    setResultStatus("preparing")
+    setResultError(null)
+    try {
+      const res  = await authFetch(`/api/polls/${pollId}/results`, { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) {
+        setResultStatus("error")
+        setResultError(data.error || "Something went wrong. Please try again.")
+        return
+      }
+      setResultUrl(data.downloadUrl)
+      setResultStatus("ready")
+    } catch {
+      setResultStatus("error")
+      setResultError("Something went wrong. Please try again.")
+    }
+  }
+
   const handleShare = async () => {
     const url = `https://polls.spotix.com.ng/poll/${encodeURIComponent(poll?.id ?? "")}`
     try {
@@ -508,6 +545,22 @@ export default function PollManagePage() {
         const found = (data.polls ?? []).find((p: Poll) => p.id === pollId)
         if (!found) { router.push("/polls"); return }
         setPoll(found)
+
+        // If a report was already generated on a previous visit, reflect
+        // that immediately instead of making the organizer click Download
+        // Result again just to find out one exists.
+        try {
+          const rRes = await authFetch(`/api/polls/${pollId}/results`)
+          if (rRes.ok) {
+            const rData = await rRes.json()
+            if (rData.exists && rData.status === "ready") {
+              setResultUrl(rData.downloadUrl)
+              setResultStatus("ready")
+            }
+          }
+        } catch {
+          // Non-fatal — organizer can still generate a report on demand.
+        }
       }
       setLoading(false)
     }
@@ -534,18 +587,18 @@ export default function PollManagePage() {
   function sumCategoryVotes(cats: CategoryNode[]): number {
     return cats.reduce((sum, cat) => {
       if ((cat.subcategories ?? []).length > 0) return sum + sumCategoryVotes(cat.subcategories)
-      return sum + (cat.contestants ?? []).reduce((s, c) => s + (c.votes ?? 0), 0)
+      return sum + sumContestantVotes(cat.contestants)
     }, 0)
   }
-  function countContestants(cats: CategoryNode[]): number {
+  function countContestantsInTree(cats: CategoryNode[]): number {
     return cats.reduce((sum, cat) => {
-      if ((cat.subcategories ?? []).length > 0) return sum + countContestants(cat.subcategories)
-      return sum + (cat.contestants ?? []).length
+      if ((cat.subcategories ?? []).length > 0) return sum + countContestantsInTree(cat.subcategories)
+      return sum + countContestantsField(cat.contestants)
     }, 0)
   }
 
   const totalVotes = isGroup ? (poll.pollCount ?? sumCategoryVotes(poll.categories ?? [])) : (poll.pollCount ?? 0)
-  const contestantCount = isGroup ? countContestants(poll.categories ?? []) : (poll.contestants?.length ?? 0)
+  const contestantCount = isGroup ? countContestantsInTree(poll.categories ?? []) : countContestantsField(poll.contestants)
 
   const tieBreakerConfig: TieBreakerConfig = {
     enabled:  poll.enabledTieBreaker ?? false,
@@ -687,9 +740,87 @@ export default function PollManagePage() {
               >
                 <Banknote className="w-4 h-4" /> Payout
               </Link>
+              <button
+                onClick={handleDownloadResult}
+                disabled={status !== "ended" || resultStatus === "preparing"}
+                title={status !== "ended" ? "Available once the poll ends" : undefined}
+                className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors min-w-[100px]
+                  bg-white border border-[#6b2fa5]/30 text-[#6b2fa5] hover:bg-[#6b2fa5]/5
+                  disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+              >
+                {resultStatus === "preparing"
+                  ? <><Loader className="w-4 h-4 animate-spin" /> Preparing…</>
+                  : <><FileDown className="w-4 h-4" /> {resultStatus === "ready" ? "Download Report" : "Download Result"}</>
+                }
+              </button>
             </div>
+
+            {status !== "ended" && (
+              <p className="text-xs text-gray-400 mt-2">
+                Results can be generated once this poll ends ({poll.pollEndDate} · {poll.pollEndTime}).
+              </p>
+            )}
           </div>
         </div>
+
+        {/* Download Result dialog */}
+        {showResultDialog && (
+          <div className="fixed inset-0 z-[300] bg-black/40 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-xl max-w-sm w-full p-6 relative">
+              <button
+                onClick={() => setShowResultDialog(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {resultStatus === "preparing" && (
+                <>
+                  <div className="w-11 h-11 rounded-full bg-[#6b2fa5]/10 flex items-center justify-center mb-4">
+                    <Loader className="w-5 h-5 text-[#6b2fa5] animate-spin" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">Preparing your results</h3>
+                  <p className="text-sm text-gray-500">We are preparing the results. Check back later.</p>
+                </>
+              )}
+
+              {resultStatus === "ready" && (
+                <>
+                  <div className="w-11 h-11 rounded-full bg-green-100 flex items-center justify-center mb-4">
+                    <FileDown className="w-5 h-5 text-green-600" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">We have generated your report</h3>
+                  <p className="text-sm text-gray-500 mb-4">Click to download the results PDF.</p>
+                  <a
+                    href={resultUrl ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setShowResultDialog(false)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#6b2fa5] text-white rounded-xl text-sm font-semibold hover:bg-[#5a1f8a] transition-colors"
+                  >
+                    <FileDown className="w-4 h-4" /> Click to download
+                  </a>
+                </>
+              )}
+
+              {resultStatus === "error" && (
+                <>
+                  <div className="w-11 h-11 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                    <AlertTriangle className="w-5 h-5 text-red-600" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">Couldn't generate results</h3>
+                  <p className="text-sm text-gray-500 mb-4">{resultError || "Something went wrong. Please try again."}</p>
+                  <button
+                    onClick={handleDownloadResult}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#6b2fa5] text-white rounded-xl text-sm font-semibold hover:bg-[#5a1f8a] transition-colors"
+                  >
+                    Try again
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex items-center gap-2 mb-4 bg-white border border-gray-200 rounded-xl p-1.5 w-fit">
