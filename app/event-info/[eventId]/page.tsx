@@ -79,7 +79,11 @@ interface AttendeeData {
 
 interface DiscountData {
   id?: string; code: string; type: "percentage" | "flat"
-  value: number; maxUses: number; usedCount: number; active: boolean
+  /** "" while the create-form field is empty — never coerced to 0 so the
+   *  input can actually be cleared. Always a number once submitted. */
+  value: number | ""; maxUses: number; usedCount: number; active: boolean
+  applicableTickets?: string[] | null
+  expiryDate?: string | null
 }
 
 type CollabRole = "admin" | "checkin" | "accountant" | string
@@ -194,7 +198,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   const [cacheInfo, setCacheInfo]         = useState<{ isCached: boolean; remainingTime: number | null }>({ isCached: false, remainingTime: null })
   const [activeTab, setActiveTab]         = useState<TabId>("overview")
   const [loadedTabs, setLoadedTabs]       = useState<Set<string>>(new Set(["overview"]))
-  const [newDiscount, setNewDiscount]     = useState<DiscountData>({ code: "", type: "percentage", value: 0, maxUses: 1, usedCount: 0, active: true })
+  const [newDiscount, setNewDiscount]     = useState<DiscountData>({ code: "", type: "percentage", value: "", maxUses: 1, usedCount: 0, active: true, applicableTickets: [], expiryDate: "" })
 
   const [isOwner, setIsOwner]             = useState(false)
   const [collabInfo, setCollabInfo]       = useState<CollabInfo | null>(null)
@@ -212,6 +216,21 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     attendees.forEach((a) => { tc[a.ticketType] = (tc[a.ticketType] || 0) + 1 })
     return Object.keys(tc).map((type) => ({ type, count: tc[type] }))
   }, [eventData, attendees])
+
+  // Ticket policy names available on this event — used by the Discounts tab
+  // to let the booker scope a coupon to specific ticket tiers.
+  const ticketPolicies = useMemo(
+    () => (eventData?.ticketPrices ?? []).map((t) => t.policy).filter(Boolean),
+    [eventData]
+  )
+
+  // Full policy+price pairs — used by the Discounts tab to cap a coupon's
+  // value against the ticket(s) it applies to (a flat discount can't
+  // exceed, or give away too much of, the ticket price).
+  const ticketPricesForDiscounts = useMemo(
+    () => (eventData?.ticketPrices ?? []).filter((t) => t?.policy).map((t) => ({ policy: t.policy, price: Number(t.price) || 0 })),
+    [eventData]
+  )
 
   const handleTabSwitch = (tab: TabId) => {
     if (!visibleTabs.includes(tab)) return
@@ -416,18 +435,37 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   // ── Discounts ──────────────────────────────────────────────────────────────
   const handleDiscountInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target
+    if (name === "value") {
+      // Discount value: allow the field to sit empty (never coerced to 0,
+      // which is what made the "0" un-clearable before) and only accept
+      // plain non-negative numbers as the user types.
+      if (value !== "" && !/^\d*\.?\d*$/.test(value)) return
+      setNewDiscount((prev) => ({ ...prev, value: value === "" ? "" : Number(value) }))
+      return
+    }
     setNewDiscount((prev) => ({ ...prev, [name]: type === "number" ? Number(value) : value }))
   }
 
   const handleAddDiscount = async () => {
     if (!newDiscount.code.trim()) { alert("Please enter a discount code."); return }
+    if (newDiscount.value === "" || typeof newDiscount.value !== "number") { alert("Please enter a discount value."); return }
     setSaving(true)
     try {
-      const res  = await authFetch(`/api/event/list/${eventId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "addDiscount", ...newDiscount }) })
+      const res  = await authFetch(`/api/event/list/${eventId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "addDiscount",
+          ...newDiscount,
+          value: newDiscount.value,
+          applicableTickets: newDiscount.applicableTickets && newDiscount.applicableTickets.length > 0 ? newDiscount.applicableTickets : null,
+          expiryDate: newDiscount.expiryDate || null,
+        }),
+      })
       const data = await res.json()
       if (!res.ok) { alert(data.error ?? "Failed to add discount."); return }
       setDiscounts((prev) => [...prev, data.discount])
-      setNewDiscount({ code: "", type: "percentage", value: 0, maxUses: 1, usedCount: 0, active: true })
+      setNewDiscount({ code: "", type: "percentage", value: "", maxUses: 1, usedCount: 0, active: true, applicableTickets: [], expiryDate: "" })
       alert("Discount code added successfully!")
     } catch { alert("Failed to add discount code.") }
     finally { setSaving(false) }
@@ -443,6 +481,26 @@ function EventInfoInner({ eventId }: { eventId: string }) {
       if (!res.ok) { alert(data.error ?? "Failed."); return }
       setDiscounts((prev) => prev.map((d, i) => i === index ? { ...d, active: data.active } : d))
     } catch { alert("Failed.") }
+    finally { setSaving(false) }
+  }
+
+  // Lets the booker change value/maxUses/expiry/ticket-scope on an existing
+  // coupon — see DiscountsTab's edit dialog. Code and usedCount stay fixed.
+  const handleEditDiscount = async (
+    discountId: string,
+    updates: { value?: number; maxUses?: number; expiryDate?: string | null; applicableTickets?: string[] | null }
+  ) => {
+    setSaving(true)
+    try {
+      const res = await authFetch(`/api/event/list/${eventId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "editDiscount", discountId, ...updates }),
+      })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error ?? "Failed to update discount."); return }
+      setDiscounts((prev) => prev.map((d) => (d.id === discountId ? { ...d, ...data.discount } : d)))
+    } catch { alert("Failed to update discount.") }
     finally { setSaving(false) }
   }
 
@@ -740,7 +798,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
 
             {activeTab === "discounts" && visibleTabs.includes("discounts") && (
               loadedTabs.has("discounts")
-                ? <DiscountsTab discounts={discounts} newDiscount={newDiscount} handleDiscountInputChange={handleDiscountInputChange} handleAddDiscount={handleAddDiscount} handleToggleDiscountStatus={handleToggleDiscountStatus} />
+                ? <DiscountsTab discounts={discounts.map((discount) => ({ ...discount, value: discount.value === "" ? 0 : discount.value }))} newDiscount={newDiscount} setNewDiscount={setNewDiscount} ticketPolicies={ticketPolicies} ticketPrices={ticketPricesForDiscounts} handleDiscountInputChange={handleDiscountInputChange} handleAddDiscount={handleAddDiscount} handleToggleDiscountStatus={handleToggleDiscountStatus} handleEditDiscount={handleEditDiscount} />
                 : <TabSkeleton />
             )}
 

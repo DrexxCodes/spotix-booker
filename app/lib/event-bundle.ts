@@ -71,6 +71,8 @@ export async function buildEventBundle(
       maxUses: dc.maxUses ?? 1,
       usedCount: dc.usedCount ?? 0,
       active: dc.active !== false,
+      expiryDate: dc.expiryDate ?? null,
+      applicableTickets: dc.applicableTickets ?? null,
     }
   })
 

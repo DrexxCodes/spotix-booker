@@ -47,6 +47,52 @@ function fail(message: string, status: number) {
   )
 }
 
+// ─── Discount value rules ──────────────────────────────────────────────────
+// A coupon can never discount away more than a booker would sensibly give
+// up: percentage discounts are capped at 90%, and flat discounts are capped
+// at 90% of the highest-priced ticket tier the coupon applies to (falling
+// back to the event's highest tier overall when the coupon isn't scoped).
+// Enforced server-side because the client form is just UX — this is the
+// actual guard against a manipulated/direct API call.
+function getMaxApplicablePrice(
+  ticketPrices: { policy: string; price: number }[],
+  applicableTickets: string[] | null | undefined
+): number {
+  const relevant =
+    applicableTickets && applicableTickets.length > 0
+      ? ticketPrices.filter((t) => applicableTickets.includes(t.policy))
+      : ticketPrices
+  return relevant.reduce((max, t) => Math.max(max, Number(t.price) || 0), 0)
+}
+
+function validateDiscountValue(
+  type: "percentage" | "flat",
+  value: number,
+  ticketPrices: { policy: string; price: number }[],
+  applicableTickets: string[] | null | undefined
+): string | null {
+  if (type === "percentage") {
+    if (value > 90) return "Percentage discounts can't exceed 90%."
+    return null
+  }
+  const maxPrice = getMaxApplicablePrice(ticketPrices, applicableTickets)
+  if (maxPrice <= 0) return "This event has no priced ticket tiers to discount."
+  if (value > maxPrice) {
+    return `There's no ticket listed that costs that much — the highest applicable ticket is ₦${maxPrice.toLocaleString("en-NG")}.`
+  }
+  const cap = maxPrice * 0.9
+  if (value > cap) {
+    return `A flat discount can't give away more than 90% of your highest applicable ticket price (₦${cap.toLocaleString("en-NG")}).`
+  }
+  return null
+}
+
+function eventTicketPricesFrom(eventSnap: FirebaseFirestore.DocumentSnapshot): { policy: string; price: number }[] {
+  return ((eventSnap.data()?.ticketPrices ?? []) as any[])
+    .filter((t) => t?.policy)
+    .map((t) => ({ policy: t.policy as string, price: Number(t.price) || 0 }))
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function authenticate(): Promise<{ userId: string } | NextResponse> {
   const cookieStore = await cookies()
@@ -334,6 +380,91 @@ export async function PATCH(
     }
   }
 
+  // -- action: editDiscount -----------------------------------------------
+  // Lets the booker change availability (maxUses/active), expiry, and
+  // which ticket types a coupon applies to, without recreating the code.
+  // usedCount and code are immutable here on purpose — usedCount is
+  // system-maintained (see /api/v1/atomic in spotix-user), and changing
+  // the code itself would silently orphan the value the buyer already saw.
+  if (action === "editDiscount") {
+    const { discountId, value, maxUses, active, expiryDate, applicableTickets } = body
+    if (!discountId) return fail("discountId is required", 400)
+
+    const discountRef = eventRef.collection("discounts").doc(discountId)
+    const discountSnap = await discountRef.get()
+    if (!discountSnap.exists) return fail("Discount not found", 404)
+
+    const update: Record<string, any> = { updatedAt: FieldValue.serverTimestamp() }
+    const eventTicketPrices = eventTicketPricesFrom(access.eventSnap)
+
+    // Resolved before the value check below, since a flat discount's cap
+    // depends on which tickets it applies to — including a scope change
+    // made in this same request.
+    let effectiveApplicableTickets: string[] | null = discountSnap.data()?.applicableTickets ?? null
+
+    if (applicableTickets !== undefined) {
+      if (applicableTickets === null) {
+        update.applicableTickets = null
+        effectiveApplicableTickets = null
+      } else {
+        if (!Array.isArray(applicableTickets) || applicableTickets.some((t) => typeof t !== "string")) {
+          return fail("applicableTickets must be an array of ticket policy names", 400)
+        }
+        const eventTicketPolicies: string[] = eventTicketPrices.map((t) => t.policy)
+        const invalid = applicableTickets.filter((t: string) => !eventTicketPolicies.includes(t))
+        if (invalid.length > 0) return fail(`Unknown ticket type(s): ${invalid.join(", ")}`, 400)
+        update.applicableTickets = applicableTickets.length > 0 ? applicableTickets : null
+        effectiveApplicableTickets = update.applicableTickets
+      }
+    }
+
+    if (value !== undefined) {
+      if (typeof value !== "number" || value < 0) return fail("value must be a non-negative number", 400)
+      const discountType = discountSnap.data()?.type as "percentage" | "flat"
+      const valueError = validateDiscountValue(discountType, value, eventTicketPrices, effectiveApplicableTickets)
+      if (valueError) return fail(valueError, 400)
+      update.value = value
+    }
+    if (maxUses !== undefined) {
+      if (typeof maxUses !== "number" || maxUses < 1) return fail("maxUses must be at least 1", 400)
+      update.maxUses = maxUses
+    }
+    if (active !== undefined) update.active = Boolean(active)
+
+    if (expiryDate !== undefined) {
+      if (expiryDate === null || expiryDate === "") {
+        update.expiryDate = null
+      } else {
+        const parsed = new Date(expiryDate)
+        if (Number.isNaN(parsed.getTime())) return fail("expiryDate must be a valid date", 400)
+        update.expiryDate = parsed.toISOString()
+      }
+    }
+
+    try {
+      await discountRef.update(update)
+      const fresh = await discountRef.get()
+      const d = fresh.data()!
+      return ok({
+        message: "Discount updated successfully",
+        discount: {
+          id: fresh.id,
+          code: d.code,
+          type: d.type,
+          value: d.value,
+          maxUses: d.maxUses,
+          usedCount: d.usedCount ?? 0,
+          active: d.active !== false,
+          expiryDate: d.expiryDate ?? null,
+          applicableTickets: d.applicableTickets ?? null,
+        },
+      })
+    } catch (e: any) {
+      console.error("[PATCH editDiscount] failed", e)
+      return fail("Failed to update discount", 500)
+    }
+  }
+
   return fail(`Unknown action: ${action}`, 400)
 }
 
@@ -360,11 +491,13 @@ export async function POST(
   if (access instanceof NextResponse) return access
   const eventRef = access.eventRef
 
-  const { code, type, value, maxUses, usedCount, active } = body
+  const { code, type, value, maxUses, usedCount, active, expiryDate, applicableTickets } = body
 
   if (!code?.trim()) return fail("code is required", 400)
   if (!["percentage", "flat"].includes(type)) return fail("type must be 'percentage' or 'flat'", 400)
   if (typeof value !== "number" || value < 0) return fail("value must be a non-negative number", 400)
+
+  const eventTicketPrices = eventTicketPricesFrom(access.eventSnap)
 
   // Check for duplicate code (case-insensitive)
   const existing = await eventRef
@@ -380,6 +513,33 @@ export async function POST(
   )
   if (duplicate) return fail("A discount with this code already exists", 409)
 
+  // applicableTickets: which ticket policies this coupon can be applied to.
+  // Empty/omitted = every ticket type on the event. Validated against the
+  // event's own ticketPrices so a booker can't scope a coupon to a policy
+  // name that doesn't exist (e.g. a typo, or a tier removed since).
+  let normalizedApplicableTickets: string[] | null = null
+  if (Array.isArray(applicableTickets) && applicableTickets.length > 0) {
+    if (applicableTickets.some((t: unknown) => typeof t !== "string")) {
+      return fail("applicableTickets must be an array of ticket policy names", 400)
+    }
+    const eventTicketPolicies: string[] = eventTicketPrices.map((t) => t.policy)
+    const invalid = applicableTickets.filter((t: string) => !eventTicketPolicies.includes(t))
+    if (invalid.length > 0) return fail(`Unknown ticket type(s): ${invalid.join(", ")}`, 400)
+    normalizedApplicableTickets = applicableTickets
+  }
+
+  const valueError = validateDiscountValue(type, value, eventTicketPrices, normalizedApplicableTickets)
+  if (valueError) return fail(valueError, 400)
+
+  // expiryDate: optional. Stored as an ISO string so the buyer-side
+  // validation route (spotix-user's /api/v1/discount) can just `new Date(...)` it.
+  let normalizedExpiryDate: string | null = null
+  if (expiryDate) {
+    const parsed = new Date(expiryDate)
+    if (Number.isNaN(parsed.getTime())) return fail("expiryDate must be a valid date", 400)
+    normalizedExpiryDate = parsed.toISOString()
+  }
+
   const discountDoc = {
     code: code.trim(),
     type,
@@ -387,6 +547,8 @@ export async function POST(
     maxUses: maxUses ?? 1,
     usedCount: usedCount ?? 0,
     active: active !== false,
+    expiryDate: normalizedExpiryDate,
+    applicableTickets: normalizedApplicableTickets,
     createdAt: FieldValue.serverTimestamp(),
   }
 
