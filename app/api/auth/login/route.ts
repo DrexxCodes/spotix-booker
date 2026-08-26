@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 
       if (!firebaseResponse.ok) {
         const firebaseError = await firebaseResponse.json()
-        console.warn("Firebase login failed:", firebaseError)
+        console.warn("Spotix Booker login failed:", firebaseError)
 
         const msg: string = firebaseError.error?.message ?? ""
         if (msg.includes("INVALID_LOGIN_CREDENTIALS") || msg.includes("INVALID_PASSWORD") || msg.includes("EMAIL_NOT_FOUND")) {
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
       userId = firebaseData.localId
     } catch (firebaseErr) {
       console.error("Firebase authentication error:", firebaseErr)
-      return err("SERVER_ERROR", "Failed to authenticate with Firebase", 500)
+      return err("SERVER_ERROR", "Failed to authenticate with the server", 500)
     }
 
     // Step 2: Fetch user document to check if they're a booker

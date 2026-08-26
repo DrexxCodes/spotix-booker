@@ -544,6 +544,28 @@ export default function PollManagePage() {
         const data = await res.json()
         const found = (data.polls ?? []).find((p: Poll) => p.id === pollId)
         if (!found) { router.push("/polls"); return }
+
+        // /api/polls/list deliberately returns categories: [] for every
+        // poll (it can return dozens of polls per call and fetching each
+        // one's full category subcollection there would be expensive —
+        // see that route's comments). This page only ever shows ONE poll,
+        // so for a group poll it's cheap to fetch the real tree from
+        // /api/polls/one and merge it in — without this, a group poll's
+        // "Standings" section always rendered as if it had no categories
+        // or contestants at all.
+        if (found.pollType === "group") {
+          try {
+            const oneRes = await authFetch(`/api/polls/one?pollId=${encodeURIComponent(pollId)}`)
+            if (oneRes.ok) {
+              const oneData = await oneRes.json()
+              found.categories = oneData.poll?.categories ?? []
+              found.contestantsTBD = oneData.poll?.contestantsTBD ?? found.contestantsTBD
+            }
+          } catch {
+            // Non-fatal — page still renders, just without categories.
+          }
+        }
+
         setPoll(found)
 
         // If a report was already generated on a previous visit, reflect

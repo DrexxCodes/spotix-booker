@@ -28,6 +28,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
+import { countTreeContestants } from "@/lib/poll-categories"
 import { Timestamp } from "firebase-admin/firestore"
 
 const DEV_TAG = "spotix-api-v1"
@@ -91,7 +92,14 @@ function shapePoll(
     // on-demand from /api/polls/one instead.
     pollType:        d.pollType        ?? "single",
     categories:      [] as any[],
+    // Denormalized total contestant count across the whole category tree —
+    // kept up to date by writeCategoryTree() in lib/poll-categories.ts on
+    // every create/edit. Falls back to counting the legacy `categories`
+    // array field for a group poll that hasn't been saved since that field
+    // was introduced, so older polls don't show 0 entrants either.
+    contestantTotal: d.contestantTotal ?? (Array.isArray(d.categories) ? countTreeContestants(d.categories) : 0),
     statsVisible:    d.statsVisible    ?? true,
+    contestantsTBD:  d.contestantsTBD  ?? false,
     creatorId:       d.creatorId       ?? d.organizerId ?? "",
     organizerId:     d.organizerId     ?? d.creatorId   ?? "",
     createdAt:       toIso(d.createdAt),

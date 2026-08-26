@@ -147,6 +147,51 @@ export interface CategoryNode {
   subcategories?: CategoryNode[]
 }
 
+// ── Configurable per-poll overrides ───────────────────────────────────────────
+
+/**
+ * A poll may carry a `limitsOverride` object on its Firestore doc (set from
+ * the Spotix Admin dashboard's Votes → Structure Limits panel — see
+ * spotix-admin/app/lib/poll-limits.ts and
+ * spotix-admin/app/api/v1/admin-polls/limits/route.ts). Any field left
+ * undefined/null falls back to the platform default constant above.
+ *
+ * Only full admins can write this (customer-support has view-only access
+ * to it) — see the admin route's role check.
+ */
+export interface PollLimitsOverride {
+  maxSingleContestants?: number | null
+  maxGroupTopCategories?: number | null
+  maxGroupTotalSubcategories?: number | null
+  maxContestantsPerCategory?: number | null
+}
+
+export interface ResolvedPollLimits {
+  maxSingleContestants: number
+  maxGroupTopCategories: number
+  maxGroupTotalSubcategories: number
+  maxContestantsPerCategory: number
+}
+
+/**
+ * Resolves the effective limits for a poll: an admin-set override field
+ * wins wherever it's a positive finite number, otherwise the platform
+ * default constant applies. Pass `poll.limitsOverride` (or undefined for a
+ * brand-new poll being created, which always uses the platform defaults —
+ * there's nothing to override yet).
+ */
+export function resolvePollLimits(override?: PollLimitsOverride | null): ResolvedPollLimits {
+  const pick = (v: number | null | undefined, fallback: number) =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback
+
+  return {
+    maxSingleContestants:       pick(override?.maxSingleContestants,       MAX_SINGLE_CONTESTANTS),
+    maxGroupTopCategories:      pick(override?.maxGroupTopCategories,      MAX_GROUP_TOP_CATEGORIES),
+    maxGroupTotalSubcategories: pick(override?.maxGroupTotalSubcategories, MAX_GROUP_TOTAL_SUBCATEGORIES),
+    maxContestantsPerCategory:  pick(override?.maxContestantsPerCategory,  MAX_CONTESTANTS_PER_CATEGORY),
+  }
+}
+
 // ── Display helpers (used by UI components) ───────────────────────────────────
 
 /** Human-readable summary of the group-poll structure limits. */

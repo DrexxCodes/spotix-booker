@@ -1,13 +1,18 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Clock3, Layers } from "lucide-react"
+import { Plus, Clock3, Layers, FileJson } from "lucide-react"
 import { ContestantRow } from "./ContestantRow"
 import { CategoryBlock } from "./CategoryBlock"
 import { ImportNomineesDialog } from "./ImportNomineesDialog"
 import { ImportNomineesCategoryDialog } from "./ImportNomineesCategoryDialog"
+import { FillWithJsonDialog } from "./FillWithJsonDialog"
 import { emptyContestant, emptyCategory, type ContestantForm, type CategoryForm } from "../lib/factories"
-import { MAX_SINGLE_CONTESTANTS } from "@/lib/poll-config"
+import {
+  MAX_SINGLE_CONTESTANTS, MAX_GROUP_TOP_CATEGORIES,
+  MAX_GROUP_TOTAL_SUBCATEGORIES, MAX_CONTESTANTS_PER_CATEGORY,
+  countSubcategories,
+} from "@/lib/poll-config"
 
 interface ContestantsStepProps {
   pollType: "single" | "group"
@@ -30,6 +35,10 @@ export function ContestantsStep({
   // "root" = top-level category list, otherwise a categoryId whose
   // subcategories slot should receive the imported categories.
   const [importCategoriesTarget, setImportCategoriesTarget] = useState<string | null>(null)
+
+  // "Fill with JSON" — always targets the root: flat contestants for single
+  // polls, top-level categories for group polls. See FillWithJsonDialog.
+  const [showJsonDialog, setShowJsonDialog] = useState(false)
 
   const tbdToggle = (
     <label className="flex items-start gap-3 bg-purple-50 border border-purple-100 rounded-xl p-4 cursor-pointer select-none mb-4">
@@ -100,12 +109,28 @@ export function ContestantsStep({
           >
             Import from Nominees
           </button>
+          <button
+            onClick={() => setShowJsonDialog(true)}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-600 border border-slate-300 hover:border-[#6b2fa5] hover:text-[#6b2fa5] px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <FileJson className="w-3.5 h-3.5" /> Fill with JSON
+          </button>
         </div>
 
         {importTarget && (
           <ImportNomineesDialog
             onClose={() => setImportTarget(null)}
             onImport={(imported) => setContestants([...contestants, ...imported])}
+          />
+        )}
+
+        {showJsonDialog && (
+          <FillWithJsonDialog
+            pollType="single"
+            existingContestantsCount={contestants.length}
+            maxSingleContestants={MAX_SINGLE_CONTESTANTS}
+            onImportContestants={(imported) => setContestants([...contestants, ...imported])}
+            onClose={() => setShowJsonDialog(false)}
           />
         )}
       </div>
@@ -162,6 +187,12 @@ export function ContestantsStep({
         >
           <Layers className="w-3.5 h-3.5" /> Import Categories
         </button>
+        <button
+          onClick={() => setShowJsonDialog(true)}
+          className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-[#6b2fa5] px-3 py-2 rounded-lg border border-dashed border-slate-300 hover:border-[#6b2fa5] transition-colors"
+        >
+          <FileJson className="w-3.5 h-3.5" /> Fill with JSON
+        </button>
       </div>
 
       {importTarget && (
@@ -181,6 +212,19 @@ export function ContestantsStep({
                 : injectImportedCategories(categories, importCategoriesTarget, imported)
             )
           }
+        />
+      )}
+
+      {showJsonDialog && (
+        <FillWithJsonDialog
+          pollType="group"
+          existingTopCount={categories.length}
+          existingTotalSubcount={countSubcategories(categories)}
+          maxGroupTopCategories={MAX_GROUP_TOP_CATEGORIES}
+          maxGroupTotalSubcategories={MAX_GROUP_TOTAL_SUBCATEGORIES}
+          maxContestantsPerCategory={MAX_CONTESTANTS_PER_CATEGORY}
+          onImportCategories={(imported) => setCategories([...categories, ...imported])}
+          onClose={() => setShowJsonDialog(false)}
         />
       )}
     </div>

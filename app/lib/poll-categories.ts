@@ -146,6 +146,28 @@ export function flattenTreeToMap(tree: any[]): Map<string, any> {
   return map
 }
 
+/**
+ * Counts every contestant across a nested category tree (leaf categories
+ * only — a branch category's own `contestants` field is always empty per
+ * flattenCategoryTree above). Used to keep a denormalized total on the
+ * parent poll doc (see `contestantTotal` in writeCategoryTree) so list
+ * endpoints like /api/polls/list can show an accurate "Entrants" count for
+ * group polls without fetching each poll's full category subcollection.
+ */
+export function countTreeContestants(tree: any[]): number {
+  let total = 0
+  for (const node of tree ?? []) {
+    const subs = node.subcategories ?? []
+    if (subs.length > 0) {
+      total += countTreeContestants(subs)
+    } else {
+      const c = node.contestants
+      total += Array.isArray(c) ? c.length : (c && typeof c === "object" ? Object.keys(c).length : 0)
+    }
+  }
+  return total
+}
+
 // ─── Reads ──────────────────────────────────────────────────────────────────
 
 /**
@@ -241,7 +263,19 @@ export async function writeCategoryTree(pollId: string, tree: any[]): Promise<vo
   // Poll is now fully subcollection-backed — drop the legacy array so it
   // can't grow back into the "too large to display" state, and so
   // fetchCategoryTree() stops treating this poll as unmigrated.
-  batch.update(pollRef, { categories: FieldValue.delete(), updatedAt: now })
+  //
+  // contestantTotal is a denormalized count of every contestant across the
+  // whole tree, kept in sync here so /api/polls/list (which never reads
+  // the categories subcollection, for perf reasons — see that route) can
+  // still show an accurate "Entrants" stat for group polls. Previously
+  // there was no such field, so the booker dashboard's poll cards always
+  // read the poll's flat `contestants` field for this — which is empty for
+  // every group poll — and showed 0 entrants regardless of the real count.
+  batch.update(pollRef, {
+    categories: FieldValue.delete(),
+    contestantTotal: countTreeContestants(tree),
+    updatedAt: now,
+  })
 
   await batch.commit()
   await invalidateCategoryTreeCache(pollId)

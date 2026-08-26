@@ -28,10 +28,13 @@ export interface PayoutMethodSnapshot {
 export interface CreatePayoutRowInput {
   isEvent: boolean
   isPoll: boolean
+  isElection?: boolean
   eventId?: string | null
   pollId?: string | null
+  electionId?: string | null
   eventName?: string | null
   pollName?: string | null
+  electionName?: string | null
   payDate: string
   userId: string
   amount: number
@@ -44,10 +47,13 @@ export interface PayoutRow {
   reference: string
   is_event: boolean
   is_poll: boolean
+  is_election: boolean
   event_id: string | null
   poll_id: string | null
+  election_id: string | null
   event_name: string | null
   poll_name: string | null
+  election_name: string | null
   pay_date: string
   user_id: string
   amount: number
@@ -81,8 +87,10 @@ export async function createInitializingPayout(input: CreatePayoutRowInput): Pro
   const narration = buildNarration({
     isEvent: input.isEvent,
     isPoll: input.isPoll,
+    isElection: input.isElection ?? false,
     eventName: input.eventName,
     pollName: input.pollName,
+    electionName: input.electionName,
     payDate: input.payDate,
   })
 
@@ -92,10 +100,13 @@ export async function createInitializingPayout(input: CreatePayoutRowInput): Pro
       reference,
       is_event: input.isEvent,
       is_poll: input.isPoll,
+      is_election: input.isElection ?? false,
       event_id: input.eventId ?? null,
       poll_id: input.pollId ?? null,
+      election_id: input.electionId ?? null,
       event_name: input.eventName ?? null,
       poll_name: input.pollName ?? null,
+      election_name: input.electionName ?? null,
       pay_date: input.payDate,
       user_id: input.userId,
       amount: input.amount,
@@ -141,6 +152,16 @@ export async function getPayoutsForPoll(pollId: string): Promise<PayoutRow[]> {
   return (data ?? []) as PayoutRow[]
 }
 
+export async function getPayoutsForElection(electionId: string): Promise<PayoutRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("payouts")
+    .select("*")
+    .eq("election_id", electionId)
+    .order("created_at", { ascending: false })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as PayoutRow[]
+}
+
 export async function getPayoutByReference(reference: string): Promise<PayoutRow | null> {
   const { data, error } = await supabaseAdmin
     .from("payouts")
@@ -160,11 +181,13 @@ export async function getPayoutByReference(reference: string): Promise<PayoutRow
  * poisoned).
  */
 export async function hasActiveOrSuccessfulPayout(
-  scope: { eventId?: string; pollId?: string },
+  scope: { eventId?: string; pollId?: string; electionId?: string },
   payDate: string
 ): Promise<boolean> {
   let query = supabaseAdmin.from("payouts").select("id, status").eq("pay_date", payDate)
-  query = scope.eventId ? query.eq("event_id", scope.eventId) : query.eq("poll_id", scope.pollId!)
+  if (scope.eventId) query = query.eq("event_id", scope.eventId)
+  else if (scope.pollId) query = query.eq("poll_id", scope.pollId)
+  else query = query.eq("election_id", scope.electionId!)
 
   const { data, error } = await query
   if (error) throw new Error(error.message)

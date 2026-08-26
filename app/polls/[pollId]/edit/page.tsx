@@ -10,13 +10,12 @@ import {
   Loader, Loader2, ArrowLeft, Save, AlertCircle, CheckCircle, ImageIcon,
   Info, Calendar, Users, Plus, Trash2, ChevronRight, ChevronLeft,
   Layers, FolderPlus, Tag, ChevronDown, ChevronUp, ToggleLeft, ToggleRight,
-  Download, User, ImagePlus, Wand2, UserCog, BarChart3, Crown, ShieldCheck,
+  Download, User, ImagePlus, Wand2, UserCog, BarChart3, Crown, ShieldCheck, FileJson,
 } from "lucide-react"
 import type { CategoryForm as CreateCategoryForm } from "../../create/lib/factories"
 import {
   MIN_VOTE_PRICE, MAX_VOTE_PRICE,
-  MAX_SINGLE_CONTESTANTS, MAX_GROUP_TOP_CATEGORIES,
-  MAX_GROUP_TOTAL_SUBCATEGORIES, MAX_CONTESTANTS_PER_CATEGORY,
+  resolvePollLimits, type ResolvedPollLimits,
   countSubcategories,
 } from "@/lib/poll-config"
 // Reuse the exact same ID-generation, upload, and dialog logic used in poll
@@ -28,6 +27,7 @@ import {
 import { ImageChoiceDialog } from "../../create/components/ImageChoiceDialog"
 import { ImportNomineesDialog } from "../../create/components/ImportNomineesDialog"
 import { ImportNomineesCategoryDialog } from "../../create/components/ImportNomineesCategoryDialog"
+import { FillWithJsonDialog } from "../../create/components/FillWithJsonDialog"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -226,7 +226,7 @@ function validateStep2(meta: PollMeta): string[] {
   return e
 }
 
-function validateCategoryTree(cats: CategoryForm[], path: string): string[] {
+function validateCategoryTree(cats: CategoryForm[], path: string, limits: ResolvedPollLimits): string[] {
   const e: string[] = []
   for (const [i, cat] of cats.entries()) {
     const label = `${path} › "${cat.name || `Category ${i + 1}`}"`
@@ -236,24 +236,24 @@ function validateCategoryTree(cats: CategoryForm[], path: string): string[] {
     const isLeaf = cat.subcategories.length === 0
     if (isLeaf) {
       if (cat.contestants.length < 2) e.push(`${label}: needs at least 2 contestants`)
-      if (cat.contestants.length > MAX_CONTESTANTS_PER_CATEGORY) e.push(`${label}: max ${MAX_CONTESTANTS_PER_CATEGORY} contestants`)
+      if (cat.contestants.length > limits.maxContestantsPerCategory) e.push(`${label}: max ${limits.maxContestantsPerCategory} contestants`)
       cat.contestants.forEach((c, ci) => {
         if (!c.name.trim())  e.push(`${label} › Contestant ${ci + 1}: name required`)
         if (!c.imageUrl)     e.push(`${label} › Contestant ${ci + 1}: photo required`)
         if (!c.contestantId) e.push(`${label} › Contestant ${ci + 1}: generate an ID`)
       })
     } else {
-      e.push(...validateCategoryTree(cat.subcategories, label))
+      e.push(...validateCategoryTree(cat.subcategories, label, limits))
     }
   }
   return e
 }
 
-function validateStep3(meta: PollMeta, contestants: ContestantForm[], categories: CategoryForm[]): string[] {
+function validateStep3(meta: PollMeta, contestants: ContestantForm[], categories: CategoryForm[], limits: ResolvedPollLimits): string[] {
   if (meta.pollType === "single") {
     const e: string[] = []
     if (contestants.length < 2) e.push("At least 2 contestants are required")
-    if (contestants.length > MAX_SINGLE_CONTESTANTS) e.push(`Max ${MAX_SINGLE_CONTESTANTS} contestants`)
+    if (contestants.length > limits.maxSingleContestants) e.push(`Max ${limits.maxSingleContestants} contestants`)
     contestants.forEach((c, i) => {
       if (!c.name.trim())  e.push(`Contestant ${i + 1}: name required`)
       if (!c.imageUrl)     e.push(`Contestant ${i + 1}: photo required`)
@@ -263,10 +263,10 @@ function validateStep3(meta: PollMeta, contestants: ContestantForm[], categories
   }
   const e: string[] = []
   if (categories.length === 0) e.push("Add at least 1 top-level category")
-  if (categories.length > MAX_GROUP_TOP_CATEGORIES) e.push(`Max ${MAX_GROUP_TOP_CATEGORIES} top-level categories`)
+  if (categories.length > limits.maxGroupTopCategories) e.push(`Max ${limits.maxGroupTopCategories} top-level categories`)
   const totalSubs = countSubcategories(categories)
-  if (totalSubs > MAX_GROUP_TOTAL_SUBCATEGORIES) e.push(`Total sub-categories cannot exceed ${MAX_GROUP_TOTAL_SUBCATEGORIES}`)
-  e.push(...validateCategoryTree(categories, "Poll"))
+  if (totalSubs > limits.maxGroupTotalSubcategories) e.push(`Total sub-categories cannot exceed ${limits.maxGroupTotalSubcategories}`)
+  e.push(...validateCategoryTree(categories, "Poll", limits))
   return e
 }
 
@@ -364,10 +364,11 @@ function ContestantRow({
 // ─── Category block (recursive) ───────────────────────────────────────────────
 
 function CategoryBlock({
-  cat, path, depth, totalSubcats, onUpdate, onRemove, canRemove, onOpenImport, onOpenImportCategories,
+  cat, path, depth, totalSubcats, limits, onUpdate, onRemove, canRemove, onOpenImport, onOpenImportCategories,
 }: {
   cat: CategoryForm; path: string; depth: number
   totalSubcats: number
+  limits: ResolvedPollLimits
   onUpdate: (u: CategoryForm) => void
   onRemove: () => void; canRemove: boolean
   onOpenImport: (targetCategoryId: string) => void
@@ -377,13 +378,13 @@ function CategoryBlock({
   onOpenImportCategories: (targetCategoryId: string) => void
 }) {
   const isLeaf   = cat.subcategories.length === 0
-  const canAddSub = totalSubcats < MAX_GROUP_TOTAL_SUBCATEGORIES
+  const canAddSub = totalSubcats < limits.maxGroupTotalSubcategories
   const bgClass   = depth === 0 ? "bg-white" : depth === 1 ? "bg-purple-50/40" : "bg-blue-50/30"
 
   const updCont = (i: number, p: Partial<ContestantForm>) =>
     onUpdate({ ...cat, contestants: cat.contestants.map((c, ci) => ci === i ? { ...c, ...p } : c) })
   const rmCont  = (i: number) => onUpdate({ ...cat, contestants: cat.contestants.filter((_, ci) => ci !== i) })
-  const addCont = () => { if (cat.contestants.length < MAX_CONTESTANTS_PER_CATEGORY) onUpdate({ ...cat, contestants: [...cat.contestants, emptyContestant()] }) }
+  const addCont = () => { if (cat.contestants.length < limits.maxContestantsPerCategory) onUpdate({ ...cat, contestants: [...cat.contestants, emptyContestant()] }) }
   const addSub  = () => onUpdate({ ...cat, subcategories: [...cat.subcategories, emptyCategory()] })
   const updSub  = (i: number, u: CategoryForm) => onUpdate({ ...cat, subcategories: cat.subcategories.map((s, si) => si === i ? u : s) })
   const rmSub   = (i: number) => onUpdate({ ...cat, subcategories: cat.subcategories.filter((_, si) => si !== i) })
@@ -421,7 +422,7 @@ function CategoryBlock({
           {/* Sub-categories */}
           {cat.subcategories.map((sub, si) => (
             <CategoryBlock key={sub.categoryId} cat={sub} path={`${path} › ${cat.name || "?"}`}
-              depth={depth + 1} totalSubcats={totalSubcats}
+              depth={depth + 1} totalSubcats={totalSubcats} limits={limits}
               onUpdate={(u) => updSub(si, u)}
               onRemove={() => rmSub(si)}
               canRemove={!sub.hasVotes && cat.subcategories.length > 1}
@@ -448,7 +449,7 @@ function CategoryBlock({
             <>
               <div className="space-y-2">
                 <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
-                  Contestants ({cat.contestants.length}/{MAX_CONTESTANTS_PER_CATEGORY})
+                  Contestants ({cat.contestants.length}/{limits.maxContestantsPerCategory})
                 </p>
                 {cat.contestants.map((c, ci) => (
                   <ContestantRow key={ci} c={c} idx={ci}
@@ -458,7 +459,7 @@ function CategoryBlock({
                 ))}
               </div>
               <div className="flex flex-wrap gap-2">
-                {cat.contestants.length < MAX_CONTESTANTS_PER_CATEGORY && (
+                {cat.contestants.length < limits.maxContestantsPerCategory && (
                   <button onClick={addCont}
                     className="flex-1 py-1.5 border border-dashed border-gray-200 text-gray-400 rounded-lg text-xs font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-1.5">
                     <Plus className="w-3.5 h-3.5" /> Add contestant
@@ -557,6 +558,13 @@ export default function EditPollPage() {
 
   const [contestants, setContestants] = useState<ContestantForm[]>([])
   const [categories,  setCategories]  = useState<CategoryForm[]>([])
+  // Admin-configurable structure limits for THIS poll (see
+  // lib/poll-config.ts resolvePollLimits) — starts as the platform
+  // defaults and is replaced with the poll's real resolved limits once
+  // /api/polls/one responds below, so validation and the on-screen
+  // counters (e.g. "12/50 contestants") always reflect what an admin has
+  // actually configured for this poll, not the hardcoded defaults.
+  const [limits, setLimits] = useState<ResolvedPollLimits>(resolvePollLimits(null))
 
   // ── Load poll ───────────────────────────────────────────────────────────────
   // Uses /api/polls/one (not /api/polls/list) because this page must be
@@ -584,6 +592,7 @@ export default function EditPollPage() {
 
       setAccess(data.access ?? "owner")
       setVoteStats(computeVoteStats(poll))
+      if (poll.limits) setLimits(poll.limits)
 
       setMeta({
         pollName:          poll.pollName        ?? "",
@@ -675,6 +684,12 @@ export default function EditPollPage() {
     }
   }
 
+  // ── Fill with JSON ───────────────────────────────────────────────────────────
+  // Always targets the root — flat contestants for single polls, top-level
+  // categories for group polls — and only ever appends: editing with JSON
+  // never overwrites anything already on the poll (per babe's spec).
+  const [showJsonDialog, setShowJsonDialog] = useState(false)
+
   // ── Step navigation ─────────────────────────────────────────────────────────
   const goToStep = (next: number) => {
     let errs: string[] = []
@@ -688,7 +703,7 @@ export default function EditPollPage() {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    const errs = validateStep3(meta, contestants, categories)
+    const errs = validateStep3(meta, contestants, categories, limits)
     if (errs.length) { setStepErrors(errs); return }
     setSubmitting(true); setStepErrors([])
 
@@ -944,7 +959,7 @@ export default function EditPollPage() {
                   <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                     <Users className="w-4 h-4 text-[#6b2fa5]" /> Contestants
                   </h2>
-                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{contestants.length}/{MAX_SINGLE_CONTESTANTS}</span>
+                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{contestants.length}/{limits.maxSingleContestants}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {contestants.map((c, idx) => (
@@ -955,7 +970,7 @@ export default function EditPollPage() {
                   ))}
                 </div>
                 <div className="flex flex-wrap gap-2 mt-4">
-                  {contestants.length < MAX_SINGLE_CONTESTANTS && (
+                  {contestants.length < limits.maxSingleContestants && (
                     <button onClick={() => setContestants((p) => [...p, emptyContestant()])}
                       className="flex items-center gap-1.5 text-sm font-semibold text-[#6b2fa5] hover:bg-[#6b2fa5]/5 px-3 py-2 rounded-lg transition-colors">
                       <Plus className="w-4 h-4" /> Add Contestant
@@ -964,6 +979,10 @@ export default function EditPollPage() {
                   <button onClick={() => setImportTarget("root")}
                     className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 border border-gray-300 hover:border-[#6b2fa5] hover:text-[#6b2fa5] px-3 py-2 rounded-lg transition-colors">
                     <Download className="w-4 h-4" /> Import from Nominees
+                  </button>
+                  <button onClick={() => setShowJsonDialog(true)}
+                    className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 border border-gray-300 hover:border-[#6b2fa5] hover:text-[#6b2fa5] px-3 py-2 rounded-lg transition-colors">
+                    <FileJson className="w-4 h-4" /> Fill with JSON
                   </button>
                 </div>
               </div>
@@ -979,14 +998,14 @@ export default function EditPollPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="text-center p-2 bg-[#6b2fa5]/5 rounded-lg">
                       <p className="text-xs text-gray-500">Top-level</p>
-                      <p className={`text-lg font-bold ${categories.length > MAX_GROUP_TOP_CATEGORIES ? "text-red-600" : "text-[#6b2fa5]"}`}>
-                        {categories.length}/{MAX_GROUP_TOP_CATEGORIES}
+                      <p className={`text-lg font-bold ${categories.length > limits.maxGroupTopCategories ? "text-red-600" : "text-[#6b2fa5]"}`}>
+                        {categories.length}/{limits.maxGroupTopCategories}
                       </p>
                     </div>
                     <div className="text-center p-2 bg-[#6b2fa5]/5 rounded-lg">
                       <p className="text-xs text-gray-500">Sub-categories</p>
-                      <p className={`text-lg font-bold ${totalSubcats > MAX_GROUP_TOTAL_SUBCATEGORIES ? "text-red-600" : "text-[#6b2fa5]"}`}>
-                        {totalSubcats}/{MAX_GROUP_TOTAL_SUBCATEGORIES}
+                      <p className={`text-lg font-bold ${totalSubcats > limits.maxGroupTotalSubcategories ? "text-red-600" : "text-[#6b2fa5]"}`}>
+                        {totalSubcats}/{limits.maxGroupTotalSubcategories}
                       </p>
                     </div>
                   </div>
@@ -997,7 +1016,7 @@ export default function EditPollPage() {
                 <div className="space-y-3">
                   {categories.map((cat, ci) => (
                     <CategoryBlock key={cat.categoryId} cat={cat} path="Poll" depth={0}
-                      totalSubcats={totalSubcats}
+                      totalSubcats={totalSubcats} limits={limits}
                       onUpdate={(u) => setCategories((prev) => prev.map((c, i) => i === ci ? u : c))}
                       onRemove={() => setCategories((prev) => prev.filter((_, i) => i !== ci))}
                       canRemove={!cat.hasVotes && categories.length > 1}
@@ -1005,7 +1024,7 @@ export default function EditPollPage() {
                       onOpenImportCategories={(targetId) => setImportCategoriesTarget(targetId)} />
                   ))}
                 </div>
-                {categories.length < MAX_GROUP_TOP_CATEGORIES && (
+                {categories.length < limits.maxGroupTopCategories && (
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => setCategories((p) => [...p, emptyCategory()])}
                       className="flex-1 py-3 border-2 border-dashed border-[#6b2fa5]/30 text-[#6b2fa5] rounded-xl text-sm font-medium hover:bg-[#6b2fa5]/5 flex items-center justify-center gap-2">
@@ -1014,6 +1033,10 @@ export default function EditPollPage() {
                     <button onClick={() => setImportCategoriesTarget("root")}
                       className="flex-1 py-3 border-2 border-dashed border-gray-300 text-gray-500 rounded-xl text-sm font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-2">
                       <Layers className="w-4 h-4" /> Import Categories
+                    </button>
+                    <button onClick={() => setShowJsonDialog(true)}
+                      className="flex-1 py-3 border-2 border-dashed border-gray-300 text-gray-500 rounded-xl text-sm font-medium hover:border-[#6b2fa5]/40 hover:text-[#6b2fa5] flex items-center justify-center gap-2">
+                      <FileJson className="w-4 h-4" /> Fill with JSON
                     </button>
                   </div>
                 )}
@@ -1031,6 +1054,23 @@ export default function EditPollPage() {
               <ImportNomineesCategoryDialog
                 onClose={() => setImportCategoriesTarget(null)}
                 onImport={handleImportCategories}
+              />
+            )}
+
+            {showJsonDialog && (
+              <FillWithJsonDialog
+                pollType={isGroup ? "group" : "single"}
+                pollId={pollId}
+                existingContestantsCount={contestants.length}
+                maxSingleContestants={limits.maxSingleContestants}
+                onImportContestants={(imported) => setContestants((prev) => [...prev, ...imported.map(fromImportedContestant)])}
+                existingTopCount={categories.length}
+                existingTotalSubcount={totalSubcats}
+                maxGroupTopCategories={limits.maxGroupTopCategories}
+                maxGroupTotalSubcategories={limits.maxGroupTotalSubcategories}
+                maxContestantsPerCategory={limits.maxContestantsPerCategory}
+                onImportCategories={(imported) => setCategories((prev) => [...prev, ...imported.map(fromImportedCategory)])}
+                onClose={() => setShowJsonDialog(false)}
               />
             )}
 

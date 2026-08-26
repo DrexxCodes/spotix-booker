@@ -45,6 +45,10 @@ interface Poll {
   statsVisible: boolean
   createdAt: string | null
   needsNormalization: boolean
+  /** Denormalized contestant count across the whole category tree for group
+   *  polls — see /api/polls/list. Not meaningful for single polls, which
+   *  should keep reading contestantCount(poll.contestants) instead. */
+  contestantTotal?: number
   /** "owner" (created it) or "member" (added as a poll team mate) — from
    *  /api/polls/list. Drives the "Teammate" tag on the card below. */
   role?: "owner" | "member"
@@ -385,7 +389,13 @@ export default function PollsPage() {
                         <p className="text-xs text-gray-400">Votes</p>
                       </div>
                       <div className="text-center p-2 bg-gray-50 rounded-lg">
-                        <p className="text-xs font-bold text-gray-900">{contestantCount(poll.contestants)}</p>
+                        <p className="text-xs font-bold text-gray-900">
+                          {/* Group polls keep their contestants inside categories (not
+                              the flat `contestants` field), and this list endpoint
+                              doesn't fetch each poll's category subcollection for
+                              perf reasons — so use the denormalized total instead. */}
+                          {poll.pollType === "group" ? (poll.contestantTotal ?? 0) : contestantCount(poll.contestants)}
+                        </p>
                         <p className="text-xs text-gray-400">Entrants</p>
                       </div>
                       <div className="text-center p-2 bg-gray-50 rounded-lg">

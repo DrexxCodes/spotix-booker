@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Lock, KeyRound, Loader2, AlertCircle, ShieldCheck, X, XCircle, Ban } from "lucide-react"
+import { Lock, KeyRound, Loader2, AlertCircle, ShieldCheck, X, XCircle, Ban, KeySquare } from "lucide-react"
 
 interface VaultPendingPayout {
   id: string
@@ -29,11 +29,12 @@ function KeyEntryModal({
 }: {
   payout: VaultPendingPayout
   onCancel: () => void
-  onSubmit: (key: string) => void
+  onSubmit: (key: string, isOtta: boolean) => void
   submitting: boolean
   error: string | null
 }) {
   const [key, setKey] = useState("")
+  const [useOtta, setUseOtta] = useState(false)
 
   return (
     <div
@@ -59,13 +60,22 @@ function KeyEntryModal({
           {Number(payout.amount).toLocaleString()}).
         </p>
 
+        <button
+          type="button"
+          onClick={() => { setUseOtta((v) => !v); setKey("") }}
+          className="flex items-center gap-1.5 text-xs font-semibold text-[#6b2fa5] hover:underline"
+        >
+          <KeySquare size={12} />
+          {useOtta ? "Use my own Vault Key instead" : "Sign off with an OTTA key instead"}
+        </button>
+
         <input
           type="password"
           autoFocus
-          placeholder="Your Vault Key"
+          placeholder={useOtta ? "OTTA key from another participant" : "Your Vault Key"}
           value={key}
           onChange={(e) => setKey(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && key) onSubmit(key) }}
+          onKeyDown={(e) => { if (e.key === "Enter" && key) onSubmit(key, useOtta) }}
           className="w-full px-3 py-2.5 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#6b2fa5]"
         />
 
@@ -77,7 +87,7 @@ function KeyEntryModal({
         )}
 
         <button
-          onClick={() => onSubmit(key)}
+          onClick={() => onSubmit(key, useOtta)}
           disabled={submitting || !key}
           className="w-full py-2.5 rounded-xl text-sm font-semibold bg-[#6b2fa5] text-white hover:bg-[#5a2589] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
         >
@@ -180,7 +190,7 @@ export default function VaultSignoffs({ eventId, currentUserId, onResolved }: Va
     fetchPending()
   }, [fetchPending])
 
-  async function handleSubmitKey(key: string) {
+  async function handleSubmitKey(key: string, isOtta: boolean) {
     if (!activePayout) return
     setSubmitting(true)
     setModalError(null)
@@ -188,15 +198,15 @@ export default function VaultSignoffs({ eventId, currentUserId, onResolved }: Va
       const res = await fetch("/api/payout/vault", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ holdId: activePayout.id, vaultKey: key }),
+        body: JSON.stringify(isOtta ? { holdId: activePayout.id, ottaKey: key } : { holdId: activePayout.id, vaultKey: key }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Incorrect Vault Key")
+      if (!res.ok) throw new Error(data.error || (isOtta ? "Invalid OTTA key" : "Incorrect Vault Key"))
       setActivePayout(null)
       await fetchPending()
       onResolved?.(data.released && data.reference ? data.reference : undefined)
     } catch (err: any) {
-      setModalError(err.message || "Incorrect Vault Key")
+      setModalError(err.message || (isOtta ? "Invalid OTTA key" : "Incorrect Vault Key"))
     } finally {
       setSubmitting(false)
     }

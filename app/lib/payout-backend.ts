@@ -10,14 +10,18 @@
 export function buildNarration({
   isEvent,
   isPoll,
+  isElection,
   eventName,
   pollName,
+  electionName,
   payDate,
 }: {
   isEvent: boolean
   isPoll: boolean
+  isElection?: boolean
   eventName?: string | null
   pollName?: string | null
+  electionName?: string | null
   payDate: string
 }): string {
   if (isEvent) {
@@ -25,6 +29,9 @@ export function buildNarration({
   }
   if (isPoll) {
     return `Payout for your ${pollName || "poll"} poll for ${payDate}`
+  }
+  if (isElection) {
+    return `Payout for your ${electionName || "election"} election forms for ${payDate}`
   }
   return `Spotix payout for ${payDate}`
 }

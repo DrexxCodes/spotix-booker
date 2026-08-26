@@ -317,7 +317,7 @@ export async function generatePollResultsPdf(input: PollResultsReportInput): Pro
       y -= bannerH + 10
     }
 
-    // ── Standings table ───────────────────────────────────────────────────────
+    // ── Standings table 
     const colRank = MARGIN_X
     const colName = MARGIN_X + 28
     const colBar  = MARGIN_X + 240

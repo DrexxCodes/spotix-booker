@@ -23,12 +23,12 @@ import { FieldValue } from "firebase-admin/firestore"
 // ── 1. Date-doc reference stamping ──────────────────────────────────────────
 
 export async function writePayoutReferenceOnDateDoc(
-  scope: { eventId?: string; pollId?: string },
+  scope: { eventId?: string; pollId?: string; electionId?: string },
   date: string,
   reference: string
 ): Promise<void> {
-  const root = scope.eventId ? "events" : "votes"
-  const id = scope.eventId ?? scope.pollId!
+  const root = scope.eventId ? "events" : scope.pollId ? "votes" : "elections"
+  const id = scope.eventId ?? scope.pollId ?? scope.electionId!
   const ref = adminDb.collection("admin").doc(root).collection(id).doc(date)
   try {
     await ref.update({ payoutReference: reference, payoutReferenceAt: FieldValue.serverTimestamp() })

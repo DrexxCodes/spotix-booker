@@ -48,6 +48,7 @@ import { writePayoutReferenceOnDateDoc } from "@/lib/payout-firestore"
 import { triggerPayoutProcessing } from "@/lib/payout-backend"
 import { requirePayoutAccessKey } from "@/lib/payout-access-gate"
 import { DuplicateRequestError } from "@/lib/payout-idempotency"
+import { verifyAndConsumeOtta } from "@/lib/otta"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -267,7 +268,19 @@ export async function POST(req: NextRequest) {
 }
 
 // ── PATCH — submit a Vault Key against a pending payout hold ─────────────────
-// Body: { holdId, vaultKey }  (holdId = a Firestore vaultHolds/{id})
+// Body: { holdId, vaultKey }              — the participant's own key, OR
+//       { holdId, ottaKey }               — an OTTA key another Vault
+//                                            participant generated (see
+//                                            spotix-admin's Transfers →
+//                                            OTTA feature), entered by
+//                                            anyone, which signs off ON
+//                                            BEHALF OF that key's owner —
+//                                            as long as the owner is
+//                                            actually a participant on
+//                                            THIS vault and the hold's
+//                                            amount is within the key's
+//                                            configured maxAmount.
+// (holdId = a Firestore vaultHolds/{id})
 //
 // Once every assigned participant has submitted, this is the moment
 // "the payout" actually begins: a Supabase `payouts` row is created
@@ -291,9 +304,9 @@ export async function PATCH(req: NextRequest) {
     return fail("Invalid JSON body", 400)
   }
 
-  const { holdId, vaultKey } = body
+  const { holdId, vaultKey, ottaKey } = body
   if (!holdId?.trim()) return fail("holdId is required", 400)
-  if (!vaultKey?.trim()) return fail("vaultKey is required", 400)
+  if (!vaultKey?.trim() && !ottaKey?.trim()) return fail("vaultKey or ottaKey is required", 400)
 
   const holdRef = adminDb.collection("vaultHolds").doc(holdId)
   const holdSnap = await holdRef.get()
@@ -308,26 +321,53 @@ export async function PATCH(req: NextRequest) {
   if (!vaultSnap.exists) return fail("Vault configuration not found for this event", 404)
   const participants: any[] = vaultSnap.data()!.participants ?? []
 
-  const participant = participants.find((p) => p.uid === userId)
-  if (!participant) return fail("You are not a Vault participant on this event", 403)
-  if (!participant.keyHash) return fail("You have not set a Vault Key yet", 400)
+  // ── Resolve WHO is signing off: either the caller (vaultKey) or an
+  // OTTA key's owner (ottaKey) — either way, that person must be an
+  // actual Vault participant on this event.
+  let signerUid = userId
+  let signerViaOtta = false
+  let ottaOwnerName = ""
 
-  const matches = await bcrypt.compare(String(vaultKey), participant.keyHash)
-  if (!matches) return fail("Incorrect Vault Key", 401)
+  if (ottaKey?.trim()) {
+    const result = await verifyAndConsumeOtta(String(ottaKey), Number(hold.amount) || 0, { type: "vault", id: holdId })
+    if (!result.ok) return fail(result.error ?? "Invalid OTTA key", 400)
+    signerUid = result.ownerUid!
+    signerViaOtta = true
+    ottaOwnerName = result.ownerName ?? "Admin"
+  }
 
-  // ── Log: this participant just verified their Vault Key ────────────────────
+  const participant = participants.find((p) => p.uid === signerUid)
+  if (!participant) {
+    return fail(
+      signerViaOtta
+        ? "The OTTA key's owner is not a Vault participant on this event"
+        : "You are not a Vault participant on this event",
+      403,
+    )
+  }
+
+  if (!signerViaOtta) {
+    if (!participant.keyHash) return fail("You have not set a Vault Key yet", 400)
+    const matches = await bcrypt.compare(String(vaultKey), participant.keyHash)
+    if (!matches) return fail("Incorrect Vault Key", 401)
+  }
+
+  // ── Log: this participant just verified their Vault Key (or had it
+  // verified on their behalf via OTTA) ────────────────────────────────────
   const submittedAt = new Date().toISOString()
   const signOffLog = {
     type: "vault_key_submitted",
     at: submittedAt,
-    byUid: userId,
+    byUid: signerUid,
     byName: participant.isCreator ? "Event Creator" : "Admin",
     byEmail: participant.email ?? "",
-    message: `${participant.email || "A Vault participant"} verified their Vault Key`,
+    message: signerViaOtta
+      ? `${participant.email || ottaOwnerName} signed off via an OTTA key entered by ${userId === signerUid ? "themself" : "another participant"}`
+      : `${participant.email || "A Vault participant"} verified their Vault Key`,
   }
 
-  const submissions: Record<string, boolean> = { ...(hold.vaultSubmissions ?? {}), [userId]: true }
-  const submissionLog = { ...(hold.vaultSubmissionLog ?? {}), [userId]: submittedAt }
+  const submissions: Record<string, boolean> = { ...(hold.vaultSubmissions ?? {}), [signerUid]: true }
+  const submissionLog = { ...(hold.vaultSubmissionLog ?? {}), [signerUid]: submittedAt }
   const requiredUids: string[] = hold.vaultParticipants ?? participants.map((p) => p.uid)
   const allSubmitted = requiredUids.every((uid) => submissions[uid])
 

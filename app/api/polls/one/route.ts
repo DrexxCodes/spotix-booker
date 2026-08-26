@@ -21,6 +21,7 @@ import { cookies } from "next/headers"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { resolvePollAccess } from "@/lib/poll-team-access"
 import { fetchCategoryTree } from "@/lib/poll-categories"
+import { resolvePollLimits } from "@/lib/poll-config"
 import { Timestamp } from "firebase-admin/firestore"
 
 const DEV_TAG = "spotix-api-v1"
@@ -100,6 +101,12 @@ export async function GET(req: NextRequest) {
         categories,
         statsVisible:    d.statsVisible    ?? true,
         contestantsTBD:  d.contestantsTBD  ?? false,
+        // Admin-configurable structure limits for THIS poll — falls back to
+        // platform defaults if no admin override is on file. The create/edit
+        // UI should validate against these instead of the hardcoded
+        // constants in lib/poll-config.ts, since an admin may have raised
+        // or lowered them for this specific poll.
+        limits:          resolvePollLimits(d.limitsOverride),
         creatorId:       d.creatorId       ?? d.organizerId ?? "",
         organizerId:     d.organizerId     ?? d.creatorId   ?? "",
         createdAt:       toIso(d.createdAt),

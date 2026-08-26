@@ -41,10 +41,8 @@ import { resolvePollAccess } from "@/lib/poll-team-access"
 import { fetchCategoryTree, flattenTreeToMap, writeCategoryTree } from "@/lib/poll-categories"
 import {
   validateVotePrice,
-  MAX_SINGLE_CONTESTANTS,
-  MAX_GROUP_TOP_CATEGORIES,
-  MAX_GROUP_TOTAL_SUBCATEGORIES,
-  MAX_CONTESTANTS_PER_CATEGORY,
+  resolvePollLimits,
+  type ResolvedPollLimits,
 } from "@/lib/poll-config"
 
 const DEV_TAG = "spotix-api-v1"
@@ -95,6 +93,7 @@ function validateAndMergeCategoryTree(
   incoming:    any[],
   existingMap: Map<string, any>,
   path:        string,
+  limits:      ResolvedPollLimits,
 ): { error: string } | { merged: any[] } {
   const merged: any[] = []
 
@@ -116,8 +115,8 @@ function validateAndMergeCategoryTree(
       // ── Leaf node ──────────────────────────────────────────────────────────
       if (!Array.isArray(cat.contestants) || cat.contestants.length < 2)
         return { error: `${label}: leaf categories need at least 2 contestants` }
-      if (cat.contestants.length > MAX_CONTESTANTS_PER_CATEGORY)
-        return { error: `${label}: cannot have more than ${MAX_CONTESTANTS_PER_CATEGORY} contestants` }
+      if (cat.contestants.length > limits.maxContestantsPerCategory)
+        return { error: `${label}: cannot have more than ${limits.maxContestantsPerCategory} contestants` }
 
       // Check: contestants with votes cannot be removed
       for (const [cid, ec] of existingContMap) {
@@ -156,7 +155,7 @@ function validateAndMergeCategoryTree(
         return { error: `${label}: this category has contestant votes and cannot be converted to a branch` }
       }
 
-      const subResult = validateAndMergeCategoryTree(cat.subcategories, existingMap, label)
+      const subResult = validateAndMergeCategoryTree(cat.subcategories, existingMap, label, limits)
       if ("error" in subResult) return subResult
 
       merged.push({
@@ -237,6 +236,10 @@ export async function PATCH(req: NextRequest) {
 
   const pollType = existingData.pollType ?? "single"
 
+  // Admin-configurable structure limits — see lib/poll-config.ts. Falls back
+  // to the platform defaults if this poll has no override on file.
+  const limits = resolvePollLimits(existingData.limitsOverride)
+
   // Contestants TBD: callers that don't know about this field (an older
   // edit page, for instance) fall back to whatever's already on the poll,
   // so nothing changes for them. A poll only STAYS in TBD mode if the
@@ -292,8 +295,8 @@ export async function PATCH(req: NextRequest) {
 
     if (!Array.isArray(contestants) || contestants.length < 2)
       return fail("At least 2 contestants are required", 400)
-    if (contestants.length > MAX_SINGLE_CONTESTANTS)
-      return fail(`Single polls can have at most ${MAX_SINGLE_CONTESTANTS} contestants`, 400)
+    if (contestants.length > limits.maxSingleContestants)
+      return fail(`Single polls can have at most ${limits.maxSingleContestants} contestants`, 400)
 
     const existingConts: any[] = existingData.contestants ?? []
     const existingMap  = new Map(existingConts.map((c: any) => [c.contestantId, c]))
@@ -335,12 +338,12 @@ export async function PATCH(req: NextRequest) {
   } else if (pollType === "group") {
     if (!Array.isArray(categories) || categories.length < 1)
       return fail("At least 1 top-level category is required", 400)
-    if (categories.length > MAX_GROUP_TOP_CATEGORIES)
-      return fail(`Group polls can have at most ${MAX_GROUP_TOP_CATEGORIES} top-level categories`, 400)
+    if (categories.length > limits.maxGroupTopCategories)
+      return fail(`Group polls can have at most ${limits.maxGroupTopCategories} top-level categories`, 400)
 
     const totalSubs = countDescendantCategories(categories)
-    if (totalSubs > MAX_GROUP_TOTAL_SUBCATEGORIES)
-      return fail(`Total sub-categories cannot exceed ${MAX_GROUP_TOTAL_SUBCATEGORIES}`, 400)
+    if (totalSubs > limits.maxGroupTotalSubcategories)
+      return fail(`Total sub-categories cannot exceed ${limits.maxGroupTotalSubcategories}`, 400)
 
     // Existing tree, straight from Firestore (skipCache: true) — about to
     // check live vote counts below, so a stale cached read here could
@@ -357,7 +360,7 @@ export async function PATCH(req: NextRequest) {
     if (delErr) return fail(delErr, 400)
 
     // Validate and merge
-    const result = validateAndMergeCategoryTree(categories, existingMap, "Poll")
+    const result = validateAndMergeCategoryTree(categories, existingMap, "Poll", limits)
     if ("error" in result) return fail(result.error, 400)
 
     categoryTreeToWrite = result.merged
