@@ -10,6 +10,7 @@
 // "everything the Creator sees". Both routes now call this.
 
 import { adminDb } from "@/lib/firebase-admin"
+import { computeSalesTrend, todayAndYesterdayKeys, type SalesTrend } from "@/lib/sales-trend"
 
 function tsToDateString(ts: FirebaseFirestore.Timestamp | string | null | undefined): string {
   if (!ts) return "Unknown"
@@ -20,6 +21,28 @@ function tsToDateString(ts: FirebaseFirestore.Timestamp | string | null | undefi
 function tsToTimeString(ts: FirebaseFirestore.Timestamp | null | undefined): string {
   if (!ts) return ""
   try { return ts.toDate().toLocaleTimeString() } catch { return "" }
+}
+
+/**
+ * Shared attendee-doc → API-shape mapper. Pulled out of buildEventBundle so
+ * app/api/event/list/[eventId]/attendees/route.ts (paginated browse, search-all,
+ * single-attendee lookup, and full export) formats attendees identically to
+ * the main dashboard bundle instead of re-implementing this by hand.
+ */
+export function mapAttendeeDoc(d: FirebaseFirestore.QueryDocumentSnapshot) {
+  const a = d.data()
+  return {
+    id: d.id,
+    fullName: a.fullName ?? "Unknown",
+    email: a.email ?? "no-email@example.com",
+    ticketType: a.ticketType ?? "Standard",
+    verified: a.verified ?? false,
+    purchaseDate: tsToDateString(a.purchaseDate),
+    purchaseTime: a.purchaseTime ?? tsToTimeString(a.purchaseDate),
+    ticketReference: a.ticketReference ?? "Unknown",
+    facialEnroll: a.faceEmbedding ? "enrolled" as const : "unenrolled" as const,
+    faceEmbedding: a.faceEmbedding ?? null,
+  }
 }
 
 export async function buildEventBundle(
@@ -39,27 +62,42 @@ export async function buildEventBundle(
     console.error("[event-bundle] organizer fetch failed", e)
   }
 
-  const [attendeesSnap, discountsSnap, payoutsSnap] = await Promise.all([
-    eventRef.collection("attendees").get(),
+  // Note: no longer reads the full `attendees` subcollection here — nothing
+  // downstream (Overview's charts, Payouts) actually needs the raw list any
+  // more; see the count()-based ticketSalesByType/calculatedRevenue below
+  // and the admin/events day-docs used for ticketSalesByDay.
+  const [discountsSnap, payoutsSnap] = await Promise.all([
     eventRef.collection("discounts").get(),
     eventRef.collection("payouts").orderBy("createdAt", "desc").get(),
   ])
 
-  const attendees = attendeesSnap.docs.map((d) => {
-    const a = d.data()
-    return {
-      id: d.id,
-      fullName: a.fullName ?? "Unknown",
-      email: a.email ?? "no-email@example.com",
-      ticketType: a.ticketType ?? "Standard",
-      verified: a.verified ?? false,
-      purchaseDate: tsToDateString(a.purchaseDate),
-      purchaseTime: a.purchaseTime ?? tsToTimeString(a.purchaseDate),
-      ticketReference: a.ticketReference ?? "Unknown",
-      facialEnroll: a.faceEmbedding ? "enrolled" : "unenrolled",
-      faceEmbedding: a.faceEmbedding ?? null,
-    }
-  })
+  // ── Day-over-day trends, from the same admin/events/{eventId}/{date}
+  // day-docs the Payouts tab already reads — one read each for today and
+  // yesterday covers BOTH fields at once (ticketSales for revenue,
+  // ticketCount for tickets sold). These can genuinely disagree — one
+  // ₦200k ticket yesterday vs fifty ₦2k tickets today raises ticketCount
+  // but drops ticketSales — which is exactly why they're tracked as two
+  // independent trends, not one. Powers the Overview tab's stat cards. ──
+  let salesTrend: SalesTrend
+  let ticketCountTrend: SalesTrend
+  try {
+    const { today, yesterday } = todayAndYesterdayKeys()
+    const [todaySnap, yesterdaySnap] = await Promise.all([
+      adminDb.collection("admin").doc("events").collection(eventSnap.id).doc(today).get(),
+      adminDb.collection("admin").doc("events").collection(eventSnap.id).doc(yesterday).get(),
+    ])
+    const todaySales = todaySnap.exists ? (todaySnap.data()?.ticketSales ?? 0) : 0
+    const yesterdaySales = yesterdaySnap.exists ? (yesterdaySnap.data()?.ticketSales ?? 0) : 0
+    salesTrend = computeSalesTrend(todaySales, yesterdaySales)
+
+    const todayCount = todaySnap.exists ? (todaySnap.data()?.ticketCount ?? 0) : 0
+    const yesterdayCount = yesterdaySnap.exists ? (yesterdaySnap.data()?.ticketCount ?? 0) : 0
+    ticketCountTrend = computeSalesTrend(todayCount, yesterdayCount)
+  } catch (e) {
+    console.error("[event-bundle] sales trend fetch failed", e)
+    salesTrend = { pct: 0, tone: "flat", today: 0, yesterday: 0 }
+    ticketCountTrend = { pct: 0, tone: "flat", today: 0, yesterday: 0 }
+  }
 
   const discounts = discountsSnap.docs.map((d) => {
     const dc = d.data()
@@ -95,13 +133,24 @@ export async function buildEventBundle(
     }
   })
 
-  let calculatedRevenue = 0
-  if (attendees.length > 0 && ev.ticketPrices && ev.ticketPrices.length > 0) {
-    for (const attendee of attendees) {
-      const ticketType = ev.ticketPrices.find((t: any) => t.policy === attendee.ticketType)
-      if (ticketType) calculatedRevenue += Number(ticketType.price)
-    }
+  // ── Ticket-type sold counts — one count() aggregation per ticket policy
+  // (Promise.all) instead of looping every attendee doc. Feeds both the
+  // "Ticket Types Distribution" chart below and calculatedRevenue's
+  // fallback just after, so the full attendee list is never read here. ──
+  let ticketSalesByType: { type: string; count: number; revenue: number }[] = []
+  try {
+    const policies: { policy: string; price: number }[] = ev.ticketPrices ?? []
+    const counts = await Promise.all(
+      policies.map((t) => eventRef.collection("attendees").where("ticketType", "==", t.policy).count().get())
+    )
+    ticketSalesByType = policies.map((t, i) => ({
+      type: t.policy, count: counts[i].data().count, revenue: counts[i].data().count * Number(t.price),
+    }))
+  } catch (e) {
+    console.error("[event-bundle] ticketSalesByType count() query failed", e)
   }
+
+  const calculatedRevenue = ticketSalesByType.reduce((sum, t) => sum + t.revenue, 0)
 
   const totalRevenue = ev.totalRevenue ?? ev.revenue ?? calculatedRevenue ?? 0
   const totalPaidOut = ev.totalPaidOut ?? calculatedTotalPaidOut
@@ -146,48 +195,65 @@ export async function buildEventBundle(
     widgetLength: ev.widgetLength ?? 320,
     widgetHeight: ev.widgetHeight ?? 420,
     widgetColour: ev.widgetColour ?? "#6b2fa5",
+    // Who pays the platform's fee(s), set in spotix-admin per event.
+    // true (default) = attendee pays it on top of ticket price, unchanged
+    // from how every event has always worked. false = it's deducted from
+    // this organizer's proceeds at payout time. See PATCH action
+    // "setFeeBurden" below and spotix-backend's payment webhook, which is
+    // what actually applies this at settlement time.
+    buyerBearsBurden: ev.buyerBearsBurden ?? true,
+    // Superset of buyerBearsBurden above — Spotix's platform fee and
+    // Paystack's own processing fee are independent switches. Falls back
+    // to deriving from the legacy buyerBearsBurden field for events that
+    // predate this split (Paystack's fee wasn't a distinct concept yet,
+    // so it stays attendee-owed regardless in that fallback).
+    feeBurden:
+      ev.feeBurden && typeof ev.feeBurden === "object"
+        ? {
+            coversPaystackFee: ev.feeBurden.coversPaystackFee === true,
+            coversSpotixFee: ev.feeBurden.coversSpotixFee === true,
+          }
+        : { coversPaystackFee: false, coversSpotixFee: ev.buyerBearsBurden === false },
   }
 
-  const salesByDayMap: Record<string, { count: number; revenue: number }> = {}
-  for (const doc of attendeesSnap.docs) {
-    const a = doc.data()
-    const purchaseDate = a.purchaseDate?.toDate?.() ?? new Date(a.purchaseDate)
-    if (purchaseDate) {
-      const dateStr = purchaseDate.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
-      const ticketType = ev.ticketPrices?.find((t: any) => t.policy === a.ticketType)
-      const price = Number(ticketType?.price ?? 0)
-      if (!salesByDayMap[dateStr]) salesByDayMap[dateStr] = { count: 0, revenue: 0 }
-      salesByDayMap[dateStr].count += 1
-      salesByDayMap[dateStr].revenue += price
-    }
+  // ── "Ticket Sales Over Time" chart — reads the admin/events/{eventId}
+  // day-docs (same source as salesTrend above) instead of tallying every
+  // attendee doc by purchase date. One read per day the event has been
+  // selling, not one per attendee. ──
+  let ticketSalesByDay: { date: string; count: number; revenue: number }[] = []
+  try {
+    const dayDocsSnap = await adminDb.collection("admin").doc("events").collection(eventSnap.id).get()
+    ticketSalesByDay = dayDocsSnap.docs
+      .map((d) => {
+        const data = d.data()
+        const date = new Date(d.id) // day-doc id is a "YYYY-MM-DD" key (see lib/sales-trend.ts)
+        return {
+          date: date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+          count: data.ticketCount ?? 0,
+          revenue: data.ticketSales ?? 0,
+          _sortKey: d.id,
+        }
+      })
+      .sort((a, b) => a._sortKey.localeCompare(b._sortKey))
+      .map(({ _sortKey, ...rest }) => rest)
+  } catch (e) {
+    console.error("[event-bundle] ticketSalesByDay day-doc read failed", e)
   }
-  const ticketSalesByDay = Object.entries(salesByDayMap)
-    .map(([date, data]) => ({ date, count: data.count, revenue: data.revenue }))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
-  const salesByTypeMap: Record<string, { count: number; revenue: number }> = {}
-  for (const doc of attendeesSnap.docs) {
-    const a = doc.data()
-    const ticketType = a.ticketType ?? "Standard"
-    const price = ev.ticketPrices?.find((t: any) => t.policy === ticketType)?.price ?? 0
-    if (!salesByTypeMap[ticketType]) salesByTypeMap[ticketType] = { count: 0, revenue: 0 }
-    salesByTypeMap[ticketType].count += 1
-    salesByTypeMap[ticketType].revenue += Number(price)
-  }
-  const ticketSalesByType = Object.entries(salesByTypeMap).map(([type, data]) => ({
-    type, count: data.count, revenue: data.revenue,
-  }))
+  // Chart only shows types that actually sold — computed above, filtered here.
+  const ticketTypeData = ticketSalesByType.filter((t) => t.count > 0)
 
   return {
     eventData,
     bookerBVT,
-    attendees,
     discounts,
     payouts,
     ticketSalesByDay,
     ticketSalesByType,
-    ticketTypeData: ticketSalesByType,
+    ticketTypeData,
     availableBalance: availableRevenue,
     totalPaidOut,
+    salesTrend,
+    ticketCountTrend,
   }
 }

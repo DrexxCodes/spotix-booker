@@ -3,12 +3,23 @@
 /* @import "leaflet/dist/leaflet.css"; */
 
 /* Prevents off-canvas fixed elements (e.g. the mobile nav sidebar, which sits
-   at right-0 and slides fully off-screen via translate-x-full) from creating
-   a phantom horizontal scrollbar / dead space at the right edge of the page.
+   at left-0 and slides fully off-screen via -translate-x-full) from creating
+   a phantom horizontal scrollbar / dead space at the edge of the page.
    Inner elements that intentionally scroll horizontally (e.g. horizontal pill
-   rows) use their own overflow-x-auto and are unaffected by this. */
+   rows) use their own overflow-x-auto and are unaffected by this.
+
+   IMPORTANT: overflow-y is pinned to `visible` here on purpose. Per the CSS
+   Overflow spec, setting overflow-x without overflow-y makes the browser
+   auto-compute overflow-y as `auto` instead of leaving it `visible` — which
+   silently turns <body> into its own scroll container instead of the real
+   viewport. That breaks every `position: sticky` element on the page (e.g.
+   the event-info tab strip), because sticky resolves against the nearest
+   scrolling ancestor, and that ancestor quietly became <body> instead of
+   the viewport. Pinning overflow-y: visible keeps <body> out of the
+   scrolling-ancestor chain so sticky works everywhere again. */
 html, body {
   overflow-x: hidden;
+  overflow-y: visible;
   max-width: 100%;
 }
 

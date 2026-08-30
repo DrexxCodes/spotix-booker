@@ -4,10 +4,12 @@
 import { useMemo, use, useState, useEffect, useRef } from "react"
 import type React from "react"
 import Link from "next/link"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { tryRefreshTokens, getAccessToken, authFetch } from "@/lib/auth-client"
 import { ArrowLeft, RefreshCw, LogOut, Shield, UserCheck, Calculator, AlertTriangle, Settings, ChevronLeft, ChevronRight, Code2 } from "lucide-react"
 import { eventCacheManager } from "@/lib/cache-manger"
+import { toast } from "@/lib/toast"
+import { SkeletonStatGrid, SkeletonRows } from "@/components/ui/skeleton"
 import OverviewTab from "@/components/event-info/overview-tab"
 import AttendeesTab from "@/components/event-info/attendees-tab"
 import DiscountsTab from "@/components/event-info/discounts-tab"
@@ -68,13 +70,6 @@ interface EventData {
   widgetLength?: number
   widgetHeight?: number
   widgetColour?: string
-}
-
-interface AttendeeData {
-  id: string; fullName: string; email: string; ticketType: string
-  verified: boolean; purchaseDate: string; purchaseTime: string
-  ticketReference: string; facialEnroll: "enrolled" | "unenrolled"
-  faceEmbedding?: number[] | null
 }
 
 interface DiscountData {
@@ -163,12 +158,9 @@ function ExitTeamDialog({ eventName, onConfirm, onCancel, loading }: {
 
 function TabSkeleton() {
   return (
-    <div className="animate-pulse space-y-4">
-      <div className="h-32 bg-slate-200 rounded-lg" />
-      <div className="h-24 bg-slate-200 rounded-lg" />
-      <div className="grid grid-cols-3 gap-4">
-        {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-slate-200 rounded-lg" />)}
-      </div>
+    <div className="space-y-6">
+      <SkeletonStatGrid count={4} />
+      <SkeletonRows count={3} rowClassName="h-20" />
     </div>
   )
 }
@@ -176,8 +168,8 @@ function TabSkeleton() {
 // ── Inner page (needs useSearchParams) ────────────────────────────────────────
 function EventInfoInner({ eventId }: { eventId: string }) {
   const router       = useRouter()
-  // useSearchParams is used implicitly by Next.js — keep Suspense wrapper above
-  useSearchParams()
+  const searchParams = useSearchParams()
+  const pathname      = usePathname()
 
   const [pageReady, setPageReady]       = useState(false)
   const [saving, setSaving]             = useState(false)
@@ -185,20 +177,33 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   // uid from /api/user/me — the single source of truth, no Firebase dependency
   const [currentUid, setCurrentUid]     = useState<string>("")
   const [eventData, setEventData]       = useState<EventData | null>(null)
-  const [attendees, setAttendees]       = useState<AttendeeData[]>([])
   const [discounts, setDiscounts]       = useState<DiscountData[]>([])
   const [payouts, setPayouts]           = useState<any[]>([])
   const [bookerBVT, setBookerBVT]       = useState("")
   const [ticketSalesByDay, setTicketSalesByDay] = useState<any[]>([])
   const [ticketSalesByType, setTicketSalesByType] = useState<any[]>([])
+  const [salesTrend, setSalesTrend] = useState<{ pct: number | null; tone: "up" | "down" | "flat" } | null>(null)
+  const [ticketCountTrend, setTicketCountTrend] = useState<{ pct: number | null; tone: "up" | "down" | "flat" } | null>(null)
   const [availableBalance, setAvailableBalance]   = useState(0)
   const [totalPaidOut, setTotalPaidOut]   = useState(0)
   const [editFormData, setEditFormData]   = useState<any>(null)
   const [copiedField, setCopiedField]     = useState<string | null>(null)
   const [cacheInfo, setCacheInfo]         = useState<{ isCached: boolean; remainingTime: number | null }>({ isCached: false, remainingTime: null })
-  const [activeTab, setActiveTab]         = useState<TabId>("overview")
-  const [loadedTabs, setLoadedTabs]       = useState<Set<string>>(new Set(["overview"]))
+  const initialTabParam = searchParams.get("tab")
+  const initialTab: TabId = (initialTabParam && (ALL_TABS as readonly string[]).includes(initialTabParam))
+    ? (initialTabParam as TabId)
+    : "overview"
+
+  const [activeTab, setActiveTab]         = useState<TabId>(initialTab)
+  const [loadedTabs, setLoadedTabs]       = useState<Set<string>>(new Set([initialTab]))
   const [newDiscount, setNewDiscount]     = useState<DiscountData>({ code: "", type: "percentage", value: "", maxUses: 1, usedCount: 0, active: true, applicableTickets: [], expiryDate: "" })
+
+  // Deep-link support for the Payouts tab's sub-views, e.g.
+  // /event-info/{eventId}?tab=payouts&payoutLogs opens straight into the
+  // payout logs view instead of the default transactions list.
+  const [payoutView, setPayoutView] = useState<"transactions" | "methods" | "addMethod" | "logs">(
+    searchParams.has("payoutLogs") ? "logs" : "transactions"
+  )
 
   const [isOwner, setIsOwner]             = useState(false)
   const [collabInfo, setCollabInfo]       = useState<CollabInfo | null>(null)
@@ -210,12 +215,13 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     [isOwner, collabInfo]
   )
 
-  const ticketTypeData = useMemo(() => {
-    if (!eventData || !attendees.length) return []
-    const tc: Record<string, number> = {}
-    attendees.forEach((a) => { tc[a.ticketType] = (tc[a.ticketType] || 0) + 1 })
-    return Object.keys(tc).map((type) => ({ type, count: tc[type] }))
-  }, [eventData, attendees])
+  // ticketTypeData comes straight from the server's ticketSalesByType (one
+  // count() aggregation per ticket policy — see lib/event-bundle.ts). The
+  // page no longer fetches or holds the full attendee list at all.
+  const ticketTypeData = useMemo(
+    () => ticketSalesByType.map((t) => ({ type: t.type, count: t.count })),
+    [ticketSalesByType]
+  )
 
   // Ticket policy names available on this event — used by the Discounts tab
   // to let the booker scope a coupon to specific ticket tiers.
@@ -232,10 +238,31 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     [eventData]
   )
 
+  // Keeps the URL in sync with the active tab (and, for payouts, the active
+  // sub-view) using shallow client-side navigation only — router.push here
+  // never triggers a server round-trip or full page reload.
+  const syncTabInUrl = (tab: TabId, opts?: { payoutLogs?: boolean }) => {
+    const params = new URLSearchParams(Array.from(searchParams.entries()))
+    params.set("tab", tab)
+    if (tab === "payouts" && opts?.payoutLogs) {
+      params.set("payoutLogs", "")
+    } else {
+      params.delete("payoutLogs")
+    }
+    router.push(`${pathname}?${params.toString()}`, { scroll: false })
+  }
+
   const handleTabSwitch = (tab: TabId) => {
     if (!visibleTabs.includes(tab)) return
     setActiveTab(tab)
     setLoadedTabs((prev) => new Set([...Array.from(prev), tab]))
+    if (tab !== "payouts") setPayoutView("transactions")
+    syncTabInUrl(tab, { payoutLogs: tab === "payouts" && payoutView === "logs" })
+  }
+
+  const handlePayoutViewChange = (view: "transactions" | "methods" | "addMethod" | "logs") => {
+    setPayoutView(view)
+    syncTabInUrl("payouts", { payoutLogs: view === "logs" })
   }
 
   const tabStripRef = useRef<HTMLDivElement>(null)
@@ -248,11 +275,12 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   function populateEventData(data: any) {
     setEventData(data.eventData ?? null)
     setBookerBVT(data.bookerBVT ?? "")
-    setAttendees(data.attendees ?? [])
     setDiscounts(data.discounts ?? [])
     setPayouts(data.payouts ?? [])
     setTicketSalesByDay(data.ticketSalesByDay ?? [])
     setTicketSalesByType(data.ticketSalesByType ?? [])
+    setSalesTrend(data.salesTrend ?? null)
+    setTicketCountTrend(data.ticketCountTrend ?? null)
     setAvailableBalance(data.availableBalance ?? 0)
     setTotalPaidOut(data.totalPaidOut ?? 0)
     if (data.eventData) {
@@ -301,13 +329,14 @@ function EventInfoInner({ eventId }: { eventId: string }) {
 
       populateEventData({
         eventData:        data.eventData,
-        attendees:        data.attendees ?? [],
         discounts:        data.discounts ?? [],
         payouts:          data.payouts ?? [],
         ticketSalesByDay: data.ticketSalesByDay ?? [],
         ticketSalesByType: data.ticketSalesByType ?? [],
         availableBalance: data.availableBalance ?? 0,
         totalPaidOut:     data.totalPaidOut ?? 0,
+        salesTrend:       data.salesTrend ?? null,
+        ticketCountTrend: data.ticketCountTrend ?? null,
       })
 
       setActiveTab(defaultTab)
@@ -447,8 +476,8 @@ function EventInfoInner({ eventId }: { eventId: string }) {
   }
 
   const handleAddDiscount = async () => {
-    if (!newDiscount.code.trim()) { alert("Please enter a discount code."); return }
-    if (newDiscount.value === "" || typeof newDiscount.value !== "number") { alert("Please enter a discount value."); return }
+    if (!newDiscount.code.trim()) { toast.error("Please enter a discount code."); return }
+    if (newDiscount.value === "" || typeof newDiscount.value !== "number") { toast.error("Please enter a discount value."); return }
     setSaving(true)
     try {
       const res  = await authFetch(`/api/event/list/${eventId}`, {
@@ -463,11 +492,11 @@ function EventInfoInner({ eventId }: { eventId: string }) {
         }),
       })
       const data = await res.json()
-      if (!res.ok) { alert(data.error ?? "Failed to add discount."); return }
+      if (!res.ok) { toast.error(data.error ?? "Failed to add discount."); return }
       setDiscounts((prev) => [...prev, data.discount])
       setNewDiscount({ code: "", type: "percentage", value: "", maxUses: 1, usedCount: 0, active: true, applicableTickets: [], expiryDate: "" })
-      alert("Discount code added successfully!")
-    } catch { alert("Failed to add discount code.") }
+      toast.success("Discount code added", { description: "Your new discount code is live." })
+    } catch { toast.error("Failed to add discount code.") }
     finally { setSaving(false) }
   }
 
@@ -478,9 +507,9 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     try {
       const res  = await authFetch(`/api/event/list/${eventId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "toggleDiscount", discountId: target.id }) })
       const data = await res.json()
-      if (!res.ok) { alert(data.error ?? "Failed."); return }
+      if (!res.ok) { toast.error(data.error ?? "Failed."); return }
       setDiscounts((prev) => prev.map((d, i) => i === index ? { ...d, active: data.active } : d))
-    } catch { alert("Failed.") }
+    } catch { toast.error("Failed.") }
     finally { setSaving(false) }
   }
 
@@ -498,9 +527,9 @@ function EventInfoInner({ eventId }: { eventId: string }) {
         body: JSON.stringify({ action: "editDiscount", discountId, ...updates }),
       })
       const data = await res.json()
-      if (!res.ok) { alert(data.error ?? "Failed to update discount."); return }
+      if (!res.ok) { toast.error(data.error ?? "Failed to update discount."); return }
       setDiscounts((prev) => prev.map((d) => (d.id === discountId ? { ...d, ...data.discount } : d)))
-    } catch { alert("Failed to update discount.") }
+    } catch { toast.error("Failed to update discount.") }
     finally { setSaving(false) }
   }
 
@@ -525,11 +554,11 @@ function EventInfoInner({ eventId }: { eventId: string }) {
     try {
       const res  = await authFetch(`/api/event/list/${eventId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "edit", ...editFormData }) })
       const data = await res.json()
-      if (!res.ok) { alert(data.error ?? "Failed to update event."); return }
+      if (!res.ok) { toast.error(data.error ?? "Failed to update event."); return }
       setEventData((prev) => prev ? { ...prev, eventName: editFormData.eventName, eventDescription: editFormData.eventDescription, eventDate: editFormData.eventDate, eventEndDate: editFormData.eventEndDate, eventVenue: editFormData.eventVenue, eventStart: editFormData.eventStart, eventEnd: editFormData.eventEnd, eventType: editFormData.eventType, isFree: !editFormData.enablePricing, ticketPrices: editFormData.enablePricing ? editFormData.ticketPrices : [], enableStopDate: editFormData.enableStopDate, stopDate: editFormData.enableStopDate ? editFormData.stopDate : "", enableColorCode: editFormData.enableColorCode, colorCode: editFormData.enableColorCode ? editFormData.colorCode : "", enableMaxSize: editFormData.enableMaxSize, maxSize: editFormData.enableMaxSize ? editFormData.maxSize : "" } : prev)
-      alert("Event updated successfully!")
+      toast.success("Event updated successfully")
       handleTabSwitch("overview")
-    } catch { alert("Failed to update event.") }
+    } catch { toast.error("Failed to update event.") }
     finally { setSaving(false) }
   }
 
@@ -541,8 +570,8 @@ function EventInfoInner({ eventId }: { eventId: string }) {
       const res = await authFetch("/api/teams", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collaborationId: collabInfo.collaborationId }) })
       if (res.ok) { router.push("/events"); return }
       const data = await res.json().catch(() => ({}))
-      alert(data.error ?? "Failed to exit team.")
-    } catch { alert("Network error.") }
+      toast.error(data.error ?? "Failed to exit team.")
+    } catch { toast.error("Network error.") }
     finally { setExitLoading(false); setExitDialog(false) }
   }
 
@@ -724,8 +753,10 @@ function EventInfoInner({ eventId }: { eventId: string }) {
         </div>
       </div>
 
-      {/* ── Sticky tab strip — sticks right under the nav (top-14) ─────── */}
-      <div className="sticky top-14 z-20 bg-white border-b border-slate-200 shadow-sm">
+      {/* ── Sticky tab strip — sticks under the mobile top bar (h-14) on
+          mobile; flush to the very top on md+ desktop, since the nav is a
+          left rail there with no top bar reserving that space. ─────────── */}
+      <div className="sticky top-14 md:top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="relative flex items-center">
             <button
@@ -776,13 +807,15 @@ function EventInfoInner({ eventId }: { eventId: string }) {
       </div>
 
       {/* ── Tab content ─────────────────────────────────────────────────── */}
+      {/* No extra card/padding wrapper here — every tab already renders its
+          own full-bleed cards, so boxing them in a second bordered+padded
+          container just compounds insets and squeezes the usable width
+          (see the UI renovation notes on "dual padding"). */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6">
 
             {activeTab === "overview" && visibleTabs.includes("overview") && (
               loadedTabs.has("overview") && eventData
-                ? <OverviewTab eventData={eventData} availableBalance={availableBalance} totalPaidOut={totalPaidOut} copiedField={copiedField} bookerBVT={bookerBVT} ticketSalesByDay={ticketSalesByDay} ticketTypeData={ticketTypeData} copyToClipboard={copyToClipboard} />
+                ? <OverviewTab eventData={eventData} availableBalance={availableBalance} totalPaidOut={totalPaidOut} copiedField={copiedField} bookerBVT={bookerBVT} ticketSalesByDay={ticketSalesByDay} ticketTypeData={ticketTypeData} salesTrend={salesTrend} ticketCountTrend={ticketCountTrend} copyToClipboard={copyToClipboard} eventId={eventId} canEditFeeBurden={isOwner || collabInfo?.role === "admin"} />
                 : <TabSkeleton />
             )}
 
@@ -792,7 +825,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
 
             {activeTab === "attendees" && visibleTabs.includes("attendees") && (
               loadedTabs.has("attendees")
-                ? <AttendeesTab attendees={attendees} formatFirestoreTimestamp={(ts: any) => ts} eventId={eventId} eventName={eventData.eventName} />
+                ? <AttendeesTab formatFirestoreTimestamp={(ts: any) => ts} eventId={eventId} eventName={eventData.eventName} />
                 : <TabSkeleton />
             )}
 
@@ -824,7 +857,7 @@ function EventInfoInner({ eventId }: { eventId: string }) {
 
             {activeTab === "payouts" && visibleTabs.includes("payouts") && (
               loadedTabs.has("payouts") && eventData
-                ? <PayoutsTab availableBalance={availableBalance} eventData={eventData} userId={currentUid} eventId={eventId} currentUserId={currentUid} attendees={attendees} payId={eventData.payId ?? ""} isOwner={isOwner} collabRole={collabInfo?.role ?? null} organizerId={eventData.createdBy ?? ""} />
+                ? <PayoutsTab availableBalance={availableBalance} eventData={eventData} userId={currentUid} eventId={eventId} currentUserId={currentUid} payId={eventData.payId ?? ""} isOwner={isOwner} collabRole={collabInfo?.role ?? null} organizerId={eventData.createdBy ?? ""} initialView={payoutView} onViewChange={handlePayoutViewChange} />
                 : <TabSkeleton />
             )}
 
@@ -890,8 +923,6 @@ function EventInfoInner({ eventId }: { eventId: string }) {
                 : <TabSkeleton />
             )}
 
-          </div>
-        </div>
       </div>
     </div>
   )

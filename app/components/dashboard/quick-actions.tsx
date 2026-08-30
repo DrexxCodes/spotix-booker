@@ -1,6 +1,6 @@
 "use client"
 
-import { FileWarning, User, Plus, BarChart3, ChevronRight } from "lucide-react"
+import { Vote, Landmark, Plus, BarChart3, ChevronRight } from "lucide-react"
 import Link from "next/link"
 
 const actions = [
@@ -24,20 +24,20 @@ const actions = [
     textColor: "text-slate-800",
   },
   {
-    icon: FileWarning,
-    label: "View Reports",
-    description: "See if any of your events were reported",
-    href: "/reports",
+    icon: Vote,
+    label: "Polls",
+    description: "View and manage polls",
+    href: "/polls",
     accent: "bg-white border border-slate-200",
     iconBg: "bg-emerald-50",
     iconColor: "text-emerald-600",
     textColor: "text-slate-800",
   },
   {
-    icon: User,
-    label: "Profile",
-    description: "Account & settings",
-    href: "/profile",
+    icon: Landmark,
+    label: "Elections",
+    description: "View and manage elections",
+    href: "/elections",
     accent: "bg-white border border-slate-200",
     iconBg: "bg-blue-50",
     iconColor: "text-blue-600",

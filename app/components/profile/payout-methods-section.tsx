@@ -35,7 +35,7 @@ export function PayoutMethodsSection({ methods }: PayoutMethodsSectionProps) {
             </div>
             <p className="text-sm font-semibold text-slate-500">No payout accounts yet</p>
             <p className="text-xs text-slate-400 mt-1">
-              Add a bank account from the Payouts section to receive withdrawals.
+              Add one from My Integrations → Bank Accounts to receive withdrawals.
             </p>
           </div>
         ) : (

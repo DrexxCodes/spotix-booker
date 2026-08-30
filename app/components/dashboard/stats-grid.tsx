@@ -3,6 +3,7 @@
 import { Calendar, TrendingUp, Tag } from "lucide-react"
 import { MaskedAmount, BalanceToggleButton } from "@/components/ui/masked-amount"
 import { useBalanceVisibilityRoot, BalanceVisibilityCtx } from "@/hooks/use-balance-visibility"
+import { TrendBadge } from "./trend-badge"
 
 interface DashboardStats {
   totalEvents: number
@@ -21,7 +22,7 @@ function fmtCurrency(n: number) {
   return `₦${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
-export function StatsGrid({ stats }: { stats: DashboardStats }) {
+export function StatsGrid({ stats, eventsTrendPct, eventsTrendTone }: { stats: DashboardStats; eventsTrendPct?: number | null; eventsTrendTone?: "up" | "down" | "flat" }) {
   const balanceCtx = useBalanceVisibilityRoot()
 
   return (
@@ -46,6 +47,8 @@ export function StatsGrid({ stats }: { stats: DashboardStats }) {
             iconBg="bg-[#6b2fa5]/10"
             valueColor="text-slate-900"
             delay="delay-[0ms]"
+            trendPct={eventsTrendPct}
+            trendTone={eventsTrendTone}
           />
           <StatCard
             label="Active"
@@ -107,18 +110,21 @@ export function StatsGrid({ stats }: { stats: DashboardStats }) {
 }
 
 function StatCard({
-  label, value, icon, iconBg, valueColor, delay,
+  label, value, icon, iconBg, valueColor, delay, trendPct, trendTone,
 }: {
   label: string; value: string; icon: React.ReactNode
-  iconBg: string; valueColor: string; delay: string
+  iconBg: string; valueColor: string; delay: string; trendPct?: number | null; trendTone?: "up" | "down" | "flat"
 }) {
   return (
     <div className={`bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ${delay}`}>
       <div className={`w-8 h-8 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
         {icon}
       </div>
-      <div className="min-w-0">
-        <p className="text-xs text-slate-400 font-medium leading-none mb-1">{label}</p>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 mb-1">
+          <p className="text-xs text-slate-400 font-medium leading-none">{label}</p>
+          {trendPct !== undefined && <TrendBadge pct={trendPct} tone={trendTone} />}
+        </div>
         <p className={`text-lg font-bold leading-none ${valueColor}`}>{value}</p>
       </div>
     </div>

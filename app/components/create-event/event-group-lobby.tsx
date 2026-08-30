@@ -11,7 +11,7 @@ interface EventGroupLobbyProps {
 
 export function EventGroupLobby({ onCreateCollection, onAddToCollection, onBack }: EventGroupLobbyProps) {
   return (
-    <div className="max-w-5xl mx-auto px-4 py-10 space-y-8 animate-in fade-in duration-700">
+    <div className="max-w-5xl mx-auto py-10 space-y-8 animate-in fade-in duration-700">
 
       {/* Back */}
       <button

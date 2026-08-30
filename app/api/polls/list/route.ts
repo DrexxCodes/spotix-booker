@@ -28,7 +28,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
-import { countTreeContestants } from "@/lib/poll-categories"
+import { countTreeContestants, countTreeCategories } from "@/lib/poll-categories"
 import { Timestamp } from "firebase-admin/firestore"
 
 const DEV_TAG = "spotix-api-v1"
@@ -92,12 +92,17 @@ function shapePoll(
     // on-demand from /api/polls/one instead.
     pollType:        d.pollType        ?? "single",
     categories:      [] as any[],
-    // Denormalized total contestant count across the whole category tree —
-    // kept up to date by writeCategoryTree() in lib/poll-categories.ts on
-    // every create/edit. Falls back to counting the legacy `categories`
-    // array field for a group poll that hasn't been saved since that field
-    // was introduced, so older polls don't show 0 entrants either.
-    contestantTotal: d.contestantTotal ?? (Array.isArray(d.categories) ? countTreeContestants(d.categories) : 0),
+    // Denormalized totals across the whole category tree — kept up to date
+    // by writeCategoryTree() in lib/poll-categories.ts on every create/edit.
+    // For a group poll that hasn't been through a create/edit save SINCE
+    // these fields were introduced, they're genuinely unknown (not 0) — the
+    // legacy `categories` array field lets us compute them for a poll that
+    // hasn't migrated to the subcollection at all, but a poll that's
+    // already migrated (array field cleared) with neither field set has no
+    // cheap source of truth here, so this reports `null` rather than
+    // falsely claiming 0. See app/polls/page.tsx for how that's displayed.
+    contestantTotal: d.contestantTotal ?? (Array.isArray(d.categories) ? countTreeContestants(d.categories) : null),
+    categoryCount:   d.categoryCount   ?? (Array.isArray(d.categories) ? countTreeCategories(d.categories)   : null),
     statsVisible:    d.statsVisible    ?? true,
     contestantsTBD:  d.contestantsTBD  ?? false,
     creatorId:       d.creatorId       ?? d.organizerId ?? "",

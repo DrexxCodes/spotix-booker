@@ -8,6 +8,7 @@
  * PATCH  /api/event/list/[eventId]
  *   Body { action: "edit", ...editFields }      → Update core event fields
  *   Body { action: "toggleDiscount", code }     → Flip discount active flag
+ *   Body { action: "setFeeBurden", feeBurden: { coversPaystackFee, coversSpotixFee } } → Who pays which fee going forward
  *
  * POST   /api/event/list/[eventId]
  *   Body { action: "addDiscount", ...discount } → Add a new discount code
@@ -171,6 +172,7 @@ export async function GET(
 // ─── PATCH ────────────────────────────────────────────────────────────────────
 // action: "edit"           → update core event fields
 // action: "toggleDiscount" → flip active flag on a discount doc by code
+// action: "setFeeBurden"   → who pays which fee going forward (Paystack's, Spotix's, both, or neither)
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ eventId: string }> }
@@ -462,6 +464,46 @@ export async function PATCH(
     } catch (e: any) {
       console.error("[PATCH editDiscount] failed", e)
       return fail("Failed to update discount", 500)
+    }
+  }
+
+  // -- action: setFeeBurden ----------------------------------------------
+  // Who pays what for every future ticket sale on this event: Spotix's
+  // platform fee and Paystack's own processing fee are independent
+  // switches (an event can have the organizer cover one, both, or
+  // neither — attendee pays whichever the organizer doesn't). Full-parity,
+  // same as the agent-incentive rate, since it's an event-wide revenue
+  // setting rather than a core detail. Purely forward-looking —
+  // spotix-backend and spotix-user freeze the burden actually applied on
+  // each Reference at purchase time, so this never rewrites what a past
+  // or in-flight sale already charged.
+  if (action === "setFeeBurden") {
+    const { feeBurden } = body
+    if (
+      !feeBurden ||
+      typeof feeBurden !== "object" ||
+      typeof feeBurden.coversPaystackFee !== "boolean" ||
+      typeof feeBurden.coversSpotixFee !== "boolean"
+    ) {
+      return fail("feeBurden must be { coversPaystackFee: boolean, coversSpotixFee: boolean }", 400)
+    }
+    const normalisedFeeBurden = {
+      coversPaystackFee: feeBurden.coversPaystackFee,
+      coversSpotixFee: feeBurden.coversSpotixFee,
+    }
+    try {
+      await eventRef.update({
+        feeBurden: normalisedFeeBurden,
+        // Keep the legacy field in sync too, so anything not yet migrated
+        // to read `feeBurden` (or an older frozen Reference read path)
+        // still resolves the Spotix-fee half correctly.
+        buyerBearsBurden: !normalisedFeeBurden.coversSpotixFee,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return ok({ message: "Fee burden updated", feeBurden: normalisedFeeBurden })
+    } catch (e: any) {
+      console.error("[PATCH setFeeBurden] failed", e)
+      return fail("Failed to update fee burden", 500)
     }
   }
 

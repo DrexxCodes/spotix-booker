@@ -3,11 +3,13 @@
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
-import { Preloader } from "@/components/preloader"
+import { Loader } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard/dashboard-header"
 import { StatsGrid } from "@/components/dashboard/stats-grid"
 import { EventsSection } from "@/components/dashboard/events-section"
+import { PollsSection } from "@/components/dashboard/polls-section"
 import { QuickActions } from "@/components/dashboard/quick-actions"
+import { SkeletonRows } from "@/components/ui/skeleton"
 
 interface DashboardStats {
   totalEvents: number
@@ -29,9 +31,25 @@ interface Event {
   status: string
 }
 
+interface Poll {
+  id: string
+  pollName: string
+  pollImage: string
+  pollStartDate: string
+  pollEndDate: string
+  pollAmount: number
+  pollCount: number
+  totalPaidOut: number
+}
+
 interface CachedDashboard {
   stats: DashboardStats
   events: Event[]
+  polls: Poll[]
+  eventsTrendPct: number | null
+  eventsTrendTone: "up" | "down" | "flat"
+  pollsTrendPct: number | null
+  pollsTrendTone: "up" | "down" | "flat"
   userName: string
   cachedAt: number
 }
@@ -67,6 +85,11 @@ export default function DashboardPage() {
   const [isRefreshing, setIsRefreshing]   = useState(false)
   const [stats, setStats]                 = useState<DashboardStats | null>(null)
   const [events, setEvents]               = useState<Event[]>([])
+  const [polls, setPolls]                 = useState<Poll[]>([])
+  const [eventsTrendPct, setEventsTrendPct] = useState<number | null>(null)
+  const [eventsTrendTone, setEventsTrendTone] = useState<"up" | "down" | "flat">("flat")
+  const [pollsTrendPct, setPollsTrendPct]   = useState<number | null>(null)
+  const [pollsTrendTone, setPollsTrendTone]   = useState<"up" | "down" | "flat">("flat")
   const [userName, setUserName]           = useState("Booker")
   const [error, setError]                 = useState<string | null>(null)
   const [userId, setUserId]               = useState<string | null>(null)
@@ -110,6 +133,11 @@ export default function DashboardPage() {
         if (cached) {
           setStats(cached.stats)
           setEvents(cached.events)
+          setPolls(cached.polls ?? [])
+          setEventsTrendPct(cached.eventsTrendPct ?? null)
+          setEventsTrendTone(cached.eventsTrendTone ?? "flat")
+          setPollsTrendPct(cached.pollsTrendPct ?? null)
+          setPollsTrendTone(cached.pollsTrendTone ?? "flat")
           setUserName(cached.userName)
           setLastRefreshed(new Date(cached.cachedAt))
           setServedFromCache(true)
@@ -132,6 +160,11 @@ export default function DashboardPage() {
 
         setStats(data.stats)
         setEvents(data.recentEvents)
+        setPolls(data.recentPolls ?? [])
+        setEventsTrendPct(data.eventsTrendPct ?? null)
+        setEventsTrendTone(data.eventsTrendTone ?? "flat")
+        setPollsTrendPct(data.pollsTrendPct ?? null)
+        setPollsTrendTone(data.pollsTrendTone ?? "flat")
         setUserName(data.bookerName)
         setError(null)
 
@@ -141,6 +174,11 @@ export default function DashboardPage() {
         writeCache(userId, {
           stats: data.stats,
           events: data.recentEvents,
+          polls: data.recentPolls ?? [],
+          eventsTrendPct: data.eventsTrendPct ?? null,
+          eventsTrendTone: data.eventsTrendTone ?? "flat",
+          pollsTrendPct: data.pollsTrendPct ?? null,
+          pollsTrendTone: data.pollsTrendTone ?? "flat",
           userName: data.bookerName,
           cachedAt: now,
         })
@@ -169,7 +207,13 @@ export default function DashboardPage() {
     fetchDashboardData(true)
   }, [userId, fetchDashboardData])
 
-  if (loading) return <Preloader isLoading={true} />
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader className="w-7 h-7 animate-spin text-[#6b2fa5]" />
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -232,7 +276,7 @@ export default function DashboardPage() {
                 ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
               }`}
             >
-              <StatsGrid stats={stats} />
+              <StatsGrid stats={stats} eventsTrendPct={eventsTrendPct} eventsTrendTone={eventsTrendTone} />
             </div>
 
             {/* Events — delay 200ms */}
@@ -241,7 +285,16 @@ export default function DashboardPage() {
                 ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
               }`}
             >
-              <EventsSection events={events} userId={userId} />
+              {isRefreshing ? <SkeletonRows count={4} rowClassName="h-16" /> : <EventsSection events={events} userId={userId} />}
+            </div>
+
+            {/* Polls — delay 250ms */}
+            <div
+              className={`transition-all duration-500 delay-[250ms] ${
+                ready ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+              }`}
+            >
+              {isRefreshing ? <SkeletonRows count={4} rowClassName="h-16" /> : <PollsSection polls={polls} trendPct={pollsTrendPct} trendTone={pollsTrendTone} />}
             </div>
 
             {/* Quick Actions — delay 300ms */}

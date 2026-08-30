@@ -29,6 +29,7 @@
 import { adminDb } from "@/lib/firebase-admin"
 import { verifyAccessToken } from "@/lib/auth-tokens"
 import { type NextRequest, NextResponse } from "next/server"
+import { computeSalesTrend, todayAndYesterdayKeys } from "@/lib/sales-trend"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -124,6 +125,28 @@ function buildYearlySeries(events: { eventDate?: string; revenue: number; ticket
   return Array.from(buckets.values())
 }
 
+/**
+ * Sums a per-doc field (ticketSales / voteSales) across every
+ * admin/{events|votes}/{id}/{date} day-doc for the given ids and date,
+ * in parallel. Used to build the portfolio-wide day-over-day trend shown
+ * next to Events and Polls on the dashboard (item 9 of the UI renovation)
+ * — same day-doc collection the Payouts tab already reads per-event, just
+ * summed across every event/poll the booker owns instead of one at a time.
+ */
+async function sumDaySales(
+  adminSubcollection: "events" | "votes",
+  ids: string[],
+  date: string,
+  field: "ticketSales" | "voteSales"
+): Promise<number> {
+  if (ids.length === 0) return 0
+  const snaps = await Promise.all(
+    ids.map((id) => adminDb.collection("admin").doc(adminSubcollection).collection(id).doc(date).get())
+  )
+  return snaps.reduce((sum, snap) => sum + (snap.exists ? (snap.data()?.[field] ?? 0) : 0), 0)
+}
+
+
 export async function GET(request: NextRequest) {
   try {
     // Resolve user ID from middleware header or cookie fallback
@@ -189,9 +212,14 @@ export async function GET(request: NextRequest) {
     let inactiveEvents = 0
     const recentEventsData: any[] = []
     const seriesInput: { eventDate?: string; revenue: number; ticketsSold: number }[] = []
+    // Only active events feed the day-over-day trend sum below — inactive/
+    // ended events don't sell tickets day to day, so reading their day-docs
+    // would just add Firestore reads without changing the trend.
+    const activeEventIds: string[] = []
 
     for (const doc of eventsSnap.docs) {
       const d = doc.data()
+      if (d.status === "active") activeEventIds.push(doc.id)
 
       if (d.status === "active") activeEvents++
       else if (d.status === "inactive") inactiveEvents++
@@ -214,11 +242,76 @@ export async function GET(request: NextRequest) {
 
     const recentEvents = recentEventsData.slice(0, 5)
 
+    // Day-over-day ticketSales trend across every event the booker owns —
+    // reads admin/events/{eventId}/{today|yesterday}, the same day-docs the
+    // Payouts tab already reads per-event (see item 9 of the UI renovation).
+    const { today, yesterday } = todayAndYesterdayKeys()
+    const [eventsSalesToday, eventsSalesYesterday] = await Promise.all([
+      sumDaySales("events", activeEventIds, today, "ticketSales"),
+      sumDaySales("events", activeEventIds, yesterday, "ticketSales"),
+    ])
+    const eventsTrend = computeSalesTrend(eventsSalesToday, eventsSalesYesterday)
+
     const timeSeries = {
       daily: buildDailySeries(seriesInput),
       monthly: buildMonthlySeries(seriesInput),
       yearly: buildYearlySeries(seriesInput),
     }
+
+    // ── 3. Query flat voting (polls) collection by creatorId ──────────────────
+    // Same shape/pattern as the events read above — see item 9 of the UI
+    // renovation ("dashboard should also feature updates from the polls").
+    const pollsSnap = await adminDb
+      .collection("voting")
+      .where("creatorId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .get()
+
+    let totalPollRevenue = 0
+    let totalVotes = 0
+    const recentPollsData: any[] = []
+    // Only currently-active polls (now between pollStartDate and
+    // pollEndDate) feed the day-over-day trend sum below — mirrors the
+    // events-only scoping above. Polls have no stored `status` field, so
+    // "active" is computed the same way polls-section.tsx does it
+    // client-side: now falls within [pollStartDate, pollEndDate].
+    const activePollIds: string[] = []
+
+    for (const doc of pollsSnap.docs) {
+      const d = doc.data()
+      const pollAmount = d.pollAmount || 0
+      const pollCount = d.pollCount || 0
+      totalPollRevenue += pollAmount
+      totalVotes += pollCount
+
+      const now = Date.now()
+      const startMs = d.pollStartDate ? new Date(d.pollStartDate).getTime() : null
+      const endMs = d.pollEndDate ? new Date(d.pollEndDate).getTime() : null
+      const isActivePoll = (!startMs || now >= startMs) && (!endMs || now <= endMs)
+      if (isActivePoll) activePollIds.push(doc.id)
+
+      recentPollsData.push({
+        id: doc.id,
+        pollName: d.pollName || "Unnamed Poll",
+        pollImage: d.pollImage || "",
+        pollStartDate: d.pollStartDate || "",
+        pollEndDate: d.pollEndDate || "",
+        pollAmount,
+        pollCount,
+        totalPaidOut: d.totalPaidOut || 0,
+      })
+    }
+
+    const recentPolls = recentPollsData.slice(0, 5)
+
+    // Day-over-day voteSales trend across every poll the booker owns —
+    // reads admin/votes/{pollId}/{today|yesterday}, mirroring the events
+    // trend above (item 9 of the UI renovation).
+    const [pollsSalesToday, pollsSalesYesterday] = await Promise.all([
+      sumDaySales("votes", activePollIds, today, "voteSales"),
+      sumDaySales("votes", activePollIds, yesterday, "voteSales"),
+    ])
+    const pollsTrend = computeSalesTrend(pollsSalesToday, pollsSalesYesterday)
 
     return NextResponse.json({
       stats: {
@@ -232,6 +325,16 @@ export async function GET(request: NextRequest) {
       },
       recentEvents,
       timeSeries,
+      eventsTrendPct: eventsTrend.pct,
+      eventsTrendTone: eventsTrend.tone,
+      pollStats: {
+        totalPolls: pollsSnap.size,
+        totalPollRevenue,
+        totalVotes,
+      },
+      recentPolls,
+      pollsTrendPct: pollsTrend.pct,
+      pollsTrendTone: pollsTrend.tone,
       bookerName: userName,
       lastUpdated: Date.now(),
     })

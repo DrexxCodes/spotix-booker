@@ -23,6 +23,8 @@ import { resolvePollAccess } from "@/lib/poll-team-access"
 import { fetchCategoryTree } from "@/lib/poll-categories"
 import { resolvePollLimits } from "@/lib/poll-config"
 import { Timestamp } from "firebase-admin/firestore"
+import { adminDb } from "@/lib/firebase-admin"
+import { computeSalesTrend, todayAndYesterdayKeys, type SalesTrend } from "@/lib/sales-trend"
 
 const DEV_TAG = "spotix-api-v1"
 
@@ -79,6 +81,24 @@ export async function GET(req: NextRequest) {
         ? await fetchCategoryTree(pollId, { legacyCategories: d.categories ?? [], skipCache: true })
         : []
 
+    // ── Day-over-day voteSales trend, from admin/votes/{pollId}/{date} —
+    // the same day-docs the poll Payouts tab already reads — powers the
+    // Revenue stat's "x% rise/drop" indicator on the poll detail page.
+    let salesTrend: SalesTrend
+    try {
+      const { today, yesterday } = todayAndYesterdayKeys()
+      const [todaySnap, yesterdaySnap] = await Promise.all([
+        adminDb.collection("admin").doc("votes").collection(pollId).doc(today).get(),
+        adminDb.collection("admin").doc("votes").collection(pollId).doc(yesterday).get(),
+      ])
+      const todaySales = todaySnap.exists ? (todaySnap.data()?.voteSales ?? 0) : 0
+      const yesterdaySales = yesterdaySnap.exists ? (yesterdaySnap.data()?.voteSales ?? 0) : 0
+      salesTrend = computeSalesTrend(todaySales, yesterdaySales)
+    } catch (e) {
+      console.error("[GET /api/polls/one] sales trend fetch failed", e)
+      salesTrend = { pct: 0, tone: "flat", today: 0, yesterday: 0 }
+    }
+
     return ok({
       access: access.role,
       poll: {
@@ -111,6 +131,7 @@ export async function GET(req: NextRequest) {
         organizerId:     d.organizerId     ?? d.creatorId   ?? "",
         createdAt:       toIso(d.createdAt),
         updatedAt:       toIso(d.updatedAt),
+        salesTrend,
       },
     })
   } catch (err: any) {

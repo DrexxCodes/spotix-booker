@@ -1,7 +1,10 @@
 "use client"
-import { Copy, Check, TrendingUp, Wallet, Users, DollarSign, Vote, Link2, ExternalLink } from "lucide-react"
+import { useState } from "react"
+import { Copy, Check, TrendingUp, Wallet, Users, DollarSign, Vote, Link2, ExternalLink, Percent, Loader2, AlertCircle, Settings2, X, CreditCard } from "lucide-react"
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { MaskedAmount } from "@/components/ui/masked-amount"
+import { SalesTrendBadge } from "@/components/ui/sales-trend-badge"
+import { InlineTrend } from "@/components/ui/inline-trend"
 
 interface OverviewTabProps {
   eventData: any
@@ -11,7 +14,13 @@ interface OverviewTabProps {
   bookerBVT: string
   ticketSalesByDay: any[]
   ticketTypeData: any[]
+  salesTrend?: { pct: number | null; tone: "up" | "down" | "flat" } | null
+  ticketCountTrend?: { pct: number | null; tone: "up" | "down" | "flat" } | null
   copyToClipboard: (text: string, field: string) => void
+  eventId: string
+  /** Owner or Admin collaborator only — everyone else sees the current
+   *  setting read-only. Enforced again server-side regardless. */
+  canEditFeeBurden: boolean
 }
 
 export default function OverviewTab({
@@ -22,8 +31,60 @@ export default function OverviewTab({
   bookerBVT,
   ticketSalesByDay,
   ticketTypeData,
+  salesTrend,
+  ticketCountTrend,
   copyToClipboard,
+  eventId,
+  canEditFeeBurden,
 }: OverviewTabProps) {
+  // Two independent switches rather than one toggle — mirrors
+  // resolveFeeBurden() in spotix-user's priceUtility.ts. Legacy events
+  // that only ever had `buyerBearsBurden` (before Paystack's fee was
+  // split out as its own concept) map onto this the same way: false
+  // meant "organizer covers Spotix's fee", Paystack's stayed attendee-owed.
+  const resolveFeeBurden = (ev: any): { coversPaystackFee: boolean; coversSpotixFee: boolean } => {
+    if (ev?.feeBurden && typeof ev.feeBurden === "object") {
+      return {
+        coversPaystackFee: ev.feeBurden.coversPaystackFee === true,
+        coversSpotixFee: ev.feeBurden.coversSpotixFee === true,
+      }
+    }
+    return { coversPaystackFee: false, coversSpotixFee: ev?.buyerBearsBurden === false }
+  }
+
+  const [feeBurden, setFeeBurden] = useState(resolveFeeBurden(eventData))
+  const [savedFeeBurden, setSavedFeeBurden] = useState(resolveFeeBurden(eventData))
+  const [savingBurden, setSavingBurden] = useState(false)
+  const [burdenError, setBurdenError] = useState("")
+  const [burdenGearOpen, setBurdenGearOpen] = useState(false)
+  const [draftFeeBurden, setDraftFeeBurden] = useState(feeBurden)
+
+  const handleSaveFeeBurden = async (next: { coversPaystackFee: boolean; coversSpotixFee: boolean }) => {
+    setFeeBurden(next) // optimistic — reverted below on failure
+    setSavingBurden(true)
+    setBurdenError("")
+    try {
+      const res = await fetch(`/api/event/list/${eventId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "setFeeBurden", feeBurden: next }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        setBurdenError(data.error || "Failed to update fee burden")
+        setFeeBurden(savedFeeBurden)
+        return
+      }
+      setSavedFeeBurden(next)
+      setBurdenGearOpen(false)
+    } catch {
+      setBurdenError("Something went wrong. Please try again")
+      setFeeBurden(savedFeeBurden)
+    } finally {
+      setSavingBurden(false)
+    }
+  }
+
   return (
     <div className="space-y-8">
       {/* Hero Image with Gradient Overlay */}
@@ -78,6 +139,7 @@ export default function OverviewTab({
               {((eventData.ticketsSold / eventData.maxSize) * 100).toFixed(1)}% capacity
             </p>
           )}
+          {ticketCountTrend && <InlineTrend pct={ticketCountTrend.pct} tone={ticketCountTrend.tone} />}
         </div>
 
         {/* Revenue Stat */}
@@ -92,6 +154,7 @@ export default function OverviewTab({
             <MaskedAmount value={`₦${eventData.totalRevenue.toLocaleString()}`} size="xl" className="text-slate-900" />
           </p>
           <p className="text-xs text-slate-500 mt-2">All ticket sales</p>
+          {salesTrend && <InlineTrend pct={salesTrend.pct} tone={salesTrend.tone} />}
         </div>
 
         {/* Available Balance Stat - Highlighted */}
@@ -225,6 +288,176 @@ export default function OverviewTab({
         </div>
       </div>
 
+      {/* Burden of Fee */}
+      <div className="bg-white rounded-xl p-8 border border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-[#6b2fa5]/10 rounded-lg">
+              <Percent className="w-5 h-5 text-[#6b2fa5]" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-900">Burden of Fee</h3>
+          </div>
+          {canEditFeeBurden && (
+            <button
+              type="button"
+              onClick={() => { setDraftFeeBurden(feeBurden); setBurdenGearOpen(true) }}
+              disabled={savingBurden}
+              title="Customize which fee you cover"
+              className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-[#6b2fa5] hover:border-[#6b2fa5]/40 hover:bg-[#6b2fa5]/5 transition-colors disabled:opacity-50"
+            >
+              <Settings2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <p className="text-sm text-slate-500 mb-6 max-w-2xl">
+          Who pays the fees on every ticket sold for this event, going forward — Spotix's platform fee, Paystack's
+          own processing fee, or both. This never changes what a ticket already sold was charged. Use the gear icon
+          to cover just one of the two instead of an all-or-nothing choice.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button
+            type="button"
+            disabled={!canEditFeeBurden || savingBurden}
+            onClick={() => handleSaveFeeBurden({ coversPaystackFee: false, coversSpotixFee: false })}
+            className={`text-left p-5 rounded-xl border-2 transition-all duration-200 disabled:cursor-not-allowed ${
+              !feeBurden.coversPaystackFee && !feeBurden.coversSpotixFee
+                ? "border-[#6b2fa5] bg-[#6b2fa5]/5"
+                : "border-slate-200 bg-white hover:border-slate-300"
+            } ${!canEditFeeBurden ? "opacity-70" : ""}`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <p className="font-bold text-slate-900">Attendees pay the fees</p>
+              {!feeBurden.coversPaystackFee && !feeBurden.coversSpotixFee && <Check size={18} className="text-[#6b2fa5]" />}
+            </div>
+            <p className="text-xs text-slate-500">
+              Both fees are added on top of the ticket price at checkout. You receive the full ticket price.
+              This is the default.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            disabled={!canEditFeeBurden || savingBurden}
+            onClick={() => handleSaveFeeBurden({ coversPaystackFee: true, coversSpotixFee: true })}
+            className={`text-left p-5 rounded-xl border-2 transition-all duration-200 disabled:cursor-not-allowed ${
+              feeBurden.coversPaystackFee && feeBurden.coversSpotixFee
+                ? "border-[#6b2fa5] bg-[#6b2fa5]/5"
+                : "border-slate-200 bg-white hover:border-slate-300"
+            } ${!canEditFeeBurden ? "opacity-70" : ""}`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <p className="font-bold text-slate-900">You cover both fees</p>
+              {feeBurden.coversPaystackFee && feeBurden.coversSpotixFee && <Check size={18} className="text-[#6b2fa5]" />}
+            </div>
+            <p className="text-xs text-slate-500">
+              Attendees pay exactly the ticket price you set — nothing added. Both fees come out of your revenue
+              at payout time.
+            </p>
+          </button>
+        </div>
+
+        {/* Custom split summary — only shown when neither preset above matches */}
+        {(feeBurden.coversPaystackFee !== feeBurden.coversSpotixFee) && (
+          <div className="mt-4 rounded-xl border border-[#6b2fa5]/30 bg-[#6b2fa5]/5 p-4 flex items-start gap-3">
+            <Settings2 className="w-4 h-4 text-[#6b2fa5] shrink-0 mt-0.5" />
+            <p className="text-sm text-slate-700">
+              <span className="font-semibold">Custom split:</span> you cover{" "}
+              {feeBurden.coversPaystackFee ? "Paystack's processing fee" : "Spotix's platform fee"}, attendees cover{" "}
+              {feeBurden.coversPaystackFee ? "Spotix's platform fee" : "Paystack's processing fee"}.
+            </p>
+          </div>
+        )}
+
+        {savingBurden && (
+          <p className="flex items-center gap-2 text-xs text-slate-500 mt-4">
+            <Loader2 size={14} className="animate-spin" /> Saving…
+          </p>
+        )}
+        {burdenError && (
+          <p className="flex items-center gap-2 text-xs text-red-600 mt-4">
+            <AlertCircle size={14} /> {burdenError}
+          </p>
+        )}
+        {!canEditFeeBurden && (
+          <p className="text-xs text-slate-400 mt-4">Only the organizer or an Admin collaborator can change this.</p>
+        )}
+      </div>
+
+      {/* Burden of Fee — granular gear modal */}
+      {burdenGearOpen && (
+        <div className="fixed inset-0 z-[9998] bg-black/40 flex items-center justify-center p-4" onClick={() => setBurdenGearOpen(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-[#6b2fa5]" /> Customize Burden of Fee
+              </h4>
+              <button onClick={() => setBurdenGearOpen(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <CreditCard className="w-4 h-4 text-slate-500" />
+                <p className="text-sm font-semibold text-slate-800">Paystack's processing fee</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftFeeBurden((d) => ({ ...d, coversPaystackFee: false }))}
+                  className={`text-xs font-semibold py-2.5 rounded-lg border transition-colors ${!draftFeeBurden.coversPaystackFee ? "border-[#6b2fa5] bg-[#6b2fa5]/5 text-[#6b2fa5]" : "border-slate-200 text-slate-500"}`}
+                >
+                  Attendee pays
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraftFeeBurden((d) => ({ ...d, coversPaystackFee: true }))}
+                  className={`text-xs font-semibold py-2.5 rounded-lg border transition-colors ${draftFeeBurden.coversPaystackFee ? "border-[#6b2fa5] bg-[#6b2fa5]/5 text-[#6b2fa5]" : "border-slate-200 text-slate-500"}`}
+                >
+                  You pay
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Percent className="w-4 h-4 text-slate-500" />
+                <p className="text-sm font-semibold text-slate-800">Spotix's platform fee</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftFeeBurden((d) => ({ ...d, coversSpotixFee: false }))}
+                  className={`text-xs font-semibold py-2.5 rounded-lg border transition-colors ${!draftFeeBurden.coversSpotixFee ? "border-[#6b2fa5] bg-[#6b2fa5]/5 text-[#6b2fa5]" : "border-slate-200 text-slate-500"}`}
+                >
+                  Attendee pays
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraftFeeBurden((d) => ({ ...d, coversSpotixFee: true }))}
+                  className={`text-xs font-semibold py-2.5 rounded-lg border transition-colors ${draftFeeBurden.coversSpotixFee ? "border-[#6b2fa5] bg-[#6b2fa5]/5 text-[#6b2fa5]" : "border-slate-200 text-slate-500"}`}
+                >
+                  You pay
+                </button>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              If an attendee ends up owing at least one fee, checkout shows them a "Fee breakdown" so it's always
+              clear what they're paying for.
+            </p>
+
+            <button
+              onClick={() => handleSaveFeeBurden(draftFeeBurden)}
+              disabled={savingBurden}
+              className="w-full py-2.5 text-sm font-semibold rounded-lg bg-[#6b2fa5] text-white hover:bg-[#5a2589] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {savingBurden && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Event Description - Enhanced readability */}
       <div className="bg-gradient-to-br from-white to-slate-50 rounded-xl p-8 border border-slate-200 shadow-sm">
         <h3 className="text-xl font-bold text-slate-900 mb-4">Event Description</h3>
@@ -236,7 +469,10 @@ export default function OverviewTab({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Ticket Sales Chart */}
           <div className="bg-white rounded-xl p-8 border border-slate-200 shadow-sm hover:shadow-md transition-shadow duration-300">
-            <h4 className="text-xl font-bold text-slate-900 mb-6">Ticket Sales Over Time</h4>
+            <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
+              <h4 className="text-xl font-bold text-slate-900">Ticket Sales Over Time</h4>
+              {salesTrend && <SalesTrendBadge pct={salesTrend.pct} tone={salesTrend.tone} metric="ticket sales" />}
+            </div>
             {ticketSalesByDay.length > 0 ? (
               <ResponsiveContainer width="100%" height={320}>
                 <AreaChart data={ticketSalesByDay}>

@@ -6,7 +6,10 @@ import {
   ReceiptText, Ban, CalendarX, Lock, Eye,
 } from "lucide-react"
 import { useState, useEffect, useCallback } from "react"
-import CreatePayoutMethod from "./helper/CreatePayoutMethod"
+import { useRouter } from "next/navigation"
+import { useBVTStatus } from "@/hooks/useBVTStatus"
+import { toast } from "@/lib/toast"
+import { SkeletonRows } from "@/components/ui/skeleton"
 import ViewPayoutMethods from "./helper/ViewPayoutMethods"
 import { MaskedAmount } from "@/components/ui/masked-amount"
 import PayoutConfirmation from "./helper/payout-confirmation"
@@ -53,11 +56,14 @@ interface PayoutsTabProps {
   userId: string
   eventId: string
   currentUserId: string
-  attendees: any[]
   payId: string
   isOwner: boolean
   collabRole: string | null
   organizerId: string
+  /** Lets the parent (event-info page) deep-link straight into a sub-view via
+   *  ?tab=payouts&payoutLogs — see app/event-info/[eventId]/page.tsx. */
+  initialView?: "transactions" | "methods" | "addMethod" | "logs"
+  onViewChange?: (view: "transactions" | "methods" | "addMethod" | "logs") => void
 }
 
 const LOCK_HOURS = 30
@@ -435,10 +441,11 @@ export default function PayoutsTab({
   userId,
   eventId,
   currentUserId,
-  attendees,
   isOwner,
   collabRole,
   organizerId,
+  initialView,
+  onViewChange,
 }: PayoutsTabProps) {
   const [transactions, setTransactions] = useState<DailyTransaction[]>([])
   const [txnLoading, setTxnLoading] = useState(true)
@@ -483,7 +490,26 @@ export default function PayoutsTab({
   // the moment a Vault-locked one is released by the last sign-off.
   const [liveReferences, setLiveReferences] = useState<string[] | null>(null)
 
-  const [activeView, setActiveView] = useState<ActiveView>("transactions")
+  const [activeView, setActiveViewState] = useState<ActiveView>(initialView ?? "transactions")
+  const setActiveView = (view: ActiveView) => {
+    setActiveViewState(view)
+    onViewChange?.(view)
+  }
+  const router = useRouter()
+  const { isVerified: bvtVerified, loading: bvtLoading } = useBVTStatus()
+
+  // Same KYC/BVT gate as the poll and election payout flows — see
+  // hooks/useBVTStatus.ts. Blocks initiating a withdrawal (viewing the
+  // Payouts tab itself is still fine) until the booker is verified.
+  function requireBVTOrRedirect(): boolean {
+    if (bvtLoading) return false
+    if (!bvtVerified) {
+      toast.warning("Verification required", { description: "Complete KYC in the verification page to access withdrawals." })
+      router.push("/verification")
+      return false
+    }
+    return true
+  }
   const [dialogTxn, setDialogTxn] = useState<DailyTransaction | null>(null)
   const [payoutError, setPayoutError] = useState<PayoutError | null>(null)
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
@@ -615,6 +641,7 @@ export default function PayoutsTab({
 
   function handleBulkPayoutClick() {
     if (selectedDates.size === 0) return
+    if (!requireBVTOrRedirect()) return
     const txnsToProcess = transactions.filter((t) => selectedDates.has(t.date))
     setBulkPayoutTxns(txnsToProcess)
     setDialogTxn(null) // Clear single transaction if any
@@ -760,6 +787,33 @@ export default function PayoutsTab({
         </div>
       )}
 
+      {/* Burden of Fee notice — only shown when this organizer is absorbing
+          at least one of the two fees (see Overview tab → gear icon). */}
+      {(() => {
+        const fb = eventData?.feeBurden && typeof eventData.feeBurden === "object"
+          ? { coversPaystackFee: eventData.feeBurden.coversPaystackFee === true, coversSpotixFee: eventData.feeBurden.coversSpotixFee === true }
+          : { coversPaystackFee: false, coversSpotixFee: eventData?.buyerBearsBurden === false }
+        if (!fb.coversPaystackFee && !fb.coversSpotixFee) return null
+
+        const message = fb.coversPaystackFee && fb.coversSpotixFee
+          ? "You're the one paying the platform fees, it's coming out of your revenue."
+          : fb.coversSpotixFee
+          ? "You're covering Spotix's platform fee — it's coming out of your revenue. Attendees still cover Paystack's processing fee."
+          : "You're covering Paystack's processing fee — it's coming out of your revenue. Attendees still cover Spotix's platform fee."
+
+        return (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+            <AlertCircle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800 leading-relaxed">
+              {message}{" "}
+              <a href="#" className="font-semibold underline hover:text-amber-900">
+                Learn more
+              </a>
+            </p>
+          </div>
+        )
+      })()}
+
       {/* ── 3 Stat Blocks ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
@@ -892,12 +946,7 @@ export default function PayoutsTab({
       {activeView === "transactions" && (
         <div>
           {txnLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="text-center space-y-3">
-                <Loader2 size={32} className="animate-spin text-[#6b2fa5] mx-auto" />
-                <p className="text-sm text-gray-400">Loading transactions...</p>
-              </div>
-            </div>
+            <SkeletonRows count={5} rowClassName="h-24" />
           ) : txnError ? (
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3">
               <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
@@ -954,7 +1003,7 @@ export default function PayoutsTab({
                   payoutStatus={payoutStatuses[txn.date] ?? null}
                   payoutReference={payoutRefs[txn.date] ?? null}
                   hasMethods={methods.length > 0}
-                  onPayout={(t) => setDialogTxn(t)}
+                  onPayout={(t) => { if (requireBVTOrRedirect()) setDialogTxn(t) }}
                   onReopen={handleReopenPayout}
                   onAddMethod={() => setActiveView("methods")}
                   vaultReady={vaultStatus.ready}
@@ -1002,25 +1051,13 @@ export default function PayoutsTab({
           loading={methodsLoading}
           error={methodsError}
           onRefresh={fetchMethods}
-          onAddNew={() => setActiveView("addMethod")}
+          onAddNew={() => router.push("/integrations")}
           readOnly={methodsReadOnly || !canManageOwnMethods}
           readOnlyNote={
             methodsReadOnly || !canManageOwnMethods
               ? "These are the event creator's payout methods. Payouts you initiate on this event settle here — only the creator can add, edit, or remove them."
               : undefined
           }
-        />
-      )}
-
-      
-      {activeView === "addMethod" && canManageOwnMethods && (
-        <CreatePayoutMethod
-          userId={currentUserId}
-          onCreated={(newMethod) => {
-            setMethods((prev) => [...prev, newMethod])
-            setActiveView("methods")
-          }}
-          onCancel={() => setActiveView("methods")}
         />
       )}
     </div>

@@ -11,6 +11,8 @@ import { useEffect, useState, type MouseEvent } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "./components/Skeleton"
+import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning"
+import { UnsavedChangesDialog } from "@/components/ui/unsaved-changes-dialog"
 
 interface Election {
   id: string
@@ -143,6 +145,13 @@ function CreateElectionDialog({ onClose, onCreated }: { onClose: () => void; onC
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Same "leave without saving?" protection as create-event and poll
+  // create/edit — see item 8 of the UI renovation.
+  const isDirty = Boolean(
+    name.trim() || description.trim() || votingStartsAt || votingEndsAt || editGraceDays !== "0"
+  )
+  const { showConfirmDialog, confirmLeave, cancelLeave, guardNavigation } = useUnsavedChangesWarning(isDirty)
+
   async function handleCreate() {
     setSaving(true)
     setError(null)
@@ -170,6 +179,7 @@ function CreateElectionDialog({ onClose, onCreated }: { onClose: () => void; onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
+      <UnsavedChangesDialog open={showConfirmDialog} onConfirm={confirmLeave} onCancel={cancelLeave} />
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         <h2 className="text-lg font-semibold text-gray-900">New election</h2>
 
@@ -220,7 +230,7 @@ function CreateElectionDialog({ onClose, onCreated }: { onClose: () => void; onC
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => guardNavigation(onClose)()}>
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={saving || !name.trim()}>

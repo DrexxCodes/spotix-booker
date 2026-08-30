@@ -267,6 +267,55 @@ export function cancelProactiveRefresh(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Visibility/focus-triggered refresh — mitigates the "full page reload" bug
+// ---------------------------------------------------------------------------
+//
+// setTimeout-based proactive refresh (above) is throttled or fully paused by
+// browsers while a tab is backgrounded. If a session sits backgrounded past
+// the 15-minute access-token TTL, the httpOnly `spotix_at` cookie goes stale
+// before the timer ever fires. The NEXT click on a next/link — e.g. into
+// /dashboard, /event-info, or /profile, the pages people tend to linger on —
+// then hits proxy.ts server-side with a stale cookie, which redirects to
+// /login. Next.js's client router can't resolve a middleware/proxy redirect
+// as a soft transition, so it falls back to a full browser navigation —
+// this is what shows up as "still does a full reload" even though every
+// in-app Link/router.push call itself is correct.
+//
+// Mitigation: whenever the tab regains focus/visibility, immediately check
+// (and if needed refresh) the token instead of waiting for the background
+// timer, so the cookie is already fresh by the time the user clicks
+// anything. Call this once from AuthProvider (see hooks/useAuth.ts).
+let _visibilityRefreshAttached = false
+
+export function setupVisibilityRefresh(): () => void {
+  if (typeof window === "undefined") return () => {}
+  if (_visibilityRefreshAttached) return () => {}
+  _visibilityRefreshAttached = true
+
+  const checkAndRefresh = () => {
+    const token = getAccessToken()
+    // No in-memory token (or it's already past/near expiry) — refresh now
+    // rather than waiting for the next scheduled timer tick.
+    if (!token || msUntilExpiry(token) <= REFRESH_BUFFER_MS) {
+      tryRefreshTokens()
+    }
+  }
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "visible") checkAndRefresh()
+  }
+
+  document.addEventListener("visibilitychange", onVisibilityChange)
+  window.addEventListener("focus", checkAndRefresh)
+
+  return () => {
+    document.removeEventListener("visibilitychange", onVisibilityChange)
+    window.removeEventListener("focus", checkAndRefresh)
+    _visibilityRefreshAttached = false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // authFetch — authenticated fetch wrapper
 // ---------------------------------------------------------------------------
 

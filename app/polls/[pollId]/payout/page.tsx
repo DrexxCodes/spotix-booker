@@ -4,6 +4,9 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
+import { useBVTStatus } from "@/hooks/useBVTStatus"
+import { toast } from "@/lib/toast"
+import { SkeletonRows } from "@/components/ui/skeleton"
 import {
   Loader,
   ArrowLeft,
@@ -362,6 +365,19 @@ export default function PollPayoutPage() {
   const [dialogTxn,    setDialogTxn]    = useState<DailyVoteTransaction | null>(null)
   const [payoutError,  setPayoutError]  = useState<PayoutError | null>(null)
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
+
+  // Same KYC/BVT gate as the event and election payout flows — see
+  // hooks/useBVTStatus.ts.
+  const { isVerified: bvtVerified, loading: bvtLoading } = useBVTStatus()
+  function requireBVTOrRedirect(): boolean {
+    if (bvtLoading) return false
+    if (!bvtVerified) {
+      toast.warning("Verification required", { description: "Complete KYC in the verification page to access withdrawals." })
+      router.push("/verification")
+      return false
+    }
+    return true
+  }
   const [bulkPayoutTxns, setBulkPayoutTxns] = useState<DailyVoteTransaction[]>([])
 
   // Live payout progress dialog — opened the moment a payout begins.
@@ -509,6 +525,7 @@ export default function PollPayoutPage() {
 
   function handleBulkPayoutClick() {
     if (selectedDates.size === 0) return
+    if (!requireBVTOrRedirect()) return
     const txnsToProcess = transactions.filter((t) => selectedDates.has(t.date))
     setBulkPayoutTxns(txnsToProcess)
     setDialogTxn(null)
@@ -675,18 +692,13 @@ export default function PollPayoutPage() {
               <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-xl">
                 <p className="text-sm text-yellow-800 font-medium">No bank account added</p>
                 <p className="text-xs text-yellow-700 mt-0.5">
-                  Go to <strong>Profile → Payout Methods</strong> to add a bank account before requesting.
+                  Go to <button onClick={() => router.push("/integrations")} className="font-semibold underline hover:text-yellow-900">My Integrations → Bank Accounts</button> to add one before requesting.
                 </p>
               </div>
             )}
 
             {txnLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <div className="text-center space-y-3">
-                  <Loader2 size={32} className="animate-spin text-[#6b2fa5] mx-auto" />
-                  <p className="text-sm text-gray-400">Loading transactions...</p>
-                </div>
-              </div>
+              <SkeletonRows count={5} rowClassName="h-24" />
             ) : txnError ? (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3">
                 <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
@@ -740,9 +752,9 @@ export default function PollPayoutPage() {
                     payoutReference={payoutRefs[txn.date] ?? null}
                     hasMethods={hasMethods && !isLocked}
                     canPayout={canPayout}
-                    onPayout={(t) => { if (!isLocked && canPayout) setDialogTxn(t) }}
+                    onPayout={(t) => { if (!isLocked && canPayout && requireBVTOrRedirect()) setDialogTxn(t) }}
                     onReopen={handleReopenPayout}
-                    onAddMethod={() => router.push("/profile")}
+                    onAddMethod={() => router.push("/integrations")}
                     isSelected={selectedDates.has(txn.date)}
                     onToggleSelect={(date) => {
                       const next = new Set(selectedDates)

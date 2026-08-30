@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, createContext, useContext, ReactNode, createElement } from "react"
-import { authFetch, getAccessToken, tryRefreshTokens, clearAccessToken, cancelProactiveRefresh } from "@/lib/auth-client"
+import { authFetch, getAccessToken, tryRefreshTokens, clearAccessToken, cancelProactiveRefresh, setupVisibilityRefresh } from "@/lib/auth-client"
 import { Preloader } from "@/components/preloader"
 
 type User = {
@@ -132,6 +132,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       authRefreshListeners = authRefreshListeners.filter(cb => cb !== handleAuthRefresh)
     }
+  }, [])
+
+  // Proactively refresh the access token whenever the tab regains focus —
+  // see setupVisibilityRefresh() in lib/auth-client.ts for why this exists
+  // (background-tab timer throttling is the root cause of dashboard/
+  // event-info/profile "still does a full reload" reports).
+  useEffect(() => {
+    return setupVisibilityRefresh()
   }, [])
 
   // Listen for session expiry events fired by authFetch / proactive refresh scheduler

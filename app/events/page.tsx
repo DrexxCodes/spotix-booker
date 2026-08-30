@@ -3,11 +3,10 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
-import { Preloader } from "@/components/preloader"
 import { EventsList } from "@/components/events/events-list"
 import { CollaboratedEventsList } from "@/components/events/collaborated-events-list"
 import EventTransferDialog, { type IncomingTransfer } from "@/components/events/event-transfer-dialog"
-import { Search, Plus, Calendar, TrendingUp, Users, RefreshCw, ArrowRightLeft, Eye, EyeOff } from "lucide-react"
+import { Search, Plus, Calendar, TrendingUp, Users, RefreshCw, ArrowRightLeft, Eye, EyeOff, Loader } from "lucide-react"
 import { useBalanceVisibility, useBalanceVisibilityRoot, BalanceVisibilityCtx } from "@/hooks/use-balance-visibility"
 import type { EventData, CollaboratedEventData } from "@/types/event"
 
@@ -203,14 +202,20 @@ export default function EventsPage() {
     ? new Date(cachedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
     : null
 
-  if (!authChecked) return <Preloader isLoading={true} />
+  // Same in-flow (not full-viewport) loading pattern as the Polls page —
+  // no fixed white overlay covering the nav, which was the main source of
+  // this route "feeling like" a full page reload on every visit.
+  if (!authChecked || (loading && !refreshing)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader className="w-7 h-7 animate-spin text-[#6b2fa5]" />
+      </div>
+    )
+  }
 
   return (
     <BalanceVisibilityCtx.Provider value={balanceCtx}>
     <>
-      {/* Loading skeleton overlay only on first load, not refresh */}
-      <Preloader isLoading={loading && !refreshing} />
-
       <div className="min-h-screen bg-slate-50">
 
         {/* ── Page header ──────────────────────────────────────────────────── */}

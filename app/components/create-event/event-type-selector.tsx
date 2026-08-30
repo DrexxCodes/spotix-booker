@@ -9,7 +9,7 @@ interface EventTypeSelectorProps {
 
 export function EventTypeSelector({ onSelect }: EventTypeSelectorProps) {
   return (
-    <div className="max-w-5xl mx-auto px-4 py-10 space-y-10 animate-in fade-in duration-700">
+    <div className="max-w-5xl mx-auto py-10 space-y-10 animate-in fade-in duration-700">
 
       {/* Hero — two-column */}
       <div className="grid md:grid-cols-2 gap-12 items-center">

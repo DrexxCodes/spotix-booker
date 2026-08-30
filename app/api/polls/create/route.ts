@@ -235,6 +235,15 @@ export async function POST(req: NextRequest) {
       // empty regardless of what was sent.
       doc.pollPrice   = pollType === "single" ? Number(pollPrice ?? 0) : 0
       doc.contestants = []
+      if (pollType === "group") {
+        // writeCategoryTree() never runs for a TBD group poll (nothing to
+        // write yet), so these two denormalized stats — normally set there —
+        // need setting here instead. They're genuinely 0, not "unknown", so
+        // the dashboard card shows "0 categories" rather than "—" until the
+        // organiser adds real categories via Edit.
+        doc.contestantTotal = 0
+        doc.categoryCount   = 0
+      }
     } else if (pollType === "single") {
       doc.pollPrice   = Number(pollPrice ?? 0)
       doc.contestants = contestants.map((c: any) => ({

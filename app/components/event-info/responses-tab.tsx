@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { FileText, Loader2, Calendar, User, Mail, Ticket, Download, Filter, Search } from "lucide-react"
+import { SkeletonTable } from "@/components/ui/skeleton"
 
 interface Response {
   id: string
@@ -122,11 +123,7 @@ export default function ResponsesTab({ userId, eventId }: ResponsesTabProps) {
   })
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 text-[#6b2fa5] animate-spin" />
-      </div>
-    )
+    return <SkeletonTable rows={6} />
   }
 
   if (responses.length === 0) {

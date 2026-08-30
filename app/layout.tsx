@@ -4,6 +4,7 @@ import { AuthProvider } from "@/hooks/useAuth"
 // import { MaintenanceProvider } from "@/components/MaintenanceProvider"
 import "./globals.css"
 import { WebChrome } from "@/components/web-chrome"
+import { Toaster } from "@/components/ui/toaster"
 
 // Every route in this app renders differently depending on the spotix_at
 // cookie (via proxy.ts + AuthProvider), so nothing here is safe to
@@ -104,6 +105,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <WebChrome>{children}</WebChrome>
             {/* </MaintenanceProvider> */}
           </AuthProvider>
+          <Toaster />
         </div>
       </body>
     </html>

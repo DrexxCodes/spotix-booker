@@ -21,14 +21,12 @@ export const ALL_TABS = [
 export type TabId = typeof ALL_TABS[number]
 
 // ── Built-in role → allowed tab IDs ───────────────────────────────────────────
-// Admin = full parity with the Event Creator EXCEPT "Edit Event". (Admin
-// does get their own Payout Methods — see lib/payout-access.ts — so no
-// restriction is needed there; "Create Payout Method" in the old teams/page
-// blurb referred to methods being personal-to-the-admin, not disabled.)
+// Admin collaborators have the same event-management controls as organizers,
+// including event editing and discount management.
 export const BUILT_IN_ROLE_TABS: Record<string, TabId[]> = {
   admin: [
     "overview", "eventlink", "payouts", "attendees", "discounts", "merch",
-    "referrals", "form", "responses", "weather", "transfer",
+    "referrals", "form", "responses", "weather", "transfer", "edit",
     "teams", "agentRequests", "apiAccess",
   ],
   checkin:    ["attendees", "eventlink", "weather", "form", "responses"],

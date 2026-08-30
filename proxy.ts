@@ -28,21 +28,12 @@
  * NOTE: refresh token cookies are httpOnly so the client JS never sees the raw
  * value. The client asks /api/auth/refresh which reads them server-side.
  *
- * ── Route rules 
+ * ── Route rules
  *
  *   Public          /login                     Always accessible
  *   Non-booker      /not-booker                Accessible only when authenticated
  *   Protected       Everything else            Requires auth + isBooker === true
- *
- * ── Payout API routes 
- *
- *   /api/payout/*        and /api/polls/payout/*  are otherwise excluded from
- *   this proxy like every other /api route (they verify the `spotix_at` cookie
- *   themselves via verifyAccessToken() in each route handler) — but they're
- *   pulled back into the matcher specifically so this proxy can attach
- *   PAYOUT_ACCESS_SECRET server-side (see lib/payout-access-gate.ts). That
- *   secret has no NEXT_PUBLIC_ prefix and must never exist in client JS; this
- *   is the only place it's allowed to be attached to a request.
+ *.
  */
 
 import { NextResponse } from "next/server";
@@ -50,7 +41,7 @@ import type { NextRequest } from "next/server";
 import { verifyAccessTokenEdge } from "@/lib/auth-edge";
 import { PAYOUT_ACCESS_HEADER } from "@/lib/payout-access-gate";
 
-// ── Route classification 
+// ── Route classification
 
 /** Completely public — no token required, no redirect for unauthenticated users */
 const PUBLIC_ROUTES = new Set(["/login"]);
@@ -61,8 +52,17 @@ const PUBLIC_ROUTES = new Set(["/login"]);
  */
 const NON_BOOKER_ROUTES = new Set(["/not-booker"]);
 
-// ── Cookie name (must match what /api/auth sets) 
+// ── Cookie name (must match what /api/auth sets)
 const ACCESS_TOKEN_COOKIE = "spotix_at";
+
+/** Matches /api/payout, /api/polls/payout, and /api/elections/{id}/payout. */
+function isPayoutApiRoute(pathname: string): boolean {
+  return (
+    pathname.startsWith("/api/payout") ||
+    pathname.startsWith("/api/polls/payout") ||
+    /^\/api\/elections\/[^/]+\/payout/.test(pathname)
+  );
+}
 
 /**
  * Every response proxy returns MUST be uncacheable.
@@ -89,7 +89,7 @@ function noStore(response: NextResponse): NextResponse {
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // ── 0. Payout API routes — inject the server-only access secret 
+  // ── 0. Payout API routes — inject the server-only access secret
   // These bypass the booker page-auth flow below entirely: they're API
   // routes, they verify the `spotix_at` cookie themselves (same convention
   // as every other /api route per the matcher note), and a redirect-to-
@@ -97,7 +97,7 @@ export async function proxy(request: NextRequest) {
   // proxy's only job for these paths is to attach PAYOUT_ACCESS_SECRET —
   // stripping any client-forged copy first — before the request reaches
   // the route handler.
-  if (pathname.startsWith("/api/payout") || pathname.startsWith("/api/polls/payout")) {
+  if (isPayoutApiRoute(pathname)) {
     const secret = process.env.PAYOUT_ACCESS_SECRET;
     const headers = new Headers(request.headers);
     headers.delete(PAYOUT_ACCESS_HEADER); // strip any forged copy
@@ -197,5 +197,7 @@ export const config = {
     // server-side — see the branch 0 comment above.
     "/api/payout/:path*",
     "/api/polls/payout/:path*",
+    // FIX: elections payout was missing here — this is what caused the 401.
+    "/api/elections/:electionId/payout/:path*",
   ],
 };

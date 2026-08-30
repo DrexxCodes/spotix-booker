@@ -14,6 +14,8 @@ import {
   emptyContestant, rehydrateContestant, rehydrateCategoryTree,
   type PollForm, type ContestantForm, type CategoryForm,
 } from "./lib/factories"
+import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning"
+import { UnsavedChangesDialog } from "@/components/ui/unsaved-changes-dialog"
 
 const STEPS = ["Poll Info", "Schedule & Pricing", "Contestants"] as const
 
@@ -48,6 +50,17 @@ function CreatePollPageInner() {
   const [form, setForm] = useState<PollForm>(initialForm)
   const [contestants, setContestants] = useState<ContestantForm[]>([emptyContestant(), emptyContestant()])
   const [categories, setCategories] = useState<CategoryForm[]>([])
+
+  // Dirty if the form differs from its defaults, or a contestant/category
+  // has been added/named — covers the "leave without saving?" warning
+  // (see item 8 of the UI renovation). The draft-save system above is a
+  // separate, opt-in convenience; this is the safety net for anyone who
+  // hasn't saved a draft yet.
+  const isDirty =
+    JSON.stringify(form) !== JSON.stringify(initialForm) ||
+    contestants.some((c) => c.name.trim() !== "") ||
+    categories.length > 0
+  const { showConfirmDialog, confirmLeave, cancelLeave, guardNavigation } = useUnsavedChangesWarning(isDirty)
 
   const [imageUploading, setImageUploading] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
@@ -196,7 +209,12 @@ function CreatePollPageInner() {
 
   return (
     <div className="max-w-2xl lg:max-w-4xl mx-auto px-4 py-8">
-      <Link href="/polls" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800 mb-6 transition-colors">
+      <UnsavedChangesDialog open={showConfirmDialog} onConfirm={confirmLeave} onCancel={cancelLeave} />
+      <Link
+        href="/polls"
+        onClick={guardNavigation(() => router.push("/polls"))}
+        className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800 mb-6 transition-colors"
+      >
         <ArrowLeft className="w-4 h-4" /> Back to Polls
       </Link>
 

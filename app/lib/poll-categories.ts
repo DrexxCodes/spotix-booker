@@ -168,6 +168,21 @@ export function countTreeContestants(tree: any[]): number {
   return total
 }
 
+/**
+ * Counts every category node across a nested tree — top-level AND every
+ * nested subcategory. Used to keep a denormalized `categoryCount` on the
+ * parent poll doc (see writeCategoryTree) so list endpoints can show an
+ * accurate category count for group polls without a subcollection read.
+ */
+export function countTreeCategories(tree: any[]): number {
+  let total = 0
+  for (const node of tree ?? []) {
+    total += 1
+    total += countTreeCategories(node.subcategories ?? [])
+  }
+  return total
+}
+
 // ─── Reads ──────────────────────────────────────────────────────────────────
 
 /**
@@ -264,16 +279,17 @@ export async function writeCategoryTree(pollId: string, tree: any[]): Promise<vo
   // can't grow back into the "too large to display" state, and so
   // fetchCategoryTree() stops treating this poll as unmigrated.
   //
-  // contestantTotal is a denormalized count of every contestant across the
-  // whole tree, kept in sync here so /api/polls/list (which never reads
-  // the categories subcollection, for perf reasons — see that route) can
-  // still show an accurate "Entrants" stat for group polls. Previously
-  // there was no such field, so the booker dashboard's poll cards always
-  // read the poll's flat `contestants` field for this — which is empty for
-  // every group poll — and showed 0 entrants regardless of the real count.
+  // contestantTotal and categoryCount are denormalized counts kept in sync
+  // here so /api/polls/list (which never reads the categories subcollection,
+  // for perf reasons — see that route) can still show accurate stats for
+  // group polls. Previously there was no such field, so the booker
+  // dashboard's poll cards always read the poll's flat `contestants` field
+  // for this — which is empty for every group poll — and showed 0 entrants
+  // regardless of the real count.
   batch.update(pollRef, {
     categories: FieldValue.delete(),
     contestantTotal: countTreeContestants(tree),
+    categoryCount: countTreeCategories(tree),
     updatedAt: now,
   })
 

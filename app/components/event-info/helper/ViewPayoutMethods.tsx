@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Loader2, Star, StarOff, Trash2, Pencil, CheckCircle, AlertCircle, CreditCard } from "lucide-react"
+import { SkeletonRows } from "@/components/ui/skeleton"
 
 interface PayoutMethod {
   id: string
@@ -86,11 +87,7 @@ export default function ViewPayoutMethods({
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <Loader2 size={28} className="animate-spin text-[#6b2fa5]" />
-      </div>
-    )
+    return <SkeletonRows count={3} rowClassName="h-20" />
   }
 
   if (error) {

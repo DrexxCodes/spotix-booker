@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Plus, Trash2, X, AlertCircle, Share2, Check } from "lucide-react"
+import { SkeletonRows } from "@/components/ui/skeleton"
 
 interface ReferralUsage {
   name: string
@@ -175,10 +176,7 @@ export default function ReferralsTab({ eventId }: ReferralsTabProps) {
       <div>
         <h3 className="text-lg sm:text-xl font-bold text-slate-900 mb-4">Referral Codes</h3>
         {fetching ? (
-          <div className="text-center py-12">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-[#6b2fa5] border-r-transparent mb-4" />
-            <p className="text-slate-600">Loading referral codes...</p>
-          </div>
+          <SkeletonRows count={4} rowClassName="h-16" />
         ) : referrals.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 sm:p-12 text-center shadow-sm">
             <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">

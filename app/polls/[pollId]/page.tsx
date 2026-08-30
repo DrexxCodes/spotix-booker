@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
+import { InlineTrend } from "@/components/ui/inline-trend"
+import { SkeletonBlock, SkeletonRows } from "@/components/ui/skeleton"
 import {
   toContestantArray,
   contestantCount as countContestantsField,
@@ -93,6 +95,10 @@ interface Poll {
   enabledTieBreaker?: boolean
   tieBreakerDuration?: number | null
   tieBreakerRounds?: number | null
+  /** Day-over-day voteSales trend (today vs yesterday) — fetched from
+   *  /api/polls/one and merged in after the initial /api/polls/list load.
+   *  See lib/sales-trend.ts. */
+  salesTrend?: { pct: number | null; tone: "up" | "down" | "flat" } | null
   /** Live tie-breaker round state, keyed by scope ("single" or a leaf categoryId). See
    *  spotix-user/src/app/lib/tie-breaker.ts / spotix-backend/v1/lib/tie-breaker.js for the
    *  state machine that produces this — this codebase only reads and displays it. */
@@ -549,21 +555,22 @@ export default function PollManagePage() {
         // poll (it can return dozens of polls per call and fetching each
         // one's full category subcollection there would be expensive —
         // see that route's comments). This page only ever shows ONE poll,
-        // so for a group poll it's cheap to fetch the real tree from
-        // /api/polls/one and merge it in — without this, a group poll's
-        // "Standings" section always rendered as if it had no categories
-        // or contestants at all.
-        if (found.pollType === "group") {
-          try {
-            const oneRes = await authFetch(`/api/polls/one?pollId=${encodeURIComponent(pollId)}`)
-            if (oneRes.ok) {
-              const oneData = await oneRes.json()
+        // so it's cheap to fetch the real tree (group polls) and the
+        // day-over-day revenue trend from /api/polls/one and merge them in
+        // — without the category fetch, a group poll's "Standings" section
+        // always rendered as if it had no categories or contestants at all.
+        try {
+          const oneRes = await authFetch(`/api/polls/one?pollId=${encodeURIComponent(pollId)}`)
+          if (oneRes.ok) {
+            const oneData = await oneRes.json()
+            if (found.pollType === "group") {
               found.categories = oneData.poll?.categories ?? []
               found.contestantsTBD = oneData.poll?.contestantsTBD ?? found.contestantsTBD
             }
-          } catch {
-            // Non-fatal — page still renders, just without categories.
+            found.salesTrend = oneData.poll?.salesTrend ?? null
           }
+        } catch {
+          // Non-fatal — page still renders, just without categories/trend.
         }
 
         setPoll(found)
@@ -593,8 +600,27 @@ export default function PollManagePage() {
 
   if (loading || !poll) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Loader className="w-7 h-7 animate-spin text-[#6b2fa5]" />
+      <div className="min-h-screen bg-gray-50">
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <SkeletonBlock className="h-5 w-28 mb-6" />
+
+          {/* Poll header card skeleton */}
+          <div className="bg-white rounded-2xl border border-gray-200 mb-6 overflow-hidden">
+            <SkeletonBlock className="h-44 w-full rounded-none" />
+            <div className="p-5 space-y-4">
+              <SkeletonBlock className="h-6 w-2/3" />
+              <SkeletonBlock className="h-4 w-full" />
+              <div className="grid grid-cols-3 gap-3">
+                <SkeletonBlock className="h-16" />
+                <SkeletonBlock className="h-16" />
+                <SkeletonBlock className="h-16" />
+              </div>
+              <SkeletonBlock className="h-10 w-full" />
+            </div>
+          </div>
+
+          <SkeletonRows count={4} rowClassName="h-16" />
+        </div>
       </div>
     )
   }
@@ -692,6 +718,11 @@ export default function PollManagePage() {
               <div className="p-3 bg-[#6b2fa5]/5 rounded-xl text-center">
                 <p className="text-lg font-bold text-[#6b2fa5]">₦{(poll.pollAmount ?? 0).toLocaleString()}</p>
                 <p className="text-xs text-gray-400">Revenue</p>
+                {poll.salesTrend && (
+                  <div className="flex justify-center">
+                    <InlineTrend pct={poll.salesTrend.pct} tone={poll.salesTrend.tone} />
+                  </div>
+                )}
               </div>
             </div>
 

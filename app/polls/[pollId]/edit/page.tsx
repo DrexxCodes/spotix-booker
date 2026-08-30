@@ -12,6 +12,8 @@ import {
   Layers, FolderPlus, Tag, ChevronDown, ChevronUp, ToggleLeft, ToggleRight,
   Download, User, ImagePlus, Wand2, UserCog, BarChart3, Crown, ShieldCheck, FileJson,
 } from "lucide-react"
+import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning"
+import { UnsavedChangesDialog } from "@/components/ui/unsaved-changes-dialog"
 import type { CategoryForm as CreateCategoryForm } from "../../create/lib/factories"
 import {
   MIN_VOTE_PRICE, MAX_VOTE_PRICE,
@@ -566,6 +568,14 @@ export default function EditPollPage() {
   // actually configured for this poll, not the hardcoded defaults.
   const [limits, setLimits] = useState<ResolvedPollLimits>(resolvePollLimits(null))
 
+  // Snapshot taken right after the poll finishes loading — compared against
+  // current meta/contestants/categories to know if there's anything to lose.
+  // See item 8 of the UI renovation ("same goes for editing polls").
+  const initialSnapshotRef = useRef<string | null>(null)
+  const isDirty = initialSnapshotRef.current !== null &&
+    JSON.stringify({ meta, contestants, categories }) !== initialSnapshotRef.current
+  const { showConfirmDialog, confirmLeave, cancelLeave, guardNavigation } = useUnsavedChangesWarning(isDirty)
+
   // ── Load poll ───────────────────────────────────────────────────────────────
   // Uses /api/polls/one (not /api/polls/list) because this page must be
   // reachable by both the poll creator AND an active poll team member —
@@ -625,6 +635,31 @@ export default function EditPollPage() {
       }
 
       setLoadingPoll(false)
+      // Snapshot for the unsaved-changes check above — taken after this
+      // synchronous batch of setState calls has been queued, so it reflects
+      // the freshly-loaded poll, not the empty initial state.
+      queueMicrotask(() => {
+        initialSnapshotRef.current = JSON.stringify({
+          meta: {
+            pollName: poll.pollName ?? "", pollDescription: poll.pollDescription ?? "",
+            pollStartDate: poll.pollStartDate ?? "", pollStartTime: poll.pollStartTime ?? "",
+            pollEndDate: poll.pollEndDate ?? "", pollEndTime: poll.pollEndTime ?? "",
+            pollPrice: poll.pollPrice ?? 100,
+            pollImagePreview: poll.pollImage ?? null, pollImageUrl: poll.pollImage ?? null,
+            pollImageUploading: false,
+            pollType: poll.pollType ?? "single", statsVisible: poll.statsVisible ?? true,
+          },
+          contestants: (poll.pollType ?? "single") === "single"
+            ? (poll.contestants ?? []).map((c: any) => ({
+                contestantId: c.contestantId ?? "", name: c.name ?? "",
+                imagePreview: c.image ?? null, imageUrl: c.image ?? null,
+                imageType: null, uploading: false, isExisting: true,
+                hasVotes: (c.votes ?? 0) > 0,
+              }))
+            : [],
+          categories: (poll.pollType ?? "single") === "single" ? [] : hydrateCategories(poll.categories ?? []),
+        })
+      })
     }
     init()
   }, [pollId, router])
@@ -783,6 +818,7 @@ export default function EditPollPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <UnsavedChangesDialog open={showConfirmDialog} onConfirm={confirmLeave} onCancel={cancelLeave} />
       <div className="max-w-2xl mx-auto px-4 py-8">
 
         {isTeamMember ? (
@@ -790,7 +826,11 @@ export default function EditPollPage() {
             <UserCog className="w-4 h-4" /> Editing as poll team member
           </div>
         ) : (
-          <Link href={`/polls/${pollId}`} className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-6 transition-colors">
+          <Link
+            href={`/polls/${pollId}`}
+            onClick={guardNavigation(() => router.push(`/polls/${pollId}`))}
+            className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-6 transition-colors"
+          >
             <ArrowLeft className="w-4 h-4" /> Back to Poll
           </Link>
         )}

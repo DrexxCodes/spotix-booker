@@ -17,8 +17,12 @@
  */
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import PayoutStatusCard from "@/components/payout/PayoutStatusCard"
+import { useBVTStatus } from "@/hooks/useBVTStatus"
+import { toast } from "@/lib/toast"
+import { SkeletonRows } from "@/components/ui/skeleton"
 
 interface DailyTotal {
   date: string
@@ -33,6 +37,10 @@ export function PayoutTab({ electionId }: { electionId: string }) {
   const [activeReference, setActiveReference] = useState<string | null>(null)
   const [requestError, setRequestError] = useState<string | null>(null)
   const [requestingDate, setRequestingDate] = useState<string | null>(null)
+  const router = useRouter()
+  // Same KYC/BVT gate as the event and poll payout flows — see
+  // hooks/useBVTStatus.ts.
+  const { isVerified: bvtVerified, loading: bvtLoading } = useBVTStatus()
 
   function reload() {
     setLoading(true)
@@ -50,6 +58,12 @@ export function PayoutTab({ electionId }: { electionId: string }) {
   useEffect(reload, [electionId])
 
   async function requestPayout(date: string, amount: number) {
+    if (bvtLoading) return
+    if (!bvtVerified) {
+      toast.warning("Verification required", { description: "Complete KYC in the verification page to access withdrawals." })
+      router.push("/verification")
+      return
+    }
     setRequestingDate(date)
     setRequestError(null)
     try {
@@ -61,9 +75,11 @@ export function PayoutTab({ electionId }: { electionId: string }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed to request payout")
       setActiveReference(data.reference)
+      toast.success("Payout requested", { description: "We'll update the status here as it processes." })
       reload()
     } catch (err: any) {
       setRequestError(err.message)
+      toast.error(err.message ?? "Failed to request payout")
     } finally {
       setRequestingDate(null)
     }
@@ -71,7 +87,7 @@ export function PayoutTab({ electionId }: { electionId: string }) {
 
   const payoutForDate = (date: string) => payouts.find((p) => p.date === date)
 
-  if (loading) return <p className="text-sm text-gray-500">Loading…</p>
+  if (loading) return <SkeletonRows count={4} rowClassName="h-20" />
 
   return (
     <div>

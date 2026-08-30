@@ -5,6 +5,7 @@ import Image from "next/image"
 import { db } from "@/lib/firebase"
 import { collection, getDocs } from "firebase/firestore"
 import { Trash2, Plus, Search, X, AlertCircle } from "lucide-react"
+import { SkeletonCardGrid } from "@/components/ui/skeleton"
 
 interface Listing {
   id: string
@@ -264,10 +265,7 @@ export default function MerchTab({ eventId, eventName, currentUserId }: MerchTab
         </div>
 
         {fetching ? (
-          <div className="text-center py-12">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-[#6b2fa5] border-r-transparent mb-4" />
-            <p className="text-slate-600">Loading merchandise...</p>
-          </div>
+          <SkeletonCardGrid count={6} />
         ) : addedListings.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 sm:p-12 text-center shadow-sm">
             <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">

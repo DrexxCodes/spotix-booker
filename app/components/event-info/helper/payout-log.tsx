@@ -33,6 +33,7 @@ import {
   Check,
 } from "lucide-react"
 import { useState, useCallback, useEffect } from "react"
+import { SkeletonTable } from "@/components/ui/skeleton"
 
 type DisplayStatus = "initializing" | "processing" | "successful" | "failed" | "vault_pending" | "cancelled" | "rejected"
 
@@ -264,14 +265,7 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
   )
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-14">
-        <div className="text-center space-y-3">
-          <Loader2 size={30} className="animate-spin text-[#6b2fa5] mx-auto" />
-          <p className="text-sm text-gray-400">Loading payout logs...</p>
-        </div>
-      </div>
-    )
+    return <SkeletonTable rows={5} />
   }
 
   if (error) {

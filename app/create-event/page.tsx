@@ -9,15 +9,31 @@ import { CreateEventGroup } from "@/components/create-event/create-event-group"
 import { EventGroupLobby } from "@/components/create-event/event-group-lobby"
 import { CollectionSelector } from "@/components/create-event/collection-selector"
 import { ArrowLeft } from "lucide-react"
+import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning"
+import { UnsavedChangesDialog } from "@/components/ui/unsaved-changes-dialog"
 
 export default function CreateEventPage() {
   const [eventType, setEventType] = useState<"one-time" | "event-group" | null>(null)
   const [eventGroupStep, setEventGroupStep] = useState<"lobby" | "create" | "select" | null>(null)
   const [selectedCollection, setSelectedCollection] = useState<any>(null)
 
+  // Once the organizer has moved past the type picker into an actual form,
+  // treat the session as "dirty" — covers the native browser prompt for a
+  // hard reload/tab close/typed URL. The in-app "Back" buttons on this page
+  // are separately guarded below with the same confirm dialog.
+  const isDirty = eventType !== null
+  const { showConfirmDialog, confirmLeave, cancelLeave, guardNavigation } = useUnsavedChangesWarning(isDirty)
+
+  const resetToTypeSelection = () => {
+    setEventType(null)
+    setEventGroupStep(null)
+    setSelectedCollection(null)
+  }
+
   return (
     <>
       <ParticlesBackground />
+      <UnsavedChangesDialog open={showConfirmDialog} onConfirm={confirmLeave} onCancel={cancelLeave} />
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-purple-50/30 to-slate-100">
         {/* <Nav /> */}
 
@@ -29,11 +45,7 @@ export default function CreateEventPage() {
               {/* Back Button */}
               <div className="mb-8 animate-in fade-in slide-in-from-left duration-500">
                 <button
-                  onClick={() => {
-                    setEventType(null)
-                    setEventGroupStep(null)
-                    setSelectedCollection(null)
-                  }}
+                  onClick={() => guardNavigation(resetToTypeSelection)()}
                   className="group inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold text-slate-700 hover:text-[#6b2fa5] bg-white hover:bg-[#6b2fa5]/5 border-2 border-slate-200 hover:border-[#6b2fa5]/30 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md"
                 >
                   <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
@@ -90,7 +102,7 @@ export default function CreateEventPage() {
                 <div className="animate-in fade-in duration-700">
                   <div className="mb-8">
                     <button
-                      onClick={() => setSelectedCollection(null)}
+                      onClick={() => guardNavigation(() => setSelectedCollection(null))()}
                       className="group inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold text-slate-700 hover:text-[#6b2fa5] bg-white hover:bg-[#6b2fa5]/5 border-2 border-slate-200 hover:border-[#6b2fa5]/30 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md"
                     >
                       <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />

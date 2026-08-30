@@ -47,8 +47,16 @@ interface Poll {
   needsNormalization: boolean
   /** Denormalized contestant count across the whole category tree for group
    *  polls — see /api/polls/list. Not meaningful for single polls, which
-   *  should keep reading contestantCount(poll.contestants) instead. */
-  contestantTotal?: number
+   *  should keep reading contestantCount(poll.contestants) instead. `null`
+   *  means it's never been computed for this poll (pre-dates the field) —
+   *  distinct from a genuine 0, so the card can show "—" instead of lying. */
+  contestantTotal?: number | null
+  /** Denormalized total category-node count (top-level + every nested
+   *  subcategory) for group polls — see /api/polls/list. Same `null` vs 0
+   *  distinction as contestantTotal above. This is what the dashboard card
+   *  shows for group polls instead of an entrant count — see the stats
+   *  grid below for why. */
+  categoryCount?: number | null
   /** "owner" (created it) or "member" (added as a poll team mate) — from
    *  /api/polls/list. Drives the "Teammate" tag on the card below. */
   role?: "owner" | "member"
@@ -390,13 +398,18 @@ export default function PollsPage() {
                       </div>
                       <div className="text-center p-2 bg-gray-50 rounded-lg">
                         <p className="text-xs font-bold text-gray-900">
-                          {/* Group polls keep their contestants inside categories (not
-                              the flat `contestants` field), and this list endpoint
-                              doesn't fetch each poll's category subcollection for
-                              perf reasons — so use the denormalized total instead. */}
-                          {poll.pollType === "group" ? (poll.contestantTotal ?? 0) : contestantCount(poll.contestants)}
+                          {/* Group polls keep their contestants inside category
+                              subcollection docs, not the flat `contestants` field —
+                              and this list endpoint doesn't fetch each poll's
+                              category subcollection for perf reasons, so a live
+                              entrant count isn't cheaply available here. Category
+                              count IS cheap (denormalized on the poll doc by
+                              writeCategoryTree()) and reads as a more honest stat
+                              for a group poll card than a contestant count would
+                              be anyway, so that's what's shown instead. */}
+                          {poll.pollType === "group" ? (poll.categoryCount ?? "—") : contestantCount(poll.contestants)}
                         </p>
-                        <p className="text-xs text-gray-400">Entrants</p>
+                        <p className="text-xs text-gray-400">{poll.pollType === "group" ? "Categories" : "Entrants"}</p>
                       </div>
                       <div className="text-center p-2 bg-gray-50 rounded-lg">
                         <p className="text-xs font-bold text-gray-900">₦{(poll.pollAmount ?? 0).toLocaleString()}</p>
