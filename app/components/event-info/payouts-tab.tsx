@@ -3,10 +3,12 @@
 import {
   AlertCircle, Wallet, Calendar, Loader2, CheckCircle,
   TrendingUp, CreditCard, X, ChevronRight, Clock, Shield,
-  ReceiptText, Ban, CalendarX, Lock, Eye,
+  ReceiptText, Ban, CalendarX, Lock, Eye, Download, ChevronDown,
+  FileText, FileSpreadsheet,
 } from "lucide-react"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
+import { useAuth } from "@/hooks/useAuth"
 import { useBVTStatus } from "@/hooks/useBVTStatus"
 import { toast } from "@/lib/toast"
 import { SkeletonRows } from "@/components/ui/skeleton"
@@ -19,6 +21,8 @@ import VaultSignoffs from "./helper/vault-signoffs"
 import VaultKeyEnterOnPayoutDialog from "./helper/vault-key-enter-onPayout"
 import PayoutStateDialog from "@/components/payout/PayoutStateDialog"
 import type { PayoutLiveState } from "@/components/payout/use-payout-stream"
+import { fetchPayoutLogRecords } from "@/lib/payout-log-data"
+import { buildPayoutCsv, buildPayoutPdfBlob } from "@/lib/payout-export"
 
 interface DailyTransaction {
   date: string
@@ -496,6 +500,7 @@ export default function PayoutsTab({
     onViewChange?.(view)
   }
   const router = useRouter()
+  const { user } = useAuth()
   const { isVerified: bvtVerified, loading: bvtLoading } = useBVTStatus()
 
   // Same KYC/BVT gate as the poll and election payout flows — see
@@ -515,6 +520,22 @@ export default function PayoutsTab({
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [isBulkPayoutLoading, setIsBulkPayoutLoading] = useState(false)
   const [bulkPayoutTxns, setBulkPayoutTxns] = useState<DailyTransaction[]>([])
+
+  // Export Report — computed and downloaded entirely client-side, unlike
+  // the Attendee Post Mortem (nothing is generated or stored server-side).
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [exportingFormat, setExportingFormat] = useState<"csv" | "pdf" | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside)
+    return () => document.removeEventListener("mousedown", onClickOutside)
+  }, [])
 
   // Own vs Creator's payout methods (spec §4 Role Permissions) — Creator and
   // Admin manage/settle to their own methods; Accountant and custom "payout"
@@ -702,6 +723,51 @@ export default function PayoutsTab({
     setLiveReferences([reference])
   }
 
+  /**
+   * Export Report — pulls together data the tab already has (transactions,
+   * payoutStatuses) plus one fresh fetch of the merged payout log timeline
+   * (same source PayoutLog uses — see lib/payout-log-data.ts), then builds
+   * the file entirely in the browser and triggers an immediate download.
+   * Nothing is uploaded or stored anywhere; re-opening this menu just
+   * recomputes from current data.
+   */
+  const handleExport = async (format: "csv" | "pdf") => {
+    setExportMenuOpen(false)
+    setExportingFormat(format)
+    setExportError(null)
+    try {
+      const records = await fetchPayoutLogRecords(eventId)
+      const totals = { totalRevenue, availableRevenue, paidAmount }
+      const meta = {
+        eventName: eventData?.eventName || "Event",
+        eventId,
+        generatedByName: user?.fullName || user?.email || "Organizer",
+      }
+      const fileBase = `spotix_payouts_${eventId}`
+
+      if (format === "csv") {
+        const csv = buildPayoutCsv(transactions, payoutStatuses, records, totals, meta)
+        triggerDownload(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `${fileBase}.csv`)
+      } else {
+        const blob = await buildPayoutPdfBlob(transactions, payoutStatuses, records, totals, meta)
+        triggerDownload(blob, `${fileBase}.pdf`)
+      }
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export failed")
+    } finally {
+      setExportingFormat(null)
+    }
+  }
+
+  function triggerDownload(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = fileName
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-6">
       {/* Live payout progress — SSE-backed, survives closing/reopening */}
@@ -765,6 +831,60 @@ export default function PayoutsTab({
         currentUserId={currentUserId}
         onResolved={handleVaultSignoffResolved}
       />
+
+      {/* Export Report — CSV or a branded PDF, computed client-side */}
+      <div className="flex justify-end">
+        <div className="relative" ref={exportMenuRef}>
+          <button
+            onClick={() => setExportMenuOpen((v) => !v)}
+            disabled={txnLoading || exportingFormat !== null}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-[#6b2fa5] text-white font-semibold text-sm rounded-xl shadow-lg shadow-[#6b2fa5]/25 hover:bg-[#5a2690] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {exportingFormat ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            Export Report
+            <ChevronDown size={14} className={`transition-transform ${exportMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {exportMenuOpen && (
+            <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl border-2 border-gray-200 shadow-xl z-20 overflow-hidden">
+              <button
+                onClick={() => handleExport("pdf")}
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#6b2fa5]/5 transition-colors"
+              >
+                <FileText size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+                <span>
+                  <span className="block text-sm font-semibold text-gray-900">PDF Report</span>
+                  <span className="block text-xs text-gray-500">Branded summary — transaction days &amp; payout logs</span>
+                </span>
+              </button>
+              <div className="border-t border-gray-100" />
+              <button
+                onClick={() => handleExport("csv")}
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#6b2fa5]/5 transition-colors"
+              >
+                <FileSpreadsheet size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+                <span>
+                  <span className="block text-sm font-semibold text-gray-900">CSV</span>
+                  <span className="block text-xs text-gray-500">Raw data for spreadsheets</span>
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {exportError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3">
+          <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-red-700">Export failed</p>
+            <p className="text-sm text-red-600 mt-0.5">{exportError}</p>
+          </div>
+          <button onClick={() => setExportError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Info Alert */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3">

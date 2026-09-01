@@ -47,7 +47,7 @@ import {
   X,
 } from "lucide-react"
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+//  Types 
 
 /** @deprecated kept as an alias so existing prop/type references below still
  *  read naturally — use ContestantRecord from @/lib/contestants directly in
@@ -158,7 +158,7 @@ const STATUS_PILL: Record<PollStatus, { cls: string; icon: typeof CheckCircle; l
 // "Upcoming" is irrelevant if there's nobody to vote for yet.
 const COMING_SOON_PILL = { cls: "bg-purple-100 text-purple-700", icon: Sparkles, label: "Coming Soon" }
 
-// ─── Standings row (shared leaf renderer) ──────────────────────────────────────
+//  Standings row (shared leaf renderer) 
 
 function StandingsList({
   contestants,
@@ -299,7 +299,7 @@ function StandingsList({
   )
 }
 
-// ─── Category panel (recursive) — group-poll standings ─────────────────────────
+//  Category panel (recursive) — group-poll standings ─
 
 function CategoryStandingsPanel({
   category, depth, status, tieBreaker, tieBreakers,
@@ -358,7 +358,7 @@ function CategoryStandingsPanel({
   )
 }
 
-// ─── Entries tab ────────────────────────────────────────────────────────────────
+//  Entries tab ─
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—"
@@ -477,7 +477,7 @@ function EntriesTab({ pollId, pollType }: { pollId: string; pollType: "single" |
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+//  Page ─
 
 export default function PollManagePage() {
   const router = useRouter()
@@ -490,7 +490,7 @@ export default function PollManagePage() {
   const [copied,        setCopied]        = useState(false)
   const [showEventMenu, setShowEventMenu] = useState(false)
 
-  // ── Download Result (results PDF) ───────────────────────────────────────
+  //  Download Result (results PDF) 
   const [resultStatus, setResultStatus]   = useState<"idle" | "preparing" | "ready" | "error">("idle")
   const [resultUrl,    setResultUrl]      = useState<string | null>(null)
   const [resultError,  setResultError]    = useState<string | null>(null)
@@ -533,7 +533,7 @@ export default function PollManagePage() {
     }
   }
 
-  // ── Auth + data load ───────────────────────────────────────────────────────
+  //  Auth + data load ─
 
   useEffect(() => {
     const init = async () => {
@@ -596,7 +596,7 @@ export default function PollManagePage() {
     init()
   }, [pollId, router])
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  //  Render 
 
   if (loading || !poll) {
     return (

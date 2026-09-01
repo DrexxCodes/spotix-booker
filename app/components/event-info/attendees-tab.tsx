@@ -2,12 +2,14 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import {
-  User, Mail, ShoppingCart, CheckCircle2, XCircle, ChevronUp,
-  Search, Filter, Download, X, Ticket, Clock, Hash, Loader2,
+  User, Mail, ShoppingCart, CheckCircle2, XCircle, ChevronUp, ChevronDown,
+  Search, Filter, Download, X, Ticket, Clock, Hash, Loader2, FileBarChart2, FileSpreadsheet,
 } from "lucide-react"
 import RegistryDialog from "./helper/registry-dialog"
+import AttendeePostMortemDialog from "./helper/attendee-post-mortem-dialog"
 import { dicebearAvatarUrl } from "@/lib/dicebear"
 import { authFetch } from "@/lib/auth-client"
+import { useAuth } from "@/hooks/useAuth"
 
 interface AttendeeData {
   id: string
@@ -26,6 +28,8 @@ interface AttendeesTabProps {
   formatFirestoreTimestamp: (timestamp: any) => string
   eventId: string
   eventName: string
+  eventEndDate: string
+  eventEnd: string
 }
 
 const PAGE_SIZE = 15
@@ -154,7 +158,11 @@ export default function AttendeesTab({
   formatFirestoreTimestamp,
   eventId,
   eventName,
+  eventEndDate,
+  eventEnd,
 }: AttendeesTabProps) {
+  const { user } = useAuth()
+
   // Paginated browse state — what's actually been read from the server so far.
   const [items, setItems] = useState<AttendeeData[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
@@ -183,9 +191,33 @@ export default function AttendeesTab({
   const [selectedAttendeeLoading, setSelectedAttendeeLoading] = useState(false)
 
   const [registryDialogOpen, setRegistryDialogOpen] = useState(false)
+  const [postMortemDialogOpen, setPostMortemDialogOpen] = useState(false)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const downloadMenuRef = useRef<HTMLDivElement>(null)
 
   const baseUrl = `/api/event/list/${eventId}/attendees`
+
+  // Event's end date+time have to have passed before a post mortem can be
+  // generated — same "eventEndDate + eventEnd" combination used elsewhere
+  // to know an event is over.
+  const eventHasEnded = useMemo(() => {
+    if (!eventEndDate || !eventEnd) return false
+    const end = new Date(`${eventEndDate}T${eventEnd}`)
+    return !isNaN(end.getTime()) && Date.now() > end.getTime()
+  }, [eventEndDate, eventEnd])
+
+  // ── Close the download dropdown on outside click ──
+  useEffect(() => {
+    if (!downloadMenuOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) {
+        setDownloadMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [downloadMenuOpen])
 
   // ── Initial page load: first 15 attendees only ──
   useEffect(() => {
@@ -403,14 +435,50 @@ export default function AttendeesTab({
           </select>
           <ChevronUp className="absolute right-4 top-1/2 -translate-y-1/2 rotate-180 text-slate-400 pointer-events-none" size={20} />
         </div>
-        <button
-          onClick={() => setRegistryDialogOpen(true)}
-          disabled={totalCount === 0 || exporting}
-          className="flex items-center justify-center gap-2 px-5 py-3 bg-[#6b2fa5] text-white font-semibold text-sm rounded-xl shadow-lg shadow-[#6b2fa5]/25 hover:bg-[#5a2690] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 whitespace-nowrap"
-        >
-          {exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-          Download
-        </button>
+
+        {/* Download dropdown — Guest Registry (existing export) or Post Mortem (new) */}
+        <div className="relative" ref={downloadMenuRef}>
+          <button
+            onClick={() => setDownloadMenuOpen((v) => !v)}
+            disabled={totalCount === 0 || exporting}
+            className="flex items-center justify-center gap-2 px-5 py-3 bg-[#6b2fa5] text-white font-semibold text-sm rounded-xl shadow-lg shadow-[#6b2fa5]/25 hover:bg-[#5a2690] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 whitespace-nowrap w-full md:w-auto"
+          >
+            {exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+            Download
+            <ChevronDown size={16} className={`transition-transform ${downloadMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {downloadMenuOpen && (
+            <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl border-2 border-slate-200 shadow-xl z-20 overflow-hidden">
+              <button
+                onClick={() => { setDownloadMenuOpen(false); setRegistryDialogOpen(true) }}
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#6b2fa5]/5 transition-colors"
+              >
+                <FileSpreadsheet size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">Guest Registry</span>
+                  <span className="block text-xs text-slate-500">Export the full guest list as JSON or CSV</span>
+                </span>
+              </button>
+              <div className="border-t border-slate-100" />
+              <button
+                onClick={() => { setDownloadMenuOpen(false); setPostMortemDialogOpen(true) }}
+                disabled={!eventHasEnded}
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#6b2fa5]/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <FileBarChart2 size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">Post Mortem</span>
+                  <span className="block text-xs text-slate-500">
+                    {eventHasEnded
+                      ? "Detailed report: purchase behavior, check-ins & awards"
+                      : "Available after the event ends"}
+                  </span>
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {loadError && (
@@ -604,6 +672,16 @@ export default function AttendeesTab({
         attendeeCount={totalCount}
         eventId={eventId}
         eventName={eventName}
+      />
+
+      {/* Attendee Post Mortem Dialog */}
+      <AttendeePostMortemDialog
+        open={postMortemDialogOpen}
+        onClose={() => setPostMortemDialogOpen(false)}
+        eventId={eventId}
+        eventName={eventName}
+        eventHasEnded={eventHasEnded}
+        requesterEmail={user?.email}
       />
 
       {/* Attendee summary dialog */}

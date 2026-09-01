@@ -34,26 +34,7 @@ import {
 } from "lucide-react"
 import { useState, useCallback, useEffect } from "react"
 import { SkeletonTable } from "@/components/ui/skeleton"
-
-type DisplayStatus = "initializing" | "processing" | "successful" | "failed" | "vault_pending" | "cancelled" | "rejected"
-
-interface DisplayRecord {
-  id: string // reference (Supabase) or holdId (Firestore vaultHold)
-  source: "payout" | "vaultHold"
-  date: string
-  amount: number
-  bankName: string
-  accountNumber: string
-  accountName: string
-  status: DisplayStatus
-  failureReason?: string | null
-  narration?: string | null
-  userId: string
-  initiatedByName?: string
-  createdAt: string | null
-  resolvedAt?: string | null
-  durationSeconds?: number
-}
+import { fetchPayoutLogRecords, type DisplayStatus, type DisplayRecord } from "@/lib/payout-log-data"
 
 interface PayoutLogProps {
   eventId: string
@@ -149,53 +130,7 @@ export default function PayoutLog({ eventId, userId, canManage = false, onCancel
     try {
       setLoading(true)
       setError(null)
-      const [statusRes, vaultRes] = await Promise.all([
-        fetch(`/api/payout?eventId=${eventId}&action=status`),
-        fetch(`/api/payout?eventId=${eventId}&action=vaultPending`),
-      ])
-      const statusData = await statusRes.json()
-      const vaultData = await vaultRes.json()
-      if (!statusRes.ok) throw new Error(statusData.error || "Failed to fetch payout logs")
-
-      const payoutRecords: DisplayRecord[] = (statusData.payouts ?? []).map((p: any) => ({
-        id: p.reference,
-        source: "payout" as const,
-        date: p.date,
-        amount: p.amount,
-        bankName: p.bankName,
-        accountNumber: p.accountNumber,
-        accountName: p.accountName,
-        status: p.status as DisplayStatus,
-        failureReason: p.failureReason,
-        narration: p.narration,
-        userId: p.userId,
-        createdAt: p.createdAt,
-        resolvedAt: p.resolvedAt,
-        durationSeconds: p.durationSeconds,
-      }))
-
-      const holdRecords: DisplayRecord[] = vaultRes.ok
-        ? (vaultData.payouts ?? []).map((h: any) => ({
-            id: h.id,
-            source: "vaultHold" as const,
-            date: h.date,
-            amount: h.amount,
-            bankName: h.bankName,
-            accountNumber: h.accountNumber,
-            accountName: h.accountName,
-            status: "vault_pending" as const,
-            userId: h.userId,
-            initiatedByName: h.initiatedByName,
-            createdAt: h.createdAt?._seconds ? new Date(h.createdAt._seconds * 1000).toISOString() : h.createdAt ?? null,
-          }))
-        : []
-
-      const merged = [...holdRecords, ...payoutRecords].sort((a, b) => {
-        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0
-        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0
-        return bTime - aTime
-      })
-
+      const merged = await fetchPayoutLogRecords(eventId)
       setRecords(merged)
     } catch (err: any) {
       setError(err.message || "Failed to load payout logs")
