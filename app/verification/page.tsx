@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   AlertCircle, CheckCircle2, Copy, Upload,
   FileText, Camera, MapPin, Shield, ArrowLeft,
-  User, Landmark, Home, ClipboardList,
+  User, Home, ClipboardList, AlertTriangle,
 } from "lucide-react"
 
 interface UserData {
@@ -24,10 +24,13 @@ interface UserData {
   fullName: string
   phoneNumber: string
   dateOfBirth: string
-  accountName: string
-  accountNumber: string
-  bankName: string
   isVerified: boolean
+}
+
+interface DocumentRejection {
+  problem: string
+  suggestion: string
+  rejectedBy?: string
 }
 
 interface DocumentStatus {
@@ -36,6 +39,7 @@ interface DocumentStatus {
   timeUploaded: string
   fileUrl: string
   provider?: string
+  rejection?: DocumentRejection | null
 }
 
 interface VerificationData {
@@ -88,6 +92,7 @@ export default function VerificationPage() {
   const [verificationId, setVerificationId]   = useState("")
   const [copied, setCopied]                   = useState(false)
   const [allMet, setAllMet]                   = useState(false)
+  const [openTooltip, setOpenTooltip]         = useState<string | null>(null)
 
   // ── Auth (JWT only, no Firebase client Auth) ──────────────────────────────
   useEffect(() => {
@@ -136,9 +141,6 @@ export default function VerificationPage() {
           fullName:      data.fullName       || "",
           phoneNumber:   data.phoneNumber    || "",
           dateOfBirth:   data.dateOfBirth    || "",
-          accountName:   data.accountName    || "",
-          accountNumber: data.accountNumber  || "",
-          bankName:      data.bankName       || "",
           isVerified:    data.isVerified     || false,
         }
         setUserData(u)
@@ -151,9 +153,9 @@ export default function VerificationPage() {
           const vData = vDoc.data() as VerificationData
           setVerificationId(vDoc.id)
           setVerificationData({
-            nin:            vData.nin            || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
-            selfie:         vData.selfie          || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
-            proofOfAddress: vData.proofOfAddress  || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "" },
+            nin:            vData.nin            || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "", rejection: null },
+            selfie:         vData.selfie          || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "", rejection: null },
+            proofOfAddress: vData.proofOfAddress  || { status: "pending", dateUploaded: "", timeUploaded: "", fileUrl: "", rejection: null },
             address:        vData.address         || "",
             verificationState: vData.verificationState || "Not Verified",
             uid:            resolvedUid,
@@ -182,9 +184,9 @@ export default function VerificationPage() {
   // ── Firestore helpers ─────────────────────────────────────────────────────
   const saveToFirestore = async (data: VerificationData) => {
     const payload = {
-      nin:            { status: data.nin.status,            dateUploaded: data.nin.dateUploaded,            timeUploaded: data.nin.timeUploaded,            fileUrl: data.nin.fileUrl,            provider: data.nin.provider ?? null },
-      selfie:         { status: data.selfie.status,         dateUploaded: data.selfie.dateUploaded,         timeUploaded: data.selfie.timeUploaded,         fileUrl: data.selfie.fileUrl,         provider: data.selfie.provider ?? null },
-      proofOfAddress: { status: data.proofOfAddress.status, dateUploaded: data.proofOfAddress.dateUploaded, timeUploaded: data.proofOfAddress.timeUploaded, fileUrl: data.proofOfAddress.fileUrl, provider: data.proofOfAddress.provider ?? null },
+      nin:            { status: data.nin.status,            dateUploaded: data.nin.dateUploaded,            timeUploaded: data.nin.timeUploaded,            fileUrl: data.nin.fileUrl,            provider: data.nin.provider ?? null,            rejection: data.nin.rejection ?? null },
+      selfie:         { status: data.selfie.status,         dateUploaded: data.selfie.dateUploaded,         timeUploaded: data.selfie.timeUploaded,         fileUrl: data.selfie.fileUrl,         provider: data.selfie.provider ?? null,         rejection: data.selfie.rejection ?? null },
+      proofOfAddress: { status: data.proofOfAddress.status, dateUploaded: data.proofOfAddress.dateUploaded, timeUploaded: data.proofOfAddress.timeUploaded, fileUrl: data.proofOfAddress.fileUrl, provider: data.proofOfAddress.provider ?? null, rejection: data.proofOfAddress.rejection ?? null },
       address: data.address, verificationState: data.verificationState, uid: data.uid,
     }
     if (verificationId) {
@@ -221,7 +223,8 @@ export default function VerificationPage() {
       const now   = new Date()
       const updated: VerificationData = {
         ...verificationData,
-        [docType]: { status: "completed" as const, dateUploaded: now.toLocaleDateString(), timeUploaded: now.toLocaleTimeString(), fileUrl, provider },
+        // A fresh upload clears any prior rejection — the admin reviews the new file, not the old reason.
+        [docType]: { status: "completed" as const, dateUploaded: now.toLocaleDateString(), timeUploaded: now.toLocaleTimeString(), fileUrl, provider, rejection: null },
       }
       const allDone = updated.nin.status === "completed" && updated.selfie.status === "completed" && updated.proofOfAddress.status === "completed"
       if (allDone && updated.address.trim()) updated.verificationState = "Awaiting Verification"
@@ -371,28 +374,6 @@ export default function VerificationPage() {
           </div>
         </section>
 
-        {/* Banking info */}
-        <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-100">
-            <Landmark size={14} className="text-slate-400" />
-            <h2 className="text-sm font-semibold text-slate-800">Banking information</h2>
-          </div>
-          <div className="p-5 grid sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Account name</label>
-              <Input value={userData.accountName} readOnly className="bg-slate-50 text-slate-700 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Account number</label>
-              <Input value={userData.accountNumber} readOnly className="bg-slate-50 text-slate-700 text-sm font-mono" />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Bank name</label>
-              <Input value={userData.bankName} readOnly className="bg-slate-50 text-slate-700 text-sm" />
-            </div>
-          </div>
-        </section>
-
         {/* Address */}
         <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-100">
@@ -421,14 +402,45 @@ export default function VerificationPage() {
               const meta     = DOC_META[docType]
               const docState = verificationData[docType]
               const done     = docState.status === "completed"
+              const rejected = !done && !!docState.rejection
               return (
                 <div key={docType} className="flex items-start sm:items-center justify-between gap-4 p-5 flex-col sm:flex-row">
                   <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${done ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      done ? "bg-emerald-50 text-emerald-600" : rejected ? "bg-red-50 text-red-500" : "bg-slate-100 text-slate-500"
+                    }`}>
                       {meta.icon}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-800">{meta.label}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-semibold text-slate-800">{meta.label}</p>
+                        {rejected && (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setOpenTooltip((cur) => (cur === docType ? null : docType))}
+                              onBlur={() => setTimeout(() => setOpenTooltip((cur) => (cur === docType ? null : cur)), 150)}
+                              className="text-red-500 hover:text-red-600"
+                              aria-label={`Why ${meta.label} was rejected`}
+                            >
+                              <AlertTriangle size={14} />
+                            </button>
+                            {openTooltip === docType && (
+                              <div className="absolute z-20 left-0 top-full mt-2 w-64 bg-slate-900 text-white text-xs rounded-lg shadow-xl p-3 space-y-2">
+                                <div>
+                                  <p className="font-semibold text-red-300 mb-0.5">Why it was rejected</p>
+                                  <p className="text-slate-200">{docState.rejection?.problem}</p>
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-emerald-300 mb-0.5">Suggestion</p>
+                                  <p className="text-slate-200">{docState.rejection?.suggestion}</p>
+                                </div>
+                                <div className="absolute -top-1.5 left-3 w-3 h-3 bg-slate-900 rotate-45" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-400 mt-0.5">{meta.hint}</p>
                       {done && (
                         <p className="text-xs text-emerald-600 mt-1 font-medium">
@@ -436,20 +448,28 @@ export default function VerificationPage() {
                           {docState.provider && ` · ${docState.provider}`}
                         </p>
                       )}
+                      {rejected && (
+                        <p className="text-xs text-red-600 mt-1 font-medium">
+                          Rejected — tap the warning icon for details, then re-upload
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {done && <span className="w-2 h-2 rounded-full bg-emerald-500" />}
+                    {rejected && <span className="w-2 h-2 rounded-full bg-red-500" />}
                     <Button
                       onClick={() => handleUploadClick(docType)}
                       className={done
                         ? "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs h-8 px-3"
-                        : "bg-[#6b2fa5] hover:bg-[#5a2589] text-white text-xs h-8 px-3"
+                        : rejected
+                          ? "bg-red-600 hover:bg-red-700 text-white text-xs h-8 px-3"
+                          : "bg-[#6b2fa5] hover:bg-[#5a2589] text-white text-xs h-8 px-3"
                       }
                       variant={done ? "outline" : "default"}
                     >
                       <Upload size={12} className="mr-1.5" />
-                      {done ? "Replace" : "Upload"}
+                      {done ? "Replace" : rejected ? "Re-upload" : "Upload"}
                     </Button>
                   </div>
                 </div>
