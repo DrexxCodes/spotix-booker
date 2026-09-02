@@ -358,7 +358,7 @@ export default function AttendeesTab({
         const res = await authFetch(`${baseUrl}?all=true`)
         const data = await res.json()
         if (!res.ok || !data.success) throw new Error(data.error ?? "Failed to load attendees for export")
-        all = data.attendees ?? []
+        all = (data.attendees ?? []) as AttendeeData[]
         setFullRoster(all)
       }
 

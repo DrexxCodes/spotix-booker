@@ -120,6 +120,25 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ po
     const access = await resolvePollAccess(pollId, userId)
     if (!access.ok) return fail(access.error, access.status)
 
+    // Computed once, reused after that — mirrors the Attendee Post Mortem's
+    // "generate once" model. A poll's results can't change after it ends
+    // (that's the gate below), so once a report exists there's nothing to
+    // gain from re-rendering and re-uploading a byte-identical PDF on every
+    // click; this also protects against a double-click or a slow first
+    // request racing a retry from firing two generations. The frontend
+    // button (app/polls/[pollId]/page.tsx) already avoids calling this
+    // route again once it has a ready result, but the route stays safe on
+    // its own regardless of caller.
+    const existing = await getLatestPollResult(pollId)
+    if (existing && existing.status === "ready") {
+      return ok({
+        status: "ready",
+        fileName: existing.fileName,
+        downloadUrl: buildDownloadUrl(pollId),
+        generatedAt: existing.createdAt,
+      })
+    }
+
     const d = access.pollSnap.data()!
     const pollEndDate = d.pollEndDate ?? ""
     const pollEndTime = d.pollEndTime ?? ""

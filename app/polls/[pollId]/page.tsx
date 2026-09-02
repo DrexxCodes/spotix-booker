@@ -47,7 +47,7 @@ import {
   X,
 } from "lucide-react"
 
-//  Types 
+// ─ Types ─
 
 /** @deprecated kept as an alias so existing prop/type references below still
  *  read naturally — use ContestantRecord from @/lib/contestants directly in
@@ -158,7 +158,7 @@ const STATUS_PILL: Record<PollStatus, { cls: string; icon: typeof CheckCircle; l
 // "Upcoming" is irrelevant if there's nobody to vote for yet.
 const COMING_SOON_PILL = { cls: "bg-purple-100 text-purple-700", icon: Sparkles, label: "Coming Soon" }
 
-//  Standings row (shared leaf renderer) 
+// ─ Standings row (shared leaf renderer) 
 
 function StandingsList({
   contestants,
@@ -299,7 +299,7 @@ function StandingsList({
   )
 }
 
-//  Category panel (recursive) — group-poll standings ─
+// ─ Category panel (recursive) — group-poll standings ─
 
 function CategoryStandingsPanel({
   category, depth, status, tieBreaker, tieBreakers,
@@ -358,7 +358,7 @@ function CategoryStandingsPanel({
   )
 }
 
-//  Entries tab ─
+// ─ Entries tab 
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—"
@@ -477,7 +477,7 @@ function EntriesTab({ pollId, pollType }: { pollId: string; pollType: "single" |
   )
 }
 
-//  Page ─
+// ─ Page 
 
 export default function PollManagePage() {
   const router = useRouter()
@@ -490,12 +490,20 @@ export default function PollManagePage() {
   const [copied,        setCopied]        = useState(false)
   const [showEventMenu, setShowEventMenu] = useState(false)
 
-  //  Download Result (results PDF) 
+  //  Download Result (results PDF) ─
   const [resultStatus, setResultStatus]   = useState<"idle" | "preparing" | "ready" | "error">("idle")
   const [resultUrl,    setResultUrl]      = useState<string | null>(null)
   const [resultError,  setResultError]    = useState<string | null>(null)
   const [showResultDialog, setShowResultDialog] = useState(false)
 
+  /**
+   * Generates a NEW report — only meaningful the first time (or after a
+   * failed attempt). Once resultStatus is "ready", the button below calls
+   * handleResultButtonClick instead, which just opens resultUrl straight
+   * away — the server route is also idempotent on its own now (see
+   * api/polls/[pollId]/results/route.ts), but there's no reason to make a
+   * network round trip at all when we already have the URL in hand.
+   */
   const handleDownloadResult = async () => {
     setShowResultDialog(true)
     setResultStatus("preparing")
@@ -514,6 +522,16 @@ export default function PollManagePage() {
       setResultStatus("error")
       setResultError("Something went wrong. Please try again.")
     }
+  }
+
+  /** What the "Download Report" button actually does — reuse the already-
+   *  generated result the instant we have one, generate only if we don't. */
+  const handleResultButtonClick = () => {
+    if (resultStatus === "ready" && resultUrl) {
+      window.open(resultUrl, "_blank", "noopener,noreferrer")
+      return
+    }
+    handleDownloadResult()
   }
 
   const handleShare = async () => {
@@ -794,7 +812,7 @@ export default function PollManagePage() {
                 <Banknote className="w-4 h-4" /> Payout
               </Link>
               <button
-                onClick={handleDownloadResult}
+                onClick={handleResultButtonClick}
                 disabled={status !== "ended" || resultStatus === "preparing"}
                 title={status !== "ended" ? "Available once the poll ends" : undefined}
                 className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors min-w-[100px]

@@ -13,24 +13,14 @@
 
 import { Loader2, AlertCircle, CheckCircle2, Clock, XCircle, RefreshCw, MessageCircle, Filter, ReceiptText, Copy, Check } from "lucide-react"
 import { useState, useCallback, useEffect } from "react"
+import {
+  fetchPollPayoutRecords,
+  type PollPayoutStatus,
+  type PollPayoutRecord,
+} from "@/lib/poll-payout-log-data"
 
-type PayoutStatus = "initializing" | "processing" | "failed" | "successful"
-
-interface PayoutRecord {
-  id: string // reference
-  pollId: string
-  userId: string
-  date: string
-  amount: number
-  bankName: string
-  accountNumber: string
-  accountName: string
-  status: PayoutStatus
-  failureReason?: string | null
-  narration?: string | null
-  createdAt: string | null
-  resolvedAt?: string | null
-}
+type PayoutStatus = PollPayoutStatus
+type PayoutRecord = PollPayoutRecord
 
 interface PollPayoutLogProps {
   pollId: string
@@ -70,10 +60,8 @@ export default function PollPayoutLog({ pollId, userId, canManagePayouts }: Poll
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`/api/polls/payout?pollId=${pollId}&action=status`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Failed to fetch payout logs")
-      setPayouts(data.payouts ?? [])
+      const payouts = await fetchPollPayoutRecords(pollId)
+      setPayouts(payouts)
     } catch (err: any) {
       setError(err.message || "Failed to load payout logs")
     } finally {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { authFetch, getAccessToken, tryRefreshTokens } from "@/lib/auth-client"
@@ -18,18 +18,24 @@ import {
   Clock,
   X,
   ChevronRight,
+  ChevronDown,
   Loader2,
   Ban,
   CalendarX,
   ReceiptText,
   Shield,
+  Download,
+  FileText,
+  FileSpreadsheet,
 } from "lucide-react"
 import PollPayoutConfirmation from "@/components/polls/helper/poll-payout-confirmation"
 import PollPayoutLog from "@/components/polls/helper/poll-payout-log"
 import PayoutStateDialog from "@/components/payout/PayoutStateDialog"
 import type { PayoutLiveState } from "@/components/payout/use-payout-stream"
+import { fetchPollPayoutRecords } from "@/lib/poll-payout-log-data"
+import { buildPollPayoutCsv, buildPollPayoutPdfBlob } from "@/lib/poll-payout-export"
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+//  Types 
 
 interface Poll {
   id: string
@@ -75,7 +81,7 @@ interface PayoutError {
   reason: string
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+//  Helpers 
 
 const LOCK_HOURS = 30
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -123,7 +129,7 @@ function classifyPayoutError(rawMessage: string, txnDate: string): PayoutError {
   return { kind: "generic", reason: rawMessage }
 }
 
-// ─── Status badge config ──────────────────────────────────────────────────────
+//  Status badge config 
 
 const STATUS_BADGE: Record<string, { label: string; bg: string; text: string; icon: React.ReactNode }> = {
   pending:      { label: "Pending",      bg: "bg-amber-100", text: "text-amber-700",  icon: <Clock size={11} /> },
@@ -134,7 +140,7 @@ const STATUS_BADGE: Record<string, { label: string; bg: string; text: string; ic
   reversed:     { label: "Reversed",     bg: "bg-gray-100",  text: "text-gray-600",   icon: <X size={11} /> },
 }
 
-// ─── Error Banner ─────────────────────────────────────────────────────────────
+//  Error Banner 
 
 function PayoutErrorBanner({ error, onDismiss }: { error: PayoutError; onDismiss: () => void }) {
   const base = "rounded-xl p-4 flex gap-3"
@@ -179,7 +185,7 @@ function PayoutErrorBanner({ error, onDismiss }: { error: PayoutError; onDismiss
   )
 }
 
-// ─── Transaction Card ─────────────────────────────────────────────────────────
+//  Transaction Card 
 
 interface TxnCardProps {
   txn: DailyVoteTransaction
@@ -335,11 +341,11 @@ function TxnCard({ txn, payoutStatus, payoutReference, onPayout, onReopen, onAdd
   )
 }
 
-// ─── Active view types ────────────────────────────────────────────────────────
+//  Active view types 
 
 type ActiveView = "transactions" | "logs"
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+//  Page 
 
 export default function PollPayoutPage() {
   const router = useRouter()
@@ -349,6 +355,7 @@ export default function PollPayoutPage() {
   const [poll,    setPoll]    = useState<Poll | null>(null)
   const [loading, setLoading] = useState(true)
   const [currentUid, setCurrentUid] = useState<string>("")
+  const [currentUserName, setCurrentUserName] = useState<string>("")
 
   const [transactions, setTransactions] = useState<DailyVoteTransaction[]>([])
   const [txnLoading,   setTxnLoading]   = useState(true)
@@ -380,6 +387,22 @@ export default function PollPayoutPage() {
   }
   const [bulkPayoutTxns, setBulkPayoutTxns] = useState<DailyVoteTransaction[]>([])
 
+  // Export Report — computed and downloaded entirely client-side, same
+  // model as the event Payouts tab's export (see app/lib/payout-export.ts).
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [exportingFormat, setExportingFormat] = useState<"csv" | "pdf" | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside)
+    return () => document.removeEventListener("mousedown", onClickOutside)
+  }, [])
+
   // Live payout progress dialog — opened the moment a payout begins.
   const [liveReferences, setLiveReferences] = useState<string[] | null>(null)
 
@@ -390,7 +413,7 @@ export default function PollPayoutPage() {
     return () => clearInterval(id)
   }, [])
 
-  // ── Auth + load poll ───────────────────────────────────────────────────────
+  //  Auth + load poll 
 
   useEffect(() => {
     const init = async () => {
@@ -406,6 +429,7 @@ export default function PollPayoutPage() {
       if (meRes.ok) {
         const me = await meRes.json()
         setCurrentUid(me.uid ?? me.userId ?? me.id ?? "")
+        setCurrentUserName(me.fullName || me.email || "")
       }
 
       const res = await authFetch("/api/polls/list")
@@ -531,7 +555,56 @@ export default function PollPayoutPage() {
     setDialogTxn(null)
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  /**
+   * Export Report — same model as the event Payouts tab: pulls together
+   * data this page already has (transactions, payoutStatuses) plus one
+   * fresh fetch of this poll's payout records, builds the file entirely
+   * in the browser, and downloads it immediately. Nothing is stored.
+   */
+  const handleExport = async (format: "csv" | "pdf") => {
+    if (!poll) return
+    setExportMenuOpen(false)
+    setExportingFormat(format)
+    setExportError(null)
+    try {
+      const records = await fetchPollPayoutRecords(pollId)
+      const totals = {
+        totalRevenue: poll.pollAmount ?? 0,
+        availableRevenue: Math.max(0, (poll.pollAmount ?? 0) - (poll.totalPaidOut ?? 0)),
+        paidAmount: poll.totalPaidOut ?? 0,
+      }
+      const meta = {
+        pollName: poll.pollName || "Poll",
+        pollId,
+        generatedByName: currentUserName || "Organizer",
+      }
+      const txns = transactions.map((t) => ({ date: t.date, voteCount: t.voteCount, voteSales: t.voteSales }))
+      const fileBase = `spotix_poll_payouts_${pollId}`
+
+      if (format === "csv") {
+        const csv = buildPollPayoutCsv(txns, payoutStatuses, records, totals, meta)
+        triggerDownload(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `${fileBase}.csv`)
+      } else {
+        const blob = await buildPollPayoutPdfBlob(txns, payoutStatuses, records, totals, meta)
+        triggerDownload(blob, `${fileBase}.pdf`)
+      }
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export failed")
+    } finally {
+      setExportingFormat(null)
+    }
+  }
+
+  function triggerDownload(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = fileName
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  //  Render 
 
   if (loading || !poll) {
     return (
@@ -627,7 +700,7 @@ export default function PollPayoutPage() {
           </div>
         )}
 
-        {/* ── Stat cards ─────────────────────────────────────────────────── */}
+        {/*  Stat cards  */}
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-sm transition-shadow">
             <div className="flex items-center gap-2 mb-2">
@@ -656,10 +729,64 @@ export default function PollPayoutPage() {
           </div>
         </div>
 
-        {/* ── Payout Error Banner ────────────────────────────────────────── */}
+        {/* Export Report — CSV or a branded PDF, computed client-side */}
+        <div className="flex justify-end mb-4">
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              onClick={() => setExportMenuOpen((v) => !v)}
+              disabled={txnLoading || exportingFormat !== null}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 bg-[#6b2fa5] text-white font-semibold text-sm rounded-xl shadow-lg shadow-[#6b2fa5]/25 hover:bg-[#5a2690] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exportingFormat ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+              Export Report
+              <ChevronDown size={14} className={`transition-transform ${exportMenuOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {exportMenuOpen && (
+              <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl border-2 border-gray-200 shadow-xl z-20 overflow-hidden">
+                <button
+                  onClick={() => handleExport("pdf")}
+                  className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#6b2fa5]/5 transition-colors"
+                >
+                  <FileText size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">PDF Report</span>
+                    <span className="block text-xs text-gray-500">Branded summary — transaction days &amp; payout logs</span>
+                  </span>
+                </button>
+                <div className="border-t border-gray-100" />
+                <button
+                  onClick={() => handleExport("csv")}
+                  className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#6b2fa5]/5 transition-colors"
+                >
+                  <FileSpreadsheet size={18} className="text-[#6b2fa5] flex-shrink-0 mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">CSV</span>
+                    <span className="block text-xs text-gray-500">Raw data for spreadsheets</span>
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {exportError && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3 mb-4">
+            <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-red-700">Export failed</p>
+              <p className="text-sm text-red-600 mt-0.5">{exportError}</p>
+            </div>
+            <button onClick={() => setExportError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/*  Payout Error Banner  */}
         {payoutError && <div className="mb-5"><PayoutErrorBanner error={payoutError} onDismiss={() => setPayoutError(null)} /></div>}
 
-        {/* ── Sub-tabs ───────────────────────────────────────────────────── */}
+        {/*  Sub-tabs  */}
         <div className="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto overflow-y-hidden">
           <button
             onClick={() => setActiveView("transactions")}
@@ -685,7 +812,7 @@ export default function PollPayoutPage() {
           </button>
         </div>
 
-        {/* ── Transaction Days view ─────────────────────────────────────── */}
+        {/*  Transaction Days view  */}
         {activeView === "transactions" && (
           <div>
             {!methodsLoading && !hasMethods && (
@@ -769,7 +896,7 @@ export default function PollPayoutPage() {
           </div>
         )}
 
-        {/* ── Payout Logs view ──────────────────────────────────────────── */}
+        {/*  Payout Logs view  */}
         {activeView === "logs" && (
           <PollPayoutLog pollId={pollId} userId={currentUid} canManagePayouts={canPayout} />
         )}

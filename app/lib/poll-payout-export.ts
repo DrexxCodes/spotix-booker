@@ -1,51 +1,52 @@
 /**
- * app/lib/payout-export.ts
+ * app/lib/poll-payout-export.ts
  *
- * Client-side, compute-and-download export for the Payouts tab — unlike
- * the Attendee Post Mortem, nothing is generated or stored server-side.
- * Both formats are built entirely in the browser from data the Payouts
- * tab already has (Transaction Days + payout status map) plus one fresh
- * fetch of the merged payout log timeline (see payout-log-data.ts).
+ * Client-side, compute-and-download export for a poll's payout page
+ * (app/polls/[pollId]/payout/page.tsx) — same "computed and downloaded
+ * immediately, nothing stored" model as app/lib/payout-export.ts (the
+ * event Payouts tab's export), just built from a poll's simpler payout
+ * shape (no Vault, so no vaultHold records to merge in — see
+ * poll-payout-log-data.ts).
  *
- * Covers exactly what was asked for:
+ * Covers the same two things as the event version:
  *   - every transaction day, with the amount realized that day
- *   - the payout logs for the event and each one's status
+ *   - the poll's payout logs and each one's status
  */
 
-import type { DisplayRecord } from "./payout-log-data"
-import { formatStatusLabel } from "./payout-log-data"
+import type { PollPayoutRecord } from "./poll-payout-log-data"
+import { formatPollPayoutStatusLabel } from "./poll-payout-log-data"
 import { BRAND_HEX, hexToRgb, naira, csvRow } from "./pdf-report-kit"
 
-export interface PayoutExportTxn {
+export interface PollPayoutExportTxn {
   date: string
-  ticketCount: number
-  ticketSales: number
+  voteCount: number
+  voteSales: number
 }
 
-export interface PayoutExportTotals {
+export interface PollPayoutExportTotals {
   totalRevenue: number
   availableRevenue: number
   paidAmount: number
 }
 
-export interface PayoutExportMeta {
-  eventName: string
-  eventId: string
+export interface PollPayoutExportMeta {
+  pollName: string
+  pollId: string
   generatedByName: string
 }
 
 // ── CSV ──────────────────────────────────────────────────────────────────
 
-export function buildPayoutCsv(
-  transactions: PayoutExportTxn[],
+export function buildPollPayoutCsv(
+  transactions: PollPayoutExportTxn[],
   payoutStatusByDate: Record<string, string>,
-  records: DisplayRecord[],
-  totals: PayoutExportTotals,
-  meta: PayoutExportMeta
+  records: PollPayoutRecord[],
+  totals: PollPayoutExportTotals,
+  meta: PollPayoutExportMeta
 ): string {
   const lines: string[] = []
 
-  lines.push(csvRow([`Spotix Payout Report - ${meta.eventName}`]))
+  lines.push(csvRow([`Spotix Poll Payout Report - ${meta.pollName}`]))
   lines.push(csvRow([`Generated ${new Date().toLocaleString()} by ${meta.generatedByName}`]))
   lines.push("")
   lines.push(csvRow(["Total Revenue", "Available", "Paid Out"]))
@@ -53,13 +54,13 @@ export function buildPayoutCsv(
   lines.push("")
 
   lines.push(csvRow(["Transaction Days"]))
-  lines.push(csvRow(["Date", "Tickets Sold", "Sales", "Payout Status"]))
+  lines.push(csvRow(["Date", "Votes Sold", "Sales", "Payout Status"]))
   transactions.forEach((t) => {
-    lines.push(csvRow([t.date, t.ticketCount, t.ticketSales, formatStatusLabel(payoutStatusByDate[t.date])]))
+    lines.push(csvRow([t.date, t.voteCount, t.voteSales, formatPollPayoutStatusLabel(payoutStatusByDate[t.date])]))
   })
-  const totalTickets = transactions.reduce((s, t) => s + (t.ticketCount || 0), 0)
-  const totalSales = transactions.reduce((s, t) => s + Number(t.ticketSales || 0), 0)
-  lines.push(csvRow(["Total", totalTickets, totalSales, ""]))
+  const totalVotes = transactions.reduce((s, t) => s + (t.voteCount || 0), 0)
+  const totalSales = transactions.reduce((s, t) => s + Number(t.voteSales || 0), 0)
+  lines.push(csvRow(["Total", totalVotes, totalSales, ""]))
   lines.push("")
 
   lines.push(csvRow(["Payout Logs"]))
@@ -72,7 +73,7 @@ export function buildPayoutCsv(
         r.bankName,
         r.accountName,
         r.accountNumber,
-        formatStatusLabel(r.status),
+        formatPollPayoutStatusLabel(r.status),
         r.id,
         r.createdAt ? new Date(r.createdAt).toLocaleString() : "",
         r.resolvedAt ? new Date(r.resolvedAt).toLocaleString() : "",
@@ -80,25 +81,21 @@ export function buildPayoutCsv(
     )
   })
 
-  // Leading BOM so Excel (which otherwise guesses the system ANSI codepage
-  // for a plain-text .csv, rather than assuming UTF-8) opens this straight
-  // away instead of mis-decoding it — a bare non-ASCII byte with no BOM is
-  // exactly what makes Excel show an apparently blank sheet instead of an
-  // error.
+  // Same leading BOM as the event payout export — without it Excel guesses
+  // the system ANSI codepage for a plain .csv instead of UTF-8 and can
+  // render an apparently blank sheet.
   return "\uFEFF" + lines.join("\n")
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────
 
-export async function buildPayoutPdfBlob(
-  transactions: PayoutExportTxn[],
+export async function buildPollPayoutPdfBlob(
+  transactions: PollPayoutExportTxn[],
   payoutStatusByDate: Record<string, string>,
-  records: DisplayRecord[],
-  totals: PayoutExportTotals,
-  meta: PayoutExportMeta
+  records: PollPayoutRecord[],
+  totals: PollPayoutExportTotals,
+  meta: PollPayoutExportMeta
 ): Promise<Blob> {
-  // Dynamically imported so jsPDF/autotable never land in the main bundle
-  // for people who never open this menu.
   const { jsPDF } = await import("jspdf")
   const autoTableModule = await import("jspdf-autotable")
   const autoTable = autoTableModule.default
@@ -119,17 +116,17 @@ export async function buildPayoutPdfBlob(
   doc.setTextColor(255, 255, 255)
   doc.setFont("helvetica", "bold")
   doc.setFontSize(18)
-  doc.text("Payout Report", margin, 40)
+  doc.text("Poll Payout Report", margin, 40)
   doc.setFont("helvetica", "normal")
   doc.setFontSize(10.5)
-  doc.text(meta.eventName, margin, 59)
+  doc.text(meta.pollName, margin, 59)
   doc.setFontSize(8)
   doc.setTextColor(230, 220, 245)
   doc.text(`Generated ${new Date().toLocaleString()} by ${meta.generatedByName}`, margin, 74)
 
   let y = 120
 
-  // ── Summary stat cards — mirrors the 3 stat blocks on the Payouts tab ──
+  // ── Summary stat cards — mirrors the 3 stat blocks on the poll payout page ──
   const cardGap = 12
   const cardWidth = (contentWidth - cardGap * 2) / 3
   const cards: { label: string; value: number; color: [number, number, number] }[] = [
@@ -166,27 +163,27 @@ export async function buildPayoutPdfBlob(
 
   // ── Transaction Days ──
   sectionTitle("Transaction Days")
-  const totalTickets = transactions.reduce((s, t) => s + (t.ticketCount || 0), 0)
-  const totalSales = transactions.reduce((s, t) => s + Number(t.ticketSales || 0), 0)
+  const totalVotes = transactions.reduce((s, t) => s + (t.voteCount || 0), 0)
+  const totalSales = transactions.reduce((s, t) => s + Number(t.voteSales || 0), 0)
 
   if (transactions.length === 0) {
     doc.setFont("helvetica", "normal")
     doc.setFontSize(9)
     doc.setTextColor(...muted)
-    doc.text("No transaction days recorded for this event yet.", margin, y + 4)
+    doc.text("No transaction days recorded for this poll yet.", margin, y + 4)
     y += 26
   } else {
     autoTable(doc, {
       startY: y,
       margin: { left: margin, right: margin },
-      head: [["Date", "Tickets Sold", "Sales", "Payout Status"]],
+      head: [["Date", "Votes Sold", "Sales", "Payout Status"]],
       body: transactions.map((t) => [
         t.date,
-        String(t.ticketCount),
-        naira(t.ticketSales),
-        formatStatusLabel(payoutStatusByDate[t.date]),
+        String(t.voteCount),
+        naira(t.voteSales),
+        formatPollPayoutStatusLabel(payoutStatusByDate[t.date]),
       ]),
-      foot: [["Total", String(totalTickets), naira(totalSales), ""]],
+      foot: [["Total", String(totalVotes), naira(totalSales), ""]],
       theme: "striped",
       headStyles: { fillColor: brand, textColor: 255, fontStyle: "bold", fontSize: 8.5 },
       footStyles: { fillColor: [243, 244, 246], textColor: ink, fontStyle: "bold", fontSize: 8.5 },
@@ -208,7 +205,7 @@ export async function buildPayoutPdfBlob(
     doc.setFont("helvetica", "normal")
     doc.setFontSize(9)
     doc.setTextColor(...muted)
-    doc.text("No payout requests have been made for this event yet.", margin, y + 4)
+    doc.text("No payout requests have been made for this poll yet.", margin, y + 4)
   } else {
     autoTable(doc, {
       startY: y,
@@ -219,7 +216,7 @@ export async function buildPayoutPdfBlob(
         naira(r.amount),
         r.bankName || "-",
         `${r.accountName || "-"} (••••${(r.accountNumber || "").slice(-4)})`,
-        formatStatusLabel(r.status),
+        formatPollPayoutStatusLabel(r.status),
         r.id,
         r.createdAt ? new Date(r.createdAt).toLocaleString() : "-",
       ]),
@@ -242,8 +239,8 @@ export async function buildPayoutPdfBlob(
     doc.setFont("helvetica", "normal")
     doc.setFontSize(7.5)
     doc.setTextColor(156, 163, 175)
-    doc.text(`Spotix • Payout Report • Page ${i} of ${pageCount}`, margin, pageHeight - 22)
-    doc.text(meta.eventName, pageWidth - margin, pageHeight - 22, { align: "right" })
+    doc.text(`Spotix • Poll Payout Report • Page ${i} of ${pageCount}`, margin, pageHeight - 22)
+    doc.text(meta.pollName, pageWidth - margin, pageHeight - 22, { align: "right" })
   }
 
   return doc.output("blob")
